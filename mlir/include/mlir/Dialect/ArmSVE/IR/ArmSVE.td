@@ -29,7 +29,23 @@ def ArmSVE_Dialect : Dialect {
     scalable vector operations.
   }];
 
+  let dependentDialects = ["vector::VectorDialect"];
 }
+
+//===----------------------------------------------------------------------===//
+// ArmSVE type definitions
+//===----------------------------------------------------------------------===//
+
+def SVBool : ScalableVectorOfRankAndLengthAndType<
+  [1], [16], [I1]>;
+
+def SVEPredicate : ScalableVectorOfRankAndLengthAndType<
+  [1], [16, 8, 4, 2, 1], [I1]>;
+
+// Generalizations of SVBool and SVEPredicate to ranks >= 1.
+// These are masks with a single trailing scalable dimension.
+def SVBoolMask : TrailingScalableVectorOfSizeAndType<[16], [I1]>;
+def SVEMask : TrailingScalableVectorOfSizeAndType<[16, 8, 4, 2, 1], [I1]>;
 
 //===----------------------------------------------------------------------===//
 // ArmSVE op definitions
@@ -38,15 +54,22 @@ def ArmSVE_Dialect : Dialect {
 class ArmSVE_Op<string mnemonic, list<Trait> traits = []> :
   Op<ArmSVE_Dialect, mnemonic, traits> {}
 
-class ArmSVE_IntrBinaryOverloadedOp<string mnemonic,
-                                    list<Trait> traits = []> :
+class ArmSVE_IntrOp<string mnemonic,
+                                    list<Trait> traits = [],
+                                    list<int> overloadedOperands = [],
+                                    list<int> overloadedResults = []> :
   LLVM_IntrOpBase</*Dialect dialect=*/ArmSVE_Dialect,
                   /*string opName=*/"intr." # mnemonic,
                   /*string enumName=*/"aarch64_sve_" # !subst(".", "_", mnemonic),
-                  /*list<int> overloadedResults=*/[0],
-                  /*list<int> overloadedOperands=*/[], // defined by result overload
+                  /*list<int> overloadedResults=*/overloadedResults,
+                  /*list<int> overloadedOperands=*/overloadedOperands,
                   /*list<Trait> traits=*/traits,
                   /*int numResults=*/1>;
+
+class ArmSVE_IntrBinaryOverloadedOp<string mnemonic,
+                                    list<Trait> traits = []>:
+  ArmSVE_IntrOp<mnemonic, traits,
+    /*overloadedOperands=*/[], /*overloadedResults=*/[0]>;
 
 class ScalableMaskedFOp<string mnemonic, string op_description,
                         list<Trait> traits = []> :
@@ -220,6 +243,28 @@ def UmmlaOp : ArmSVE_Op<"ummla",
     "$acc `,` $src1 `,` $src2 attr-dict `:` type($src1) `to` type($dst)";
 }
 
+
+class SvboolTypeContraint<string lhsArg, string rhsArg> : TypesMatchWith<
+      "expected corresponding svbool type widened to [16]xi1",
+      lhsArg, rhsArg,
+      "VectorType(VectorType::Builder(::llvm::cast<VectorType>($_self)).setDim(::llvm::cast<VectorType>($_self).getRank() - 1, 16))">;
+
+def ConvertFromSvboolOp : ArmSVE_Op<"convert_from_svbool",
+                            [Pure, SvboolTypeContraint<"result", "source">]>
+{
+  let arguments = (ins SVBoolMask:$source);
+  let results = (outs SVEMask:$result);
+  let assemblyFormat = "$source attr-dict `:` type($result)";
+}
+
+def ConvertToSvboolOp : ArmSVE_Op<"convert_to_svbool",
+                            [Pure,  SvboolTypeContraint<"source", "result">]>
+{
+  let arguments = (ins SVEMask:$source);
+  let results = (outs SVBoolMask:$result);
+  let assemblyFormat = "$source attr-dict `:` type($source)";
+}
+
 def ScalableMaskedAddIOp : ScalableMaskedIOp<"masked.addi", "addition",
                                              [Commutative]>;
 
@@ -295,5 +340,19 @@ def ScalableMaskedUDivIIntrOp :
 def ScalableMaskedDivFIntrOp :
   ArmSVE_IntrBinaryOverloadedOp<"fdiv">,
   Arguments<(ins AnyScalableVector, AnyScalableVector, AnyScalableVector)>;
+
+def ConvertFromSvboolIntrOp :
+  ArmSVE_IntrOp<"convert.from.svbool",
+    [TypeIs<"res", SVEPredicate>],
+    /*overloadedOperands=*/[],
+    /*overloadedResults=*/[0]>,
+  Arguments<(ins SVBool:$svbool)>;
+
+def ConvertToSvboolIntrOp :
+  ArmSVE_IntrOp<"convert.to.svbool",
+    [TypeIs<"res", SVBool>],
+    /*overloadedOperands=*/[0],
+    /*overloadedResults=*/[]>,
+    Arguments<(ins SVEPredicate:$mask)>;
 
 #endif // ARMSVE_OPS
