@@ -1256,6 +1256,26 @@ SmallVector<llvm::Value *> ModuleTranslation::lookupValues(ValueRange values) {
   return remapped;
 }
 
+SmallVector<llvm::Value *> ModuleTranslation::convertIntrinsicArguments(
+    Operation *op, ArrayRef<unsigned> immArgPositions,
+    ArrayRef<StringLiteral> immArgNames) {
+  auto operands = lookupValues(op->getOperands());
+  SmallVector<llvm::Value *> args(immArgPositions.size() + operands.size());
+  for (auto [immArgPos, immArgName] : llvm::zip(immArgPositions, immArgNames)) {
+    auto attr = llvm::cast<TypedAttr>(op->getAttr(immArgName));
+    assert(attr.getType().isIntOrFloat() && "expected int or float immarg");
+    auto *type = convertType(attr.getType());
+    args[immArgPos] =
+        LLVM::detail::getLLVMConstant(type, attr, op->getLoc(), *this);
+  }
+  unsigned opArg = 0;
+  for (auto &arg : args) {
+    if (!arg)
+      arg = operands[opArg++];
+  }
+  return args;
+}
+
 llvm::OpenMPIRBuilder *ModuleTranslation::getOpenMPBuilder() {
   if (!ompBuilder) {
     ompBuilder = std::make_unique<llvm::OpenMPIRBuilder>(*llvmModule);

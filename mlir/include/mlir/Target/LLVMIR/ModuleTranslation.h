@@ -93,6 +93,10 @@ public:
   /// Looks up remapped a list of remapped values.
   SmallVector<llvm::Value *> lookupValues(ValueRange values);
 
+  SmallVector<llvm::Value *>
+  convertIntrinsicArguments(Operation *, ArrayRef<unsigned> immArgPositions,
+                            ArrayRef<StringLiteral> immArgNames);
+
   /// Stores the mapping between an MLIR block and LLVM IR basic block.
   void mapBlock(Block *mlir, llvm::BasicBlock *llvm) {
     auto result = blockMapping.try_emplace(mlir, llvm);

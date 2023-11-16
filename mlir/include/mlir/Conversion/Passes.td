@@ -1292,6 +1292,19 @@ def ConvertVectorToLLVMPass : Pass<"convert-vector-to-llvm"> {
 }
 
 //===----------------------------------------------------------------------===//
+// ArmSMEToLLVM
+//===----------------------------------------------------------------------===//
+
+def ConvertArmSMEToLLVM : Pass<"convert-arm-sme-to-llvm"> {
+  let summary = "Lower the operations from the ArmSME dialect into the SCF "
+                "dialect";
+  let constructor = "mlir::createConvertArmSMEToLLVMPass()";
+    let dependentDialects = ["arm_sme::ArmSMEDialect",     "LLVM::LLVMDialect"];
+
+}
+
+
+//===----------------------------------------------------------------------===//
 // VectorToSPIRV
 //===----------------------------------------------------------------------===//
 

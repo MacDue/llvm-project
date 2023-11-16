@@ -300,7 +300,9 @@ class LLVM_IntrOpBase<Dialect dialect, string opName, string enumName,
                       list<int> overloadedResults, list<int> overloadedOperands,
                       list<Trait> traits, int numResults,
                       bit requiresAccessGroup = 0, bit requiresAliasAnalysis = 0,
-                      bit requiresFastmath = 0>
+                      bit requiresFastmath = 0,
+                      list<int> immArgPositions = [],
+                      list<string> immArgNames = []>
     : LLVM_OpBase<dialect, opName, !listconcat(
         !if(!gt(requiresAccessGroup, 0),
             [DeclareOpInterfaceMethods<AccessGroupOpInterface>], []),
@@ -326,6 +328,7 @@ class LLVM_IntrOpBase<Dialect dialect, string opName, string enumName,
   string llvmEnumName = enumName;
   list<string> declTypeList = !listconcat(
             ListIntSubst<resultPattern, overloadedResults>.lst,
+            // FIXME: The overloadedOperands index does not accout from immargs.
             ListIntSubst<LLVM_IntrPatterns.operand,
                          overloadedOperands>.lst);
   string declTypes = [{ { }] # !interleave(declTypeList, ", ") # [{ } }];
@@ -334,9 +337,12 @@ class LLVM_IntrOpBase<Dialect dialect, string opName, string enumName,
     llvm::Function *fn = llvm::Intrinsic::getDeclaration(
         module,
         llvm::Intrinsic::}] # enumName # [{,}] # declTypes # [{);
-    auto operands = moduleTranslation.lookupValues(opInst.getOperands());
+    auto operands = moduleTranslation.convertIntrinsicArguments(&opInst,
+      { }] # !interleave(immArgPositions, ", ") # [{ },
+      { }] # !interleave(!foreach(name, immArgNames, "StringLiteral(\"" # name # "\")"), ", ") # [{ }
+    );
     }] # [{
-    auto *inst = builder.CreateCall(fn, operands);
+    auto *inst =  builder.CreateCall(fn, operands);
     (void) inst;
     }] # !if(!gt(requiresAccessGroup, 0), setAccessGroupsMetadataCode, "")
        # !if(!gt(requiresAliasAnalysis, 0), setAliasAnalysisMetadataCode, "")

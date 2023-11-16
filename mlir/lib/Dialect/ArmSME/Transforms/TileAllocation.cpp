@@ -41,10 +41,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/ArmSME/IR/ArmSME.h"
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define DEBUG_TYPE "allocate-arm-sme-tiles"
 
@@ -107,7 +109,7 @@ enum class TileMask : unsigned {
 };
 
 /// Returns the set of masks relevant for the given type.
-static ArrayRef<TileMask> getMasks(Type type) {
+static ArrayRef<TileMask> getMasks(ArmSMETileType type) {
   static const SmallVector<TileMask> ZA_B_MASKS = {TileMask::kZA0B};
   static const SmallVector<TileMask> ZA_H_MASKS = {TileMask::kZA0H,
                                                    TileMask::kZA1H};
@@ -121,26 +123,24 @@ static ArrayRef<TileMask> getMasks(Type type) {
       TileMask::kZA4Q,  TileMask::kZA5Q,  TileMask::kZA6Q,  TileMask::kZA7Q,
       TileMask::kZA8Q,  TileMask::kZA9Q,  TileMask::kZA10Q, TileMask::kZA11Q,
       TileMask::kZA12Q, TileMask::kZA13Q, TileMask::kZA14Q, TileMask::kZA15Q};
-  switch (cast<IntegerType>(type).getWidth()) {
-  default:
-    llvm_unreachable("unexpected type!");
-  case 8:
+  switch (type) {
+  case ArmSMETileType::ZAB:
     return ZA_B_MASKS;
-  case 16:
+  case ArmSMETileType::ZAH:
     return ZA_H_MASKS;
-  case 32:
+  case ArmSMETileType::ZAS:
     return ZA_S_MASKS;
-  case 64:
+  case ArmSMETileType::ZAD:
     return ZA_D_MASKS;
-  case 128:
+  case ArmSMETileType::ZAQ:
     return ZA_Q_MASKS;
   }
 }
 
 /// Allocates a tile to 'tileID' or returns an error if there are no tiles left.
-static LogicalResult getTile(GetTileID tileIDOp, TileMask &tilesInUse,
+static LogicalResult getTile(ArmSMETileType tileType, TileMask &tilesInUse,
                              unsigned &tileID) {
-  auto masks = getMasks(tileIDOp.getType());
+  auto masks = getMasks(tileType);
   for (const auto &it : llvm::enumerate(masks)) {
     const auto tileMask = it.value();
     if ((tilesInUse & tileMask) == TileMask::kNone) {
@@ -149,31 +149,47 @@ static LogicalResult getTile(GetTileID tileIDOp, TileMask &tilesInUse,
       return success();
     }
   }
-  return tileIDOp.emitError("ran out of SME virtual tiles!");
+  return failure();
 }
 
-struct GetTileIDConversion : public OpRewritePattern<GetTileID> {
-  using OpRewritePattern::OpRewritePattern;
-  LogicalResult matchAndRewrite(GetTileID tileIDOp,
+struct AssignTileIDsPattern
+    : public OpInterfaceRewritePattern<AllocsArmSMETileOpInterface> {
+  using OpInterfaceRewritePattern::OpInterfaceRewritePattern;
+  LogicalResult matchAndRewrite(AllocsArmSMETileOpInterface tileAllocatingOp,
                                 PatternRewriter &rewriter) const override {
-    auto funcOp = tileIDOp->getParentOfType<func::FuncOp>();
+    if (tileAllocatingOp.getTileIdAttr())
+      return failure();
+
+    auto func = tileAllocatingOp->getParentOfType<FunctionOpInterface>();
     TileMask tilesInUse;
-    if (auto tilesInUseAttr =
-            funcOp->getAttrOfType<IntegerAttr>(kTilesInUseAttr))
+    if (auto tilesInUseAttr = func->getAttrOfType<IntegerAttr>(kTilesInUseAttr))
       tilesInUse = static_cast<TileMask>(tilesInUseAttr.getInt());
     else
       tilesInUse = TileMask::kNone;
 
     unsigned tileID;
-    if (failed(getTile(tileIDOp, tilesInUse, tileID)))
-      return failure();
+    if (failed(getTile(tileAllocatingOp.getAllocatedTileType(), tilesInUse,
+                       tileID))) {
+      return tileAllocatingOp.emitError("ran out of SME virtual tiles!");
+    }
 
-    funcOp->setAttr(kTilesInUseAttr,
-                    rewriter.getI32IntegerAttr((unsigned)tilesInUse));
+    func->setAttr(kTilesInUseAttr,
+                  rewriter.getI32IntegerAttr((unsigned)tilesInUse));
 
-    auto tileType = tileIDOp.getType();
-    rewriter.replaceOpWithNewOp<arith::ConstantOp>(
-        tileIDOp, tileType, rewriter.getIntegerAttr(tileType, tileID));
+    // All the ops that (transitively) depend on this tile.
+    SetVector<Operation *> dependantOps;
+    getForwardSlice(tileAllocatingOp.getOperation(), &dependantOps);
+
+    // Set all operations to use the same tile ID.
+    // This is a navie tile allocation scheme, but works for common cases.
+    tileAllocatingOp.setTileId(tileID);
+    for (auto *op : dependantOps) {
+      auto tileOp = llvm::dyn_cast<ArmSMETileOpInterface>(op);
+      if (!tileOp)
+        continue;
+      tileOp.setTileId(tileID);
+    }
+
     return success();
   }
 };
@@ -182,13 +198,11 @@ struct TileAllocationPass
     : public arm_sme::impl::TileAllocationBase<TileAllocationPass> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    ConversionTarget target(getContext());
-    patterns.add<GetTileIDConversion>(patterns.getContext());
-    target.addLegalOp<arith::ConstantOp>();
-    target.addIllegalOp<GetTileID>();
-    if (failed(applyPartialConversion(getOperation(), target,
-                                      std::move(patterns))))
+    patterns.add<AssignTileIDsPattern>(patterns.getContext());
+    if (mlir::failed(mlir::applyPatternsAndFoldGreedily(getOperation(),
+                                                        std::move(patterns)))) {
       signalPassFailure();
+    }
   }
 };
 } // namespace
