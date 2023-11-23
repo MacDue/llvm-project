@@ -46,19 +46,17 @@ def ArmSMETileOpInterface : OpInterface<"ArmSMETileOpInterface"> {
       "",
       /*returnType=*/"void",
       /*methodName=*/"setTileId",
-      /*arguments=*/(ins "uint32_t":$tileId),
+      /*arguments=*/(ins "mlir::IntegerAttr":$tileId),
       /*methodBody=*/[{}],
       /*defaultImpl=*/ [{
         ::mlir::Operation* op = this->getOperation();
-        auto i32Type = mlir::IntegerType::get(op->getContext(), 32);
-        auto tileIdAttr = mlir::IntegerAttr::get(i32Type, tileId);
-        op->setAttr("tile_id", tileIdAttr);
+        op->setAttr("tile_id", tileId);
       }]
     >,
     InterfaceMethod<
       "",
       /*returnType=*/"mlir::IntegerAttr",
-      /*methodName=*/"getTileIdAttr",
+      /*methodName=*/"getTileId",
       /*arguments=*/(ins),
       /*methodBody=*/[{}],
       /*defaultImpl=*/ [{
@@ -67,6 +65,16 @@ def ArmSMETileOpInterface : OpInterface<"ArmSMETileOpInterface"> {
       }]
     >
   ];
+
+  let extraSharedClassDeclaration = [{
+    template<typename T, typename... Args>
+    T createOpAndForwardTileId(::mlir::RewriterBase& rewriter, ::mlir::Location loc, Args &&...args) {
+      auto op = rewriter.create<T>(loc, std::forward<Args>(args)...);
+      if (auto tileOp = ::llvm::dyn_cast<ArmSMETileOpInterface>(op.getOperation()))
+        tileOp.setTileId($_op.getTileId());
+      return op;
+    }
+  }];
 }
 
 def AllocsArmSMETileOpInterface
@@ -78,7 +86,7 @@ def AllocsArmSMETileOpInterface
   let methods = [
     InterfaceMethod<
       "The type of tile this operation allocates.",
-      "::mlir::arm_sme::ArmSMETileType", "getAllocatedTileType"
+      "std::optional<::mlir::arm_sme::ArmSMETileType>", "getAllocatedTileType"
     >
   ];
 }
@@ -205,8 +213,8 @@ def GetTile : ArmSME_Op<"get_tile", [AllocsArmSMETileOpInterface]> {
       return ::llvm::cast<VectorType>(getTile().getType());
     }
 
-    arm_sme::ArmSMETileType getAllocatedTileType() {
-      return *arm_sme::getSMETileType(getTileType());
+    std::optional<arm_sme::ArmSMETileType> getAllocatedTileType() {
+      return arm_sme::getSMETileType(getTileType());
     }
   }];
 }
@@ -247,8 +255,8 @@ def ZeroOp : ArmSME_Op<"zero", [AllocsArmSMETileOpInterface]> {
     VectorType getVectorType() {
       return ::llvm::cast<VectorType>(getRes().getType());
     }
-    arm_sme::ArmSMETileType getAllocatedTileType() {
-      return *arm_sme::getSMETileType(getVectorType());
+    std::optional<arm_sme::ArmSMETileType> getAllocatedTileType() {
+      return arm_sme::getSMETileType(getVectorType());
     }
   }];
   let assemblyFormat = "attr-dict `:` type($res)";
@@ -323,8 +331,8 @@ def TileLoadOp : ArmSME_Op<"tile_load", [
     VectorType getVectorType() {
       return ::llvm::cast<VectorType>(getResult().getType());
     }
-    arm_sme::ArmSMETileType getAllocatedTileType() {
-      return *arm_sme::getSMETileType(getVectorType());
+    std::optional<arm_sme::ArmSMETileType> getAllocatedTileType() {
+      return arm_sme::getSMETileType(getVectorType());
     }
   }];
 
@@ -627,7 +635,7 @@ class OuterProductResultTileTypeConstraint<string operand> :
 
 def OuterProductOp :
   ArmSME_Op<"outerproduct", [
-    ArmSMETileOpInterface,
+    AllocsArmSMETileOpInterface,
     AttrSizedOperandSegments,
     AllTypesMatch<["lhs", "rhs"]>,
     HasMatchingMaskTypeConstraint<"lhs", "lhsMask">,
@@ -647,37 +655,44 @@ def OuterProductOp :
     `vector.outerproduct` masking is on the operands (rather than the result),
     which mirrors the SME instructions.
 
-    Example 1: Unmasked outerproduct (with accumulator)
+    Example 1: Unmasked outerproduct (without accumulator)
+    ```mlir
+    // Not specifying an accumulator implicitly zeros the destination tile.
+    %result = arm_sme.outerproduct $lhs, $rhs : vector<[4]xf32>, vector<[4]xf32>
+    ```
+
+    Example 2: Unmasked outerproduct (with accumulator)
     ```mlir
     %result = arm_sme.outerproduct $lhs, $rhs acc($accumulator)
                 : vector<[4]xf32>, vector<[4]xf32>
     ```
 
-    Example 2: Masked outerproduct
+    Example 3: Masked outerproduct
     ```mlir
     %result = arm_sme.outerproduct $lhs, $rhs masks($lhsMask, $rhsMask)
                 : vector<[4]xf32>, vector<[4]xf32>
     ```
 
-    Example 3: Masked outerproduct (with accumulator)
+    Example 4: Masked outerproduct (with accumulator)
     ```mlir
     %result = arm_sme.outerproduct $lhs, $rhs acc($accumulator) masks($lhsMask, $rhsMask)
                 : vector<[4]xf32>, vector<[4]xf32>
     ```
   }];
 
-  let arguments = (ins
-    SMETile: $acc,
+let arguments = (ins
     SVEVector:$lhs, SVEVector:$rhs,
     Optional<SVEPredicate>:$lhsMask,
     Optional<SVEPredicate>:$rhsMask,
+    Optional<SMETile>: $acc,
     ArmSME_CombiningKindAttr:$kind);
   let results = (outs SMETile:$result);
 
   let assemblyFormat = [{
-    $lhs `,` $rhs `,` $acc
+    $lhs `,` $rhs
     oilist(
         `kind` `` $kind
+      | `acc` `` `(` $acc `)`
       | `masks` `` `(` $lhsMask `,` $rhsMask `)`
     ) attr-dict `:` type($lhs) `,` type($rhs)
   }];
@@ -686,6 +701,12 @@ def OuterProductOp :
     VectorType getLhsType() { return llvm::cast<VectorType>(getLhs().getType()); }
     VectorType getRhsType() { return llvm::cast<VectorType>(getRhs().getType()); }
     VectorType getResultType() { return llvm::cast<VectorType>(getResult().getType()); }
+    std::optional<arm_sme::ArmSMETileType> getAllocatedTileType() {
+      // The outerproduct op allocates a new tile if no accumulator is passed.
+      if (!getAcc())
+        return arm_sme::getSMETileType(getResultType());
+      return std::nullopt;
+    }
   }];
 }
 

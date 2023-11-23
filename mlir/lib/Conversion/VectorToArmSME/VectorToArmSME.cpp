@@ -527,15 +527,9 @@ struct VectorOuterProductToArmSMELowering
       std::tie(lhsMask, rhsMask) = *operandMasks;
     }
 
-    Value acc = outerProductOp.getAcc();
-    if (!acc) {
-      acc = rewriter.create<arm_sme::ZeroOp>(
-          loc, outerProductOp.getResultVectorType());
-    }
-
     rewriter.replaceOpWithNewOp<arm_sme::OuterProductOp>(
-        rootOp, acc, outerProductOp.getLhs(), outerProductOp.getRhs(), lhsMask,
-        rhsMask);
+        rootOp, outerProductOp.getResultVectorType(), outerProductOp.getLhs(),
+        outerProductOp.getRhs(), lhsMask, rhsMask, outerProductOp.getAcc());
 
     return success();
   }

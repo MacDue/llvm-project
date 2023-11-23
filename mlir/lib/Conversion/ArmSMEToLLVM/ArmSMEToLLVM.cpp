@@ -73,7 +73,7 @@ struct ZeroOpConversion : public ConvertOpToLLVMPattern<arm_sme::ZeroOp> {
     unsigned tileElementWidth =
         zero.getVectorType().getElementType().getIntOrFloatBitWidth();
 
-    auto tileId = zero.getTileIdAttr();
+    auto tileId = zero.getTileId();
     if (!tileId)
       return failure();
 
@@ -150,7 +150,7 @@ struct LoadTileSliceConversion
                   arm_sme::LoadTileSliceOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = loadTileSliceOp.getLoc();
-    auto tileId = loadTileSliceOp.getTileIdAttr();
+    auto tileId = loadTileSliceOp.getTileId();
     if (!tileId)
       return failure();
 
@@ -248,7 +248,7 @@ struct StoreTileSliceConversion
     auto tileElementType = tileType.getElementType();
     unsigned tileElementWidth = tileElementType.getIntOrFloatBitWidth();
 
-    auto tileId = storeTileSliceOp.getTileIdAttr();
+    auto tileId = storeTileSliceOp.getTileId();
     if (!tileId)
       return failure();
 
@@ -336,7 +336,7 @@ struct MoveVectorToTileSliceConversion
     auto loc = moveVectorToTileSliceOp.getLoc();
     auto tileType = moveVectorToTileSliceOp.getTileType();
 
-    auto tileId = moveVectorToTileSliceOp.getTileIdAttr();
+    auto tileId = moveVectorToTileSliceOp.getTileId();
     if (!tileId)
       return failure();
 
@@ -391,7 +391,7 @@ struct MoveTileSliceToVectorConversion
     auto sliceType = moveTileSliceToVector.getSliceType();
     auto sliceIndex = moveTileSliceToVector.getTileSliceIndex();
 
-    auto tileId = moveTileSliceToVector.getTileIdAttr();
+    auto tileId = moveTileSliceToVector.getTileId();
     if (!tileId)
       return failure();
 
@@ -448,7 +448,7 @@ struct OuterProductOpConversion
   matchAndRewrite(arm_sme::OuterProductOp outerProductOp,
                   arm_sme::OuterProductOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto tileId = outerProductOp.getTileIdAttr();
+    auto tileId = outerProductOp.getTileId();
     if (!tileId)
       return failure();
 
@@ -494,6 +494,11 @@ struct OuterProductOpConversion
     auto loc = outerProductOp.getLoc();
 
     Value acc = outerProductOp.getAcc();
+    if (!acc)
+      // Initalize accumulator with zero.
+      acc = outerProductOp.createOpAndForwardTileId<arm_sme::ZeroOp>(
+          rewriter, loc, resultVectorType);
+
     Value lhsMask = outerProductOp.getLhsMask();
     Value rhsMask = outerProductOp.getRhsMask();
 

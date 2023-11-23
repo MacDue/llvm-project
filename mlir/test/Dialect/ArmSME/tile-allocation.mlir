@@ -6,17 +6,17 @@
 // CHECK-SAME: attributes {arm_sme.tiles_in_use = 65534 : i32}
 func.func @mixed_tiles() {
   // ZA0.Q, ZA2.Q, ZA4.Q, ZA6.Q, ZA8.Q, ZA10.Q, ZA12.Q, ZA14.Q
-  // CHECK-NEXT: arith.constant 0
-  %za0_h = arm_sme.get_tile_id : i16
+  // CHECK-NEXT: tile_id = 0
+  %za0_h = arm_sme.get_tile : vector<[8]x[8]xi16>
   // ZA1.Q, ZA5.Q, ZA9.Q, ZA13.Q
-  // CHECK-NEXT: arith.constant 1
-  %za1_s = arm_sme.get_tile_id : i32
+  // CHECK-NEXT: tile_id = 1
+  %za1_s = arm_sme.get_tile : vector<[4]x[4]xi32>
   // ZA3.D ZA3.Q, ZA11.Q
-  // CHECK-NEXT: arith.constant 3
-  %za3_d = arm_sme.get_tile_id : i64
+  // CHECK-NEXT: tile_id = 3
+  %za3_d = arm_sme.get_tile : vector<[2]x[2]xi64>
   // ZA7.Q
-  // CHECK-NEXT: arith.constant 7
-  %za7_q = arm_sme.get_tile_id : i128
+  // CHECK-NEXT: tile_id = 7
+  %za7_q = arm_sme.get_tile : vector<[1]x[1]xi128>
   // ZA15.Q is still free.
   return
 }
@@ -26,28 +26,26 @@ func.func @mixed_tiles() {
 // CHECK-LABEL: za_b
 // CHECK-SAME: attributes {arm_sme.tiles_in_use = 65535 : i32}
 func.func @za_b() {
-  // CHECK-NEXT: arith.constant 0
-  %za0_b = arm_sme.get_tile_id : i8
+  // CHECK-NEXT: tile_id = 0
+  %za0_b = arm_sme.get_tile : vector<[16]x[16]xi8>
   return
 }
 
 // -----
 
 func.func @za_b__out_of_tiles() {
-  %za0_b = arm_sme.get_tile_id : i8
-  // expected-error@+2 {{failed to legalize operation 'arm_sme.get_tile_id' that was explicitly marked illegal}}
+  %za0_b = arm_sme.get_tile : vector<[16]x[16]xi8>
   // expected-error@+1 {{ran out of SME virtual tiles!}}
-  %next_tile = arm_sme.get_tile_id : i8
+  %next_tile = arm_sme.get_tile : vector<[16]x[16]xi8>
   return
 }
 
 // -----
 
 func.func @za_b_overlapping_za_q() {
-  %za0_b = arm_sme.get_tile_id : i8
-  // expected-error@+2 {{failed to legalize operation 'arm_sme.get_tile_id' that was explicitly marked illegal}}
+  %za0_b = arm_sme.get_tile : vector<[16]x[16]xi8>
   // expected-error@+1 {{ran out of SME virtual tiles!}}
-  %next_tile = arm_sme.get_tile_id : i128
+  %next_tile = arm_sme.get_tile : vector<[1]x[1]xi128>
   return
 }
 
@@ -56,8 +54,8 @@ func.func @za_b_overlapping_za_q() {
 // CHECK-LABEL: za0_h
 // CHECK-SAME: attributes {arm_sme.tiles_in_use = 43690 : i32}
 func.func @za0_h() {
-  // CHECK-NEXT: arith.constant 0
-  %za0_h = arm_sme.get_tile_id : i16
+  // CHECK-NEXT: tile_id = 0
+  %za0_h = arm_sme.get_tile : vector<[8]x[8]xi16>
   return
 }
 
@@ -66,21 +64,22 @@ func.func @za0_h() {
 // CHECK-LABEL: za_h
 // CHECK-SAME: attributes {arm_sme.tiles_in_use = 65535 : i32}
 func.func @za_h() {
-  // CHECK-NEXT: arith.constant 0
-  %za0_h = arm_sme.get_tile_id : i16
-  // CHECK-NEXT: arith.constant 1
-  %za1_h = arm_sme.get_tile_id : i16
+  // CHECK-NEXT: tile_id = 0
+  %za0_h = arm_sme.get_tile : vector<[8]x[8]xi16>
+  // CHECK-NEXT: tile_id = 1
+  %za1_h = arm_sme.get_tile : vector<[8]x[8]xi16>
   return
 }
 
 // -----
 
 func.func @za_h__out_of_tiles() {
-  %za0_h = arm_sme.get_tile_id : i16
-  %za1_h = arm_sme.get_tile_id : i16
-  // expected-error@+2 {{failed to legalize operation 'arm_sme.get_tile_id' that was explicitly marked illegal}}
+  // CHECK-NEXT: tile_id = 0
+  %za0_h = arm_sme.get_tile : vector<[8]x[8]xi16>
+  // CHECK-NEXT: tile_id = 1
+  %za1_h = arm_sme.get_tile : vector<[8]x[8]xi16>
   // expected-error@+1 {{ran out of SME virtual tiles!}}
-  %next_tile = arm_sme.get_tile_id : i16
+  %next_tile = arm_sme.get_tile : vector<[8]x[8]xi16>
   return
 }
 

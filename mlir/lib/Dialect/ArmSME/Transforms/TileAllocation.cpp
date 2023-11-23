@@ -157,7 +157,12 @@ struct AssignTileIDsPattern
   using OpInterfaceRewritePattern::OpInterfaceRewritePattern;
   LogicalResult matchAndRewrite(AllocsArmSMETileOpInterface tileAllocatingOp,
                                 PatternRewriter &rewriter) const override {
-    if (tileAllocatingOp.getTileIdAttr())
+    if (tileAllocatingOp.getTileId())
+      return failure();
+
+    std::optional<ArmSMETileType> tileType =
+        tileAllocatingOp.getAllocatedTileType();
+    if (!tileType)
       return failure();
 
     auto func = tileAllocatingOp->getParentOfType<FunctionOpInterface>();
@@ -168,8 +173,7 @@ struct AssignTileIDsPattern
       tilesInUse = TileMask::kNone;
 
     unsigned tileID;
-    if (failed(getTile(tileAllocatingOp.getAllocatedTileType(), tilesInUse,
-                       tileID))) {
+    if (failed(getTile(*tileType, tilesInUse, tileID))) {
       return tileAllocatingOp.emitError("ran out of SME virtual tiles!");
     }
 
@@ -182,12 +186,11 @@ struct AssignTileIDsPattern
 
     // Set all operations to use the same tile ID.
     // This is a navie tile allocation scheme, but works for common cases.
-    tileAllocatingOp.setTileId(tileID);
+    auto tileIDAttr = rewriter.getI32IntegerAttr(tileID);
+    tileAllocatingOp.setTileId(tileIDAttr);
     for (auto *op : dependantOps) {
-      auto tileOp = llvm::dyn_cast<ArmSMETileOpInterface>(op);
-      if (!tileOp)
-        continue;
-      tileOp.setTileId(tileID);
+      if (auto tileOp = llvm::dyn_cast<ArmSMETileOpInterface>(op))
+        tileOp.setTileId(tileIDAttr);
     }
 
     return success();
@@ -199,8 +202,11 @@ struct TileAllocationPass
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<AssignTileIDsPattern>(patterns.getContext());
-    if (mlir::failed(mlir::applyPatternsAndFoldGreedily(getOperation(),
-                                                        std::move(patterns)))) {
+    GreedyRewriteConfig config;
+    // This ensures tiles are allocated in program order.
+    config.useTopDownTraversal = true;
+    if (mlir::failed(mlir::applyPatternsAndFoldGreedily(
+            getOperation(), std::move(patterns), config))) {
       signalPassFailure();
     }
   }

@@ -38,3 +38,9 @@
 #include "mlir/Dialect/ArmSME/IR/ArmSMEIntrinsicOps.h.inc"
 
 #endif // MLIR_DIALECT_ARMSME_IR_ARMSME_H
+
+namespace mlir::arm_sme {
+
+class ArmSMEOpBuilder {};
+
+} // namespace mlir::arm_sme
