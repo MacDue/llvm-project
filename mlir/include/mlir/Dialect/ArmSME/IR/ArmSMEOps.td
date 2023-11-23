@@ -49,6 +49,8 @@ def ArmSMETileOpInterface : OpInterface<"ArmSMETileOpInterface"> {
       /*arguments=*/(ins "mlir::IntegerAttr":$tileId),
       /*methodBody=*/[{}],
       /*defaultImpl=*/ [{
+        if (!tileId)
+          return;
         ::mlir::Operation* op = this->getOperation();
         op->setAttr("tile_id", tileId);
       }]
@@ -73,6 +75,13 @@ def ArmSMETileOpInterface : OpInterface<"ArmSMETileOpInterface"> {
       if (auto tileOp = ::llvm::dyn_cast<ArmSMETileOpInterface>(op.getOperation()))
         tileOp.setTileId($_op.getTileId());
       return op;
+    }
+
+    template<typename T, typename... Args>
+    T replaceWithAndForwardTileId(::mlir::RewriterBase& rewriter, Args &&...args) {
+      auto newOp = createOpAndForwardTileId<T>(rewriter, $_op.getLoc(), std::forward<Args>(args)...);
+      rewriter.replaceOp($_op, newOp);
+      return newOp;
     }
   }];
 }

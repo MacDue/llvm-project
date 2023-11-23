@@ -32,6 +32,14 @@ using namespace mlir;
 
 namespace {
 
+IntegerAttr getTileIdOrError(ArmSMETileOpInterface op) {
+  auto tileId = op.getTileId();
+  if (!tileId)
+    op.emitOpError(
+        "expected tile ID to be allocated before conversion to LLVM");
+  return tileId;
+}
+
 struct GetTileConversion : public ConvertOpToLLVMPattern<arm_sme::GetTile> {
   using ConvertOpToLLVMPattern<arm_sme::GetTile>::ConvertOpToLLVMPattern;
 
@@ -73,7 +81,7 @@ struct ZeroOpConversion : public ConvertOpToLLVMPattern<arm_sme::ZeroOp> {
     unsigned tileElementWidth =
         zero.getVectorType().getElementType().getIntOrFloatBitWidth();
 
-    auto tileId = zero.getTileId();
+    auto tileId = getTileIdOrError(zero);
     if (!tileId)
       return failure();
 
@@ -150,7 +158,7 @@ struct LoadTileSliceConversion
                   arm_sme::LoadTileSliceOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto loc = loadTileSliceOp.getLoc();
-    auto tileId = loadTileSliceOp.getTileId();
+    auto tileId = getTileIdOrError(loadTileSliceOp);
     if (!tileId)
       return failure();
 
@@ -248,7 +256,7 @@ struct StoreTileSliceConversion
     auto tileElementType = tileType.getElementType();
     unsigned tileElementWidth = tileElementType.getIntOrFloatBitWidth();
 
-    auto tileId = storeTileSliceOp.getTileId();
+    auto tileId = getTileIdOrError(storeTileSliceOp);
     if (!tileId)
       return failure();
 
@@ -336,7 +344,7 @@ struct MoveVectorToTileSliceConversion
     auto loc = moveVectorToTileSliceOp.getLoc();
     auto tileType = moveVectorToTileSliceOp.getTileType();
 
-    auto tileId = moveVectorToTileSliceOp.getTileId();
+    auto tileId = getTileIdOrError(moveVectorToTileSliceOp);
     if (!tileId)
       return failure();
 
@@ -391,7 +399,7 @@ struct MoveTileSliceToVectorConversion
     auto sliceType = moveTileSliceToVector.getSliceType();
     auto sliceIndex = moveTileSliceToVector.getTileSliceIndex();
 
-    auto tileId = moveTileSliceToVector.getTileId();
+    auto tileId = getTileIdOrError(moveTileSliceToVector);
     if (!tileId)
       return failure();
 
@@ -448,7 +456,7 @@ struct OuterProductOpConversion
   matchAndRewrite(arm_sme::OuterProductOp outerProductOp,
                   arm_sme::OuterProductOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    auto tileId = outerProductOp.getTileId();
+    auto tileId = getTileIdOrError(outerProductOp);
     if (!tileId)
       return failure();
 

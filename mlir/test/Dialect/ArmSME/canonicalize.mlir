@@ -7,6 +7,7 @@
 
 // CHECK-LABEL: @unused_materialize_ssa_tile_is_removed_from_blocks
 // CHECK-NOT: arm_sme.materialize_ssa_tile
+// CHECK-NOT: vector<[4]x[4]xf32>
 func.func @unused_materialize_ssa_tile_is_removed_from_blocks(%arg0: memref<?x?xi32>) {
   %c10 = arith.constant 10 : index
   %c0 = arith.constant 0 : index
