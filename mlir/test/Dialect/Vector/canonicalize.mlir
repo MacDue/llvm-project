@@ -67,6 +67,70 @@ func.func @create_mask_transpose_to_transposed_create_mask(
 
 // -----
 
+// CHECK-LABEL: transposed_unit_dim_shape_cast_to_shape_cast
+//  CHECK-SAME: %[[VEC:.*]]: vector<[4]xf32>
+func.func @transposed_unit_dim_shape_cast_to_shape_cast(%vec: vector<[4]xf32>) -> vector<1x[4]xf32> {
+  //     CHECK: vector.shape_cast %[[VEC]] : vector<[4]xf32> to vector<1x[4]xf32>
+  // CHECK-NOT: vector.transpose
+  %0 = vector.shape_cast %vec : vector<[4]xf32> to vector<[4]x1xf32>
+  // 0 -> 1 is a unit dim:
+  %1 = vector.transpose %0, [1, 0] : vector<[4]x1xf32> to vector<1x[4]xf32>
+  return %1 : vector<1x[4]xf32>
+}
+
+// -----
+
+// CHECK-LABEL: transposed_multiple_unit_dim_shape_cast_to_shape_cast
+//  CHECK-SAME: %[[VEC:.*]]: vector<120xf32>
+func.func @transposed_multiple_unit_dim_shape_cast_to_shape_cast(%vec: vector<120xf32>) -> vector<2x1x3x4x1x5xf32> {
+  //     CHECK: vector.shape_cast %[[VEC]] : vector<120xf32> to vector<2x1x3x4x1x5xf32>
+  // CHECK-NOT: vector.transpose
+  %0 = vector.shape_cast %vec : vector<120xf32> to vector<1x2x3x4x5x1xf32>
+  // 0 -> 1 and 4 -> 5 are unit dims:
+  %1 = vector.transpose %0, [1, 0, 2, 3, 5, 4] : vector<1x2x3x4x5x1xf32> to vector<2x1x3x4x1x5xf32>
+  return %1 : vector<2x1x3x4x1x5xf32>
+}
+
+// -----
+
+// CHECK-LABEL: transposed_non_unit_dim_shape_cast_0
+//  CHECK-SAME: %[[VEC:.*]]: vector<120xf32>
+func.func @transposed_non_unit_dim_shape_cast_0(%vec: vector<120xf32>) -> vector<1x3x2x4x1x5xf32> {
+  //      CHECK: %[[SHAPE_CAST:.*]] = vector.shape_cast %[[VEC]] : vector<120xf32> to vector<1x2x3x4x5x1xf32>
+  // CHECK-NEXT: vector.transpose %[[SHAPE_CAST]], [0, 2, 1, 3, 5, 4] : vector<1x2x3x4x5x1xf32> to vector<1x3x2x4x1x5xf32>
+  %0 = vector.shape_cast %vec : vector<120xf32> to vector<1x2x3x4x5x1xf32>
+  // 1 -> 2 is a non-unit dim:
+  %1 = vector.transpose %0, [0, 2, 1, 3, 5, 4] : vector<1x2x3x4x5x1xf32> to vector<1x3x2x4x1x5xf32>
+  return %1 : vector<1x3x2x4x1x5xf32>
+}
+// -----
+
+// CHECK-LABEL: transposed_non_unit_dim_shape_cast_1
+//  CHECK-SAME: %[[VEC:.*]]: vector<1x256x256xf32>
+func.func @transposed_non_unit_dim_shape_cast_1(%vec: vector<1x256x256xf32>) -> vector<256x256xf32> {
+  //      CHECK: %[[SHAPE_CAST:.*]] = vector.shape_cast %[[VEC]] : vector<1x256x256xf32> to vector<256x256xf32>
+  // CHECK-NEXT: vector.transpose %[[SHAPE_CAST]], [1, 0] : vector<256x256xf32> to vector<256x256xf32>
+  %0 = vector.shape_cast %vec : vector<1x256x256xf32> to vector<256x256xf32>
+  // 0 -> 1 is a non-unit dim:
+  %1 = vector.transpose %0, [1, 0] : vector<256x256xf32> to vector<256x256xf32>
+  return %1 : vector<256x256xf32>
+}
+
+// -----
+
+// CHECK-LABEL: transposed_non_unit_dim_shape_cast_2
+//  CHECK-SAME: %[[VEC:.*]]: vector<20xf32>
+func.func @transposed_non_unit_dim_shape_cast_2(%vec: vector<20xf32>) -> vector<2x5x2x1xf32> {
+  //      CHECK: %[[SHAPE_CAST:.*]] = vector.shape_cast %[[VEC]] : vector<20xf32> to vector<2x1x2x5xf32>
+  // CHECK-NEXT: vector.transpose %[[SHAPE_CAST]], [0, 3, 2, 1] : vector<2x1x2x5xf32> to vector<2x5x2x1xf32>
+  %0 = vector.shape_cast %vec : vector<20xf32> to vector<2x1x2x5xf32>
+  // 1 -> 3 transposes non-unit dims:
+  %1 = vector.transpose %0, [0, 3, 2, 1] : vector<2x1x2x5xf32> to vector<2x5x2x1xf32>
+  return %1 : vector<2x5x2x1xf32>
+}
+
+// -----
+
 // CHECK-LABEL: extract_from_create_mask
 //  CHECK-SAME: %[[DIM0:.*]]: index, %[[DIM1:.*]]: index
 func.func @extract_from_create_mask(%dim0: index, %dim1: index) -> vector<[4]x[4]xi1> {

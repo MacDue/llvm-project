@@ -5548,12 +5548,69 @@ public:
   }
 };
 
+/// Folds transpose(shape_cast) into a new shape_cast, when the transpose just
+/// permutes a unit dim from the result of the shape_cast.
+class FoldTransposeShapeCast : public OpRewritePattern<TransposeOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(TransposeOp transpOp,
+                                PatternRewriter &rewriter) const override {
+    Value transposeSrc = transpOp.getVector();
+    auto shapeCastOp = transposeSrc.getDefiningOp<vector::ShapeCastOp>();
+    if (!shapeCastOp)
+      return rewriter.notifyMatchFailure(
+          transpOp, "TransposeOp source is not ShapeCastOp");
+
+    auto shapeCastSourceType = shapeCastOp.getSourceVectorType();
+    auto sourceType = transpOp.getSourceVectorType();
+    auto resultType = transpOp.getResultVectorType();
+    auto permutation = transpOp.getPermutation();
+
+    auto getSourceDim = [&](int64_t index) {
+      return std::make_pair(sourceType.getDimSize(index),
+                            sourceType.getScalableDims()[index]);
+    };
+
+    auto unitDim = std::make_pair(int64_t(1), false);
+    for (auto [i, resultIndex] : llvm::enumerate(permutation)) {
+      int64_t sourceIndex = int64_t(i);
+      if (sourceIndex == resultIndex)
+        continue;
+      // Is the transpose crosses any non-unit dims this is also a non-unit
+      // transpose, so we restrict the index distance to 1:
+      // e.g.:
+      //   vector.transpose %0, [0, 3, 2, 1] : vector<2x1x2x5xi32> to
+      //                                       vector<2x5x2x1xi32>
+      // This could be relaxed to checking if all dims between the `sourceIndex`
+      // and `resultIndex` are unit dims (in both the source and result vector
+      // type).
+      if (std::abs(sourceIndex - resultIndex) != 1 ||
+          (getSourceDim(sourceIndex) != unitDim &&
+           getSourceDim(resultIndex) != unitDim)) {
+        return rewriter.notifyMatchFailure(
+            transpOp, "TransposeOp has non-unit permutation");
+      }
+    }
+
+    if (!isValidShapeCast(shapeCastSourceType.getShape(),
+                          resultType.getShape()))
+      return rewriter.notifyMatchFailure(
+          transpOp, "TransposeOp cannot fold into valid ShapeCastOp");
+
+    rewriter.replaceOpWithNewOp<vector::ShapeCastOp>(transpOp, resultType,
+                                                     shapeCastOp.getSource());
+
+    return success();
+  };
+};
+
 } // namespace
 
 void vector::TransposeOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<FoldTransposeCreateMask, FoldTransposedScalarBroadcast,
-              TransposeFolder, FoldTransposeSplat>(context);
+              TransposeFolder, FoldTransposeSplat, FoldTransposeShapeCast>(
+      context);
 }
 
 //===----------------------------------------------------------------------===//
