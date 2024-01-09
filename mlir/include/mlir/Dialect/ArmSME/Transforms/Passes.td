@@ -122,4 +122,17 @@ def TileAllocation
   let dependentDialects = ["func::FuncDialect"];
 }
 
+def VectorTypeLegalization
+  : Pass<"arm-sme-vector-type-legalization", "mlir::func::FuncOp"> {
+  let summary = "TODO";
+  let description = [{ TODO }];
+  let constructor = "mlir::arm_sme::createVectorTypeLegalizationPass()";
+  let dependentDialects = [
+    "func::FuncDialect",
+    "arm_sme::ArmSMEDialect",
+    "vector::VectorDialect",
+    "arith::ArithDialect"
+  ];
+}
+
 #endif // MLIR_DIALECT_ARMSME_TRANSFORMS_PASSES_TD
