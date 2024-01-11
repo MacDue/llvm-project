@@ -87,6 +87,7 @@ struct LegalizeVectorLoad : public OpRewritePattern<vector::LoadOp> {
     auto base = load.getBase();
     auto indices = load.getIndices();
     auto loc = load.getLoc();
+    auto vscale = rewriter.create<vector::VectorScaleOp>(loc);
 
     SmallVector<Value> smeTiles;
     forEachDecomposedVectorType(vectorType, [&](int i, int j) {
@@ -109,6 +110,11 @@ struct LegalizeVectorLoad : public OpRewritePattern<vector::LoadOp> {
 
     return success();
   }
+};
+
+// VectorTranpose -> tranpose each tile + transpose the order of subtiles
+struct LegalizeVectorTranspose : public OpRewritePattern<vector::TransposeOp> {
+  using OpRewritePattern<vector::TransposeOp>::OpRewritePattern;
 };
 
 struct LegalizeVectorStore : public OpRewritePattern<vector::StoreOp> {
@@ -149,19 +155,59 @@ struct LegalizeVectorStore : public OpRewritePattern<vector::StoreOp> {
   }
 };
 
-// struct LegalizeVectorOuterProduct
-//     : public OpRewritePattern<vector::OuterProductOp> {
-//   using OpRewritePattern<vector::OuterProductOp>::OpRewritePattern;
+struct LegalizeVectorOuterProduct
+    : public OpRewritePattern<vector::OuterProductOp> {
+  using OpRewritePattern<vector::OuterProductOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(vector::OuterProductOp outerProduct,
+                                PatternRewriter &rewriter) const override {
+    auto vectorType = outerProduct.getResultVectorType();
 
-// };
+    if (!isVectorTypeMultipleOfSMETileSize(vectorType))
+      return failure();
+
+    // TODO:
+    if (outerProduct.isMasked())
+      return failure();
+
+    auto loc = outerProduct.getLoc();
+    auto tileType = legalTileType(vectorType.getElementType());
+    VectorType sliceType = VectorType::Builder(tileType).dropDim(0);
+
+    ValueRange accTiles{};
+    if (outerProduct.getAcc())
+      accTiles = createUnrealizedConversionToSMETiles(rewriter, loc,
+                                                      outerProduct.getAcc())
+                     .getResults();
+
+    int tileIndex = 0;
+    SmallVector<Value> smeTiles;
+    forEachDecomposedVectorType(vectorType, [&](int i, int j) {
+      auto lhs = rewriter.create<vector::ScalableExtractOp>(
+          loc, sliceType, outerProduct.getLhs(), i);
+      auto rhs = rewriter.create<vector::ScalableExtractOp>(
+          loc, sliceType, outerProduct.getRhs(), j);
+      auto subTileOuterproduct = rewriter.create<vector::OuterProductOp>(
+          loc, tileType, lhs, rhs,
+          !accTiles.empty() ? accTiles[tileIndex] : Value{},
+          outerProduct.getKind());
+      smeTiles.push_back(subTileOuterproduct);
+      ++tileIndex;
+    });
+
+    rewriter.replaceOp(outerProduct, createUnrealizedConversionFromSMETiles(
+                                         rewriter, loc, smeTiles, vectorType));
+
+    return success();
+  }
+};
 
 struct VectorTypeLegalizationPass
     : public arm_sme::impl::VectorTypeLegalizationBase<
           VectorTypeLegalizationPass> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.add<LegalizeVectorLoad, LegalizeVectorStore>(
-        patterns.getContext());
+    patterns.add<LegalizeVectorLoad, LegalizeVectorStore,
+                 LegalizeVectorOuterProduct>(patterns.getContext());
     if (mlir::failed(mlir::applyPatternsAndFoldGreedily(getOperation(),
                                                         std::move(patterns)))) {
       signalPassFailure();
