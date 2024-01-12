@@ -1,6 +1,6 @@
 // RUN: mlir-opt %s \
 // RUN:   -transform-interpreter -test-transform-dialect-erase-schedule \
-// RUN:   -canonicalize \
+// RUN:   -canonicalize -arm-sme-vector-type-legalization \
 // RUN:   -convert-vector-to-arm-sme -allocate-arm-sme-tiles -convert-arm-sme-to-scf \
 // RUN:   -enable-arm-streaming="streaming-mode=streaming-locally za-mode=new-za only-if-required-by-ops" \
 // RUN:   -convert-vector-to-scf -cse -arm-sve-legalize-vector-storage \
@@ -65,15 +65,12 @@ module attributes {transform.with_named_sequence} {
 
     // Step 1: Tile for size [4] x [4], which corresponds to SVLs x SVLs, where
     // SVLs is the number of 32-bit elements in a vector of SVL bits.
-    %tiled_linalg_op, %loop_i, %loop_j, %loop_k = transform.structured.tile_using_for %matmul[[4], [4], 1]
+    %tiled_linalg_op, %loop_i, %loop_j, %loop_k = transform.structured.tile_using_for %matmul[[8], [8], 1]
       : (!transform.any_op) -> (!transform.any_op, !transform.op<"scf.for">, !transform.op<"scf.for">, !transform.op<"scf.for">)
 
     // Step 2: Vectorize.
-    transform.structured.vectorize %tiled_linalg_op vector_sizes [[4], [4], 1]
+    transform.structured.vectorize %tiled_linalg_op vector_sizes [[8], [8], 1]
       : !transform.any_op
-
-    transform.loop.unroll %loop_k { factor = 2 } : !transform.op<"scf.for">
-    transform.loop.unroll %loop_j { factor = 2 } : !transform.op<"scf.for">
 
     // Step 3: Bufferize ahead of TransferReadDropUnitDimsPattern, which
     // currently only supports memrefs.
@@ -90,17 +87,14 @@ module attributes {transform.with_named_sequence} {
       transform.apply_patterns.vector.reduction_to_contract
     } : !transform.any_op
 
-
-
-
-    // // Step 5: Lower vector.contract to vector.outerproduct. Also drop unit
-    // // dims, specifically to prevent vector.transfer_read of vector<[4]x1xf32>,
-    // // which can't be lowered in generic path.
-    // transform.apply_patterns to %func {
-    //   transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
-    //   transform.apply_patterns.vector.lower_masks
-    //   transform.apply_patterns.vector.rank_reducing_subview_patterns
-    // } : !transform.any_op
+    // Step 5: Lower vector.contract to vector.outerproduct. Also drop unit
+    // dims, specifically to prevent vector.transfer_read of vector<[4]x1xf32>,
+    // which can't be lowered in generic path.
+    transform.apply_patterns to %func {
+      transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
+      transform.apply_patterns.vector.lower_masks
+      transform.apply_patterns.vector.rank_reducing_subview_patterns
+    } : !transform.any_op
 
     transform.yield
   }

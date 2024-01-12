@@ -2,6 +2,7 @@
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h"
 #include "mlir/Dialect/ArmSME/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Utils/IndexingUtils.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define DEBUG_TYPE "arm-sme-vector-type-legalization"
@@ -39,16 +40,28 @@ VectorType legalTileType(Type elementType) {
 }
 
 template <typename Callback>
-void forEachDecomposedVectorType(VectorType type, Callback callback) {
+void forEachDecomposedVectorType(VectorType type, Callback callback,
+                                 ArrayRef<int64_t> perm = {0, 1}) {
   auto elementType = type.getElementType();
   unsigned minNumElts = getSMETileSliceMinNumElts(elementType);
-  int64_t vectorRows = type.getDimSize(0);
-  int64_t vectorCols = type.getDimSize(1);
-  for (int i = 0; i < vectorRows; i += minNumElts) {
-    for (int j = 0; j < vectorCols; j += minNumElts) {
-      callback(i, j);
-    }
+  for (SmallVector<int64_t> index :
+       StaticTileOffsetRange(type.getShape(), {minNumElts, minNumElts}, perm)) {
+    callback(index[0], index[1]);
   }
+}
+
+SmallVector<Value, 2> remapIndices(PatternRewriter &rewriter, Location loc,
+                                   ValueRange indices, int i, int j) {
+  auto vscale = rewriter.create<vector::VectorScaleOp>(loc);
+  auto rowIndex = rewriter.create<arith::MulIOp>(
+      loc, rewriter.create<arith::ConstantIndexOp>(loc, i), vscale);
+  auto colIndex = rewriter.create<arith::MulIOp>(
+      loc, rewriter.create<arith::ConstantIndexOp>(loc, j), vscale);
+  auto subTileRowIndex =
+      rewriter.create<arith::AddIOp>(loc, rowIndex, indices[0]);
+  auto subTileColIndex =
+      rewriter.create<arith::AddIOp>(loc, colIndex, indices[1]);
+  return {subTileRowIndex, subTileColIndex};
 }
 
 int getNumDecomposedTiles(VectorType type) {
@@ -73,6 +86,19 @@ auto createUnrealizedConversionFromSMETiles(PatternRewriter &rewriter,
   return rewriter.create<UnrealizedConversionCastOp>(loc, targetType, input);
 }
 
+Value extractSubMask(PatternRewriter &rewriter, Location loc, Value mask, int i,
+                     int j, VectorType tileType) {
+  if (!mask)
+    return {};
+  auto createMask = mask.getDefiningOp<vector::CreateMaskOp>();
+  if (!createMask)
+    llvm_unreachable("TODO");
+  auto newMaskDims =
+      remapIndices(rewriter, loc, createMask.getOperands(), -i, -j);
+  return rewriter.create<vector::CreateMaskOp>(
+      loc, tileType.clone(rewriter.getI1Type()), newMaskDims);
+}
+
 struct LegalizeVectorLoad : public OpRewritePattern<vector::LoadOp> {
   using OpRewritePattern<vector::LoadOp>::OpRewritePattern;
 
@@ -84,24 +110,13 @@ struct LegalizeVectorLoad : public OpRewritePattern<vector::LoadOp> {
       return failure();
 
     auto tileType = legalTileType(vectorType.getElementType());
-    auto base = load.getBase();
-    auto indices = load.getIndices();
     auto loc = load.getLoc();
-    auto vscale = rewriter.create<vector::VectorScaleOp>(loc);
 
     SmallVector<Value> smeTiles;
     forEachDecomposedVectorType(vectorType, [&](int i, int j) {
-      auto rowIndex = rewriter.create<arith::ConstantIndexOp>(loc, i);
-      auto colIndex = rewriter.create<arith::ConstantIndexOp>(loc, j);
-
-      auto subTileRowIndex =
-          rewriter.create<arith::AddIOp>(loc, rowIndex, indices[0]);
-      auto subTileColIndex =
-          rewriter.create<arith::AddIOp>(loc, colIndex, indices[1]);
-
       auto subTileLoad = rewriter.create<vector::LoadOp>(
-          loc, tileType, base, ValueRange{subTileRowIndex, subTileColIndex});
-
+          loc, tileType, load.getBase(),
+          remapIndices(rewriter, loc, load.getIndices(), i, j));
       smeTiles.push_back(subTileLoad);
     });
 
@@ -123,34 +138,21 @@ struct LegalizeVectorStore : public OpRewritePattern<vector::StoreOp> {
   LogicalResult matchAndRewrite(vector::StoreOp store,
                                 PatternRewriter &rewriter) const override {
     auto vectorType = store.getVectorType();
-
     if (!isVectorTypeMultipleOfSMETileSize(vectorType))
       return failure();
 
-    auto base = store.getBase();
-    auto indices = store.getIndices();
     auto loc = store.getLoc();
-
     auto smeTiles = createUnrealizedConversionToSMETiles(
         rewriter, loc, store.getValueToStore());
 
     int tileIndex = 0;
     forEachDecomposedVectorType(vectorType, [&](int i, int j) {
-      auto rowIndex = rewriter.create<arith::ConstantIndexOp>(loc, i);
-      auto colIndex = rewriter.create<arith::ConstantIndexOp>(loc, j);
-
-      auto subTileRowIndex =
-          rewriter.create<arith::AddIOp>(loc, rowIndex, indices[0]);
-      auto subTileColIndex =
-          rewriter.create<arith::AddIOp>(loc, colIndex, indices[1]);
-
       rewriter.create<vector::StoreOp>(
-          loc, smeTiles.getResult(tileIndex++), base,
-          ValueRange{subTileRowIndex, subTileColIndex});
+          loc, smeTiles.getResult(tileIndex++), store.getBase(),
+          remapIndices(rewriter, loc, store.getIndices(), i, j));
     });
 
     rewriter.eraseOp(store);
-
     return success();
   }
 };
@@ -165,11 +167,16 @@ struct LegalizeVectorOuterProduct
     if (!isVectorTypeMultipleOfSMETileSize(vectorType))
       return failure();
 
-    // TODO:
-    if (outerProduct.isMasked())
-      return failure();
-
+    Operation *rootOp = outerProduct;
     auto loc = outerProduct.getLoc();
+    Value mask = {};
+    if (outerProduct.isMasked()) {
+      auto maskOp = outerProduct.getMaskingOp();
+      mask = maskOp.getMask();
+      rewriter.setInsertionPoint(maskOp);
+      rootOp = maskOp;
+    }
+
     auto tileType = legalTileType(vectorType.getElementType());
     VectorType sliceType = VectorType::Builder(tileType).dropDim(0);
 
@@ -182,20 +189,95 @@ struct LegalizeVectorOuterProduct
     int tileIndex = 0;
     SmallVector<Value> smeTiles;
     forEachDecomposedVectorType(vectorType, [&](int i, int j) {
+      auto subMask = extractSubMask(rewriter, loc, mask, i, j, tileType);
       auto lhs = rewriter.create<vector::ScalableExtractOp>(
           loc, sliceType, outerProduct.getLhs(), i);
       auto rhs = rewriter.create<vector::ScalableExtractOp>(
           loc, sliceType, outerProduct.getRhs(), j);
-      auto subTileOuterproduct = rewriter.create<vector::OuterProductOp>(
+      Operation *subTileOuterproduct = rewriter.create<vector::OuterProductOp>(
           loc, tileType, lhs, rhs,
           !accTiles.empty() ? accTiles[tileIndex] : Value{},
           outerProduct.getKind());
-      smeTiles.push_back(subTileOuterproduct);
+      if (subMask)
+        subTileOuterproduct =
+            vector::maskOperation(rewriter, subTileOuterproduct, subMask);
+      smeTiles.push_back(subTileOuterproduct->getResult(0));
       ++tileIndex;
     });
 
-    rewriter.replaceOp(outerProduct, createUnrealizedConversionFromSMETiles(
-                                         rewriter, loc, smeTiles, vectorType));
+    rewriter.replaceOp(rootOp, createUnrealizedConversionFromSMETiles(
+                                   rewriter, loc, smeTiles, vectorType));
+
+    return success();
+  }
+};
+
+struct LegalizeTransferRead : public OpRewritePattern<vector::TransferReadOp> {
+  using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::TransferReadOp read,
+                                PatternRewriter &rewriter) const override {
+    auto vectorType = read.getVectorType();
+
+    if (!isVectorTypeMultipleOfSMETileSize(vectorType))
+      return failure();
+
+    auto tileType = legalTileType(vectorType.getElementType());
+    auto loc = read.getLoc();
+
+    SmallVector<Value> smeTiles;
+    forEachDecomposedVectorType(
+        vectorType,
+        [&](int i, int j) {
+          auto subTileLoad = rewriter.create<vector::TransferReadOp>(
+              loc, tileType, read.getSource(),
+              remapIndices(rewriter, loc, read.getIndices(), i, j),
+              read.getPermutationMapAttr(), read.getPadding(),
+              extractSubMask(rewriter, loc, read.getMask(), i, j, tileType),
+              read.getInBoundsAttr());
+          smeTiles.push_back(subTileLoad);
+        },
+        read.getPermutationMap().isIdentity() ? ArrayRef<int64_t>{0, 1}
+                                              : ArrayRef<int64_t>{1, 0});
+
+    rewriter.replaceOp(read, createUnrealizedConversionFromSMETiles(
+                                 rewriter, loc, smeTiles, vectorType));
+
+    return success();
+  }
+};
+
+struct LegalizeTransferWrite
+    : public OpRewritePattern<vector::TransferWriteOp> {
+  using OpRewritePattern<vector::TransferWriteOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::TransferWriteOp write,
+                                PatternRewriter &rewriter) const override {
+    auto vectorType = write.getVectorType();
+
+    if (!isVectorTypeMultipleOfSMETileSize(vectorType))
+      return failure();
+
+    auto tileType = legalTileType(vectorType.getElementType());
+    auto loc = write.getLoc();
+
+    int tileIndex = 0;
+    auto smeTiles =
+        createUnrealizedConversionToSMETiles(rewriter, loc, write.getVector());
+    forEachDecomposedVectorType(
+        vectorType,
+        [&](int i, int j) {
+          rewriter.create<vector::TransferWriteOp>(
+              loc, smeTiles.getResult(tileIndex++), write.getSource(),
+              remapIndices(rewriter, loc, write.getIndices(), i, j),
+              write.getPermutationMapAttr(),
+              extractSubMask(rewriter, loc, write.getMask(), i, j, tileType),
+              write.getInBoundsAttr());
+        },
+        write.getPermutationMap().isIdentity() ? ArrayRef<int64_t>{0, 1}
+                                               : ArrayRef<int64_t>{1, 0});
+
+    rewriter.eraseOp(write);
 
     return success();
   }
@@ -207,7 +289,8 @@ struct VectorTypeLegalizationPass
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<LegalizeVectorLoad, LegalizeVectorStore,
-                 LegalizeVectorOuterProduct>(patterns.getContext());
+                 LegalizeVectorOuterProduct, LegalizeTransferRead,
+                 LegalizeTransferWrite>(patterns.getContext());
     if (mlir::failed(mlir::applyPatternsAndFoldGreedily(getOperation(),
                                                         std::move(patterns)))) {
       signalPassFailure();
