@@ -65,11 +65,11 @@ module attributes {transform.with_named_sequence} {
 
     // Step 1: Tile for size [4] x [4], which corresponds to SVLs x SVLs, where
     // SVLs is the number of 32-bit elements in a vector of SVL bits.
-    %tiled_linalg_op, %loop_i, %loop_j, %loop_k = transform.structured.tile_using_for %matmul[[8], [8], 1]
+    %tiled_linalg_op, %loop_i, %loop_j, %loop_k = transform.structured.tile_using_for %matmul[[4], [16], 1]
       : (!transform.any_op) -> (!transform.any_op, !transform.op<"scf.for">, !transform.op<"scf.for">, !transform.op<"scf.for">)
 
     // Step 2: Vectorize.
-    transform.structured.vectorize %tiled_linalg_op vector_sizes [[8], [8], 1]
+    transform.structured.vectorize %tiled_linalg_op vector_sizes [[4], [16], 1]
       : !transform.any_op
 
     // Step 3: Bufferize ahead of TransferReadDropUnitDimsPattern, which

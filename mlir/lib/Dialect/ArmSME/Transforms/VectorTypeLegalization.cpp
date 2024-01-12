@@ -264,20 +264,26 @@ struct LegalizeTransferWrite
     int tileIndex = 0;
     auto smeTiles =
         createUnrealizedConversionToSMETiles(rewriter, loc, write.getVector());
+    Value input = write.getSource();
     forEachDecomposedVectorType(
         vectorType,
         [&](int i, int j) {
-          rewriter.create<vector::TransferWriteOp>(
-              loc, smeTiles.getResult(tileIndex++), write.getSource(),
+          auto subWrite = rewriter.create<vector::TransferWriteOp>(
+              loc, smeTiles.getResult(tileIndex++), input,
               remapIndices(rewriter, loc, write.getIndices(), i, j),
               write.getPermutationMapAttr(),
               extractSubMask(rewriter, loc, write.getMask(), i, j, tileType),
               write.getInBoundsAttr());
+          if (write.hasTensorSemantics())
+            input = subWrite.getResult();
         },
         write.getPermutationMap().isIdentity() ? ArrayRef<int64_t>{0, 1}
                                                : ArrayRef<int64_t>{1, 0});
 
-    rewriter.eraseOp(write);
+    if (write.hasTensorSemantics())
+      rewriter.replaceOp(write, input.getDefiningOp());
+    else
+      rewriter.eraseOp(write);
 
     return success();
   }

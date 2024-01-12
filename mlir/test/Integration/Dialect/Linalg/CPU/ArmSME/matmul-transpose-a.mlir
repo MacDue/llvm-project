@@ -1,6 +1,6 @@
 // RUN: mlir-opt %s \
-// RUN:   -transform-interpreter -test-transform-dialect-erase-schedule \
-// RUN:   -one-shot-bufferize="bufferize-function-boundaries" -canonicalize \
+// RUN:   -transform-interpreter -test-transform-dialect-erase-schedule  \
+// RUN:   -one-shot-bufferize="bufferize-function-boundaries" -canonicalize -arm-sme-vector-type-legalization \
 // RUN:   -convert-vector-to-arm-sme -allocate-arm-sme-tiles -convert-arm-sme-to-scf \
 // RUN:   -enable-arm-streaming="streaming-mode=streaming-locally za-mode=new-za only-if-required-by-ops" \
 // RUN:   -convert-vector-to-scf -cse -arm-sve-legalize-vector-storage \
@@ -66,11 +66,11 @@ module attributes {transform.with_named_sequence} {
 
     // Step 1: Tile for size [4] x [4], which corresponds to SVLs x SVLs, where
     //         SVLs is the number of 32-bit elements in a vector of SVL bits.
-    %tiled_linalg_op, %loops:3 = transform.structured.tile_using_for %matmul_transpose_a[[4], [4], 1]
+    %tiled_linalg_op, %loops:3 = transform.structured.tile_using_for %matmul_transpose_a[[8], [8], 1]
       : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op, !transform.any_op)
 
     // Step 2: Vectorize.
-    transform.structured.vectorize %tiled_linalg_op vector_sizes [[4], [4], 1]
+    transform.structured.vectorize %tiled_linalg_op vector_sizes [[8], [8], 1]
       : !transform.any_op
 
     %func = transform.structured.match ops{["func.func"]} in %module
