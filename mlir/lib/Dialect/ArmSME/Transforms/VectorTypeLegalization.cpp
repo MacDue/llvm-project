@@ -92,7 +92,7 @@ Value extractSubMask(PatternRewriter &rewriter, Location loc, Value mask, int i,
     return {};
   auto createMask = mask.getDefiningOp<vector::CreateMaskOp>();
   if (!createMask)
-    llvm_unreachable("TODO");
+    return {};
   auto newMaskDims =
       remapIndices(rewriter, loc, createMask.getOperands(), -i, -j);
   return rewriter.create<vector::CreateMaskOp>(
@@ -188,8 +188,14 @@ struct LegalizeVectorOuterProduct
 
     int tileIndex = 0;
     SmallVector<Value> smeTiles;
+    bool fail = false;
     forEachDecomposedVectorType(vectorType, [&](int i, int j) {
       auto subMask = extractSubMask(rewriter, loc, mask, i, j, tileType);
+      if (mask && !subMask) {
+        fail = true;
+        return;
+      }
+
       auto lhs = rewriter.create<vector::ScalableExtractOp>(
           loc, sliceType, outerProduct.getLhs(), i);
       auto rhs = rewriter.create<vector::ScalableExtractOp>(
@@ -204,6 +210,8 @@ struct LegalizeVectorOuterProduct
       smeTiles.push_back(subTileOuterproduct->getResult(0));
       ++tileIndex;
     });
+    if (fail)
+      return failure();
 
     rewriter.replaceOp(rootOp, createUnrealizedConversionFromSMETiles(
                                    rewriter, loc, smeTiles, vectorType));
@@ -289,14 +297,72 @@ struct LegalizeTransferWrite
   }
 };
 
+struct FoldNonConstantExtractsOf2DScalableMasks
+    : public OpRewritePattern<vector::ExtractOp> {
+  using OpRewritePattern<vector::ExtractOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::ExtractOp extractOp,
+                                PatternRewriter &rewriter) const override {
+    auto loc = extractOp.getLoc();
+    auto createMaskOp =
+        extractOp.getVector().getDefiningOp<vector::CreateMaskOp>();
+    if (!createMaskOp)
+      return failure();
+
+    VectorType extractedMaskType =
+        llvm::dyn_cast<VectorType>(extractOp.getResult().getType());
+
+    if (!extractedMaskType)
+      return failure();
+
+    if (extractOp.hasDynamicPosition())
+      return failure();
+
+    auto sourceVectorType = extractOp.getSourceVectorType();
+    ArrayRef<int64_t> extractOpPos = extractOp.getStaticPosition();
+
+    // TODO
+    if (extractOpPos.size() != 1)
+      return failure();
+
+    for (auto i = 0U; i < extractOpPos.size(); i++) {
+      if (sourceVectorType.getScalableDims()[i])
+        return failure();
+    }
+    auto numScalable = llvm::count(extractedMaskType.getScalableDims(), true);
+
+    if (numScalable != 2)
+      return failure();
+
+    auto operand = createMaskOp.getOperand(0);
+    if (operand.getDefiningOp<arith::ConstantOp>())
+      return failure();
+
+    auto index = rewriter.create<arith::ConstantIndexOp>(loc, extractOpPos[0]);
+    auto cond = rewriter.create<arith::CmpIOp>(
+        loc, rewriter.getI1Type(), arith::CmpIPredicate::slt, index, operand);
+    auto activeRows = rewriter.create<arith::SelectOp>(
+        loc, cond, createMaskOp.getOperand(1),
+        rewriter.create<arith::ConstantIndexOp>(loc, 0));
+    rewriter.replaceOpWithNewOp<vector::CreateMaskOp>(
+        extractOp, extractedMaskType,
+        ValueRange{activeRows.getResult(), createMaskOp.getOperand(2)});
+    return success();
+  }
+};
+
 struct VectorTypeLegalizationPass
     : public arm_sme::impl::VectorTypeLegalizationBase<
           VectorTypeLegalizationPass> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.add<LegalizeVectorLoad, LegalizeVectorStore,
-                 LegalizeVectorOuterProduct, LegalizeTransferRead,
-                 LegalizeTransferWrite>(patterns.getContext());
+    // patterns.add<>(
+    //     patterns.getContext(), 1000);
+    patterns
+        .add<LegalizeVectorLoad, LegalizeVectorStore,
+             LegalizeVectorOuterProduct, LegalizeTransferRead,
+             LegalizeTransferWrite, FoldNonConstantExtractsOf2DScalableMasks>(
+            patterns.getContext());
     if (mlir::failed(mlir::applyPatternsAndFoldGreedily(getOperation(),
                                                         std::move(patterns)))) {
       signalPassFailure();
