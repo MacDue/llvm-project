@@ -2,6 +2,7 @@
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h"
 #include "mlir/Dialect/ArmSME/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/IndexingUtils.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -282,13 +283,13 @@ struct LegalizeTransferWrite
               write.getPermutationMapAttr(),
               extractSubMask(rewriter, loc, write.getMask(), i, j, tileType),
               write.getInBoundsAttr());
-          if (write.hasTensorSemantics())
+          if (write.hasPureTensorSemantics())
             input = subWrite.getResult();
         },
         write.getPermutationMap().isIdentity() ? ArrayRef<int64_t>{0, 1}
                                                : ArrayRef<int64_t>{1, 0});
 
-    if (write.hasTensorSemantics())
+    if (write.hasPureTensorSemantics())
       rewriter.replaceOp(write, input.getDefiningOp());
     else
       rewriter.eraseOp(write);
@@ -351,6 +352,56 @@ struct FoldNonConstantExtractsOf2DScalableMasks
   }
 };
 
+struct FoldIllegalTransposeIntoTransferRead
+    : public OpRewritePattern<vector::TransposeOp> {
+  using OpRewritePattern<vector::TransposeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::TransposeOp tranposeOp,
+                                PatternRewriter &rewriter) const override {
+    auto sourceType = tranposeOp.getSourceVectorType();
+
+    bool seenSD = false;
+    bool iST = false;
+    for (bool s : sourceType.getScalableDims()) {
+      if (s)
+        seenSD = true;
+      if (!s && seenSD) {
+        iST = true;
+        break;
+      }
+    }
+
+    if (!iST)
+      return failure();
+    auto read = tranposeOp.getVector().getDefiningOp<vector::TransferReadOp>();
+    if (!read)
+      return failure();
+
+    if (!read.getPermutationMap().isIdentity())
+      return failure();
+
+    auto loc = tranposeOp.getLoc();
+    mlir::AffineMap map =
+        AffineMap::getPermutationMap(tranposeOp.getPermutation(), getContext());
+
+    Value mask = read.getMask();
+    if (mask)
+      mask = rewriter.create<vector::TransposeOp>(loc, mask,
+                                                  tranposeOp.getPermutation());
+
+    auto source = rewriter.create<memref::TransposeOp>(loc, read.getSource(),
+                                                       AffineMapAttr::get(map));
+    auto test = SmallVector{read.getIndices()[1], read.getIndices()[0]};
+
+    rewriter.replaceOpWithNewOp<vector::TransferReadOp>(
+        tranposeOp, tranposeOp.getResultVectorType(), source, test,
+        read.getPermutationMapAttr(), read.getPadding(), mask,
+        read.getInBoundsAttr());
+
+    return success();
+  }
+};
+
 struct VectorTypeLegalizationPass
     : public arm_sme::impl::VectorTypeLegalizationBase<
           VectorTypeLegalizationPass> {
@@ -361,8 +412,8 @@ struct VectorTypeLegalizationPass
     patterns
         .add<LegalizeVectorLoad, LegalizeVectorStore,
              LegalizeVectorOuterProduct, LegalizeTransferRead,
-             LegalizeTransferWrite, FoldNonConstantExtractsOf2DScalableMasks>(
-            patterns.getContext());
+             LegalizeTransferWrite, FoldNonConstantExtractsOf2DScalableMasks,
+             FoldIllegalTransposeIntoTransferRead>(patterns.getContext());
     if (mlir::failed(mlir::applyPatternsAndFoldGreedily(getOperation(),
                                                         std::move(patterns)))) {
       signalPassFailure();
