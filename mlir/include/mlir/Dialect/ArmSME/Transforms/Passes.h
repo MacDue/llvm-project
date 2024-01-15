@@ -32,7 +32,7 @@ std::unique_ptr<Pass> createEnableArmStreamingPass(
 /// Pass that allocates tile IDs to ArmSME operations.
 std::unique_ptr<Pass> createTileAllocationPass();
 
-std::unique_ptr<Pass> createVectorTypeLegalizationPass();
+std::unique_ptr<Pass> createVectorLegalizationPass();
 
 //===----------------------------------------------------------------------===//
 // Registration

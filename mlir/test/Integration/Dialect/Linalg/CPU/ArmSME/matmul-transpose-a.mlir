@@ -1,6 +1,6 @@
 // RUN: mlir-opt %s \
 // RUN:   -transform-interpreter -test-transform-dialect-erase-schedule  \
-// RUN:   -one-shot-bufferize="bufferize-function-boundaries" -canonicalize -arm-sme-vector-type-legalization -canonicalize -cse \
+// RUN:   -one-shot-bufferize="bufferize-function-boundaries" -canonicalize -arm-sme-vector-legalization -canonicalize -cse \
 // RUN:   -convert-vector-to-arm-sme -allocate-arm-sme-tiles -convert-arm-sme-to-scf \
 // RUN:   -enable-arm-streaming="streaming-mode=streaming-locally za-mode=new-za only-if-required-by-ops" \
 // RUN:   -convert-vector-to-scf -cse -arm-sve-legalize-vector-storage \
