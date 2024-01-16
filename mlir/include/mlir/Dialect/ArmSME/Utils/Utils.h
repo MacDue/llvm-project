@@ -35,6 +35,10 @@ bool isValidSMETileElementType(Type type);
 /// otherwise.
 bool isValidSMETileVectorType(VectorType vType);
 
+bool isMultipleOfSMETileVectorType(VectorType vType);
+
+VectorType getSMETileTypeForElement(Type elementType);
+
 /// Returns the type of SME tile this vector type corresponds to, or none if the
 /// vector type does not fit within an SME tile.
 std::optional<ArmSMETileType> getSMETileType(VectorType);

@@ -27,8 +27,8 @@ struct SubTileBuilder {
   int getRow() const { return row; }
   int getCol() const { return col; }
 
-  SmallVector<Value, 2> remapIndicesForSubTile(Location loc,
-                                               ValueRange parentTileIndices) {
+  SmallVector<Value, 2> remapIndices(Location loc,
+                                     ValueRange parentTileIndices) {
     auto vscale = builder.create<vector::VectorScaleOp>(loc);
     auto rowIndex = builder.create<arith::MulIOp>(
         loc, builder.create<arith::ConstantIndexOp>(loc, getRow()), vscale);
@@ -41,7 +41,7 @@ struct SubTileBuilder {
     return {subTileRowIndex, subTileColIndex};
   }
 
-  FailureOr<Value> extractMaskForSubTile(Location loc, Value mask) {
+  FailureOr<Value> extractMask(Location loc, Value mask) {
     if (!mask)
       return Value{};
     auto createMask = mask.getDefiningOp<vector::CreateMaskOp>();
@@ -50,9 +50,8 @@ struct SubTileBuilder {
     // The the operands of `vector.create_mask` (from a 2D perspective) are the
     // coordinates where the mask ends. So we subtract where this tile starts,
     // from the mask operands to get the parameters for this sub tile.
-    auto subMaskDims =
-        SubTileBuilder(builder, tileType, -getRow(), -getCol())
-            .remapIndicesForSubTile(loc, createMask.getOperands());
+    auto subMaskDims = SubTileBuilder(builder, tileType, -getRow(), -getCol())
+                           .remapIndices(loc, createMask.getOperands());
     auto createSubTileMask = builder.create<vector::CreateMaskOp>(
         loc, tileType.clone(builder.getI1Type()), subMaskDims);
     return createSubTileMask.getResult();
@@ -65,32 +64,10 @@ private:
   int col{0};
 };
 
-bool isVectorTypeMultipleOfSMETileSize(VectorType type) {
-  if (type.getRank() != 2 || !type.allDimsScalable())
-    return false;
-
-  auto elementType = type.getElementType();
-  if (!isValidSMETileElementType(elementType))
-    return false;
-
-  unsigned minNumElts = getSMETileSliceMinNumElts(elementType);
-
-  int64_t vectorRows = type.getDimSize(0);
-  int64_t vectorCols = type.getDimSize(1);
-
-  return (vectorRows > minNumElts || vectorCols > minNumElts) &&
-         vectorRows % minNumElts == 0 && vectorCols % minNumElts == 0;
-}
-
-VectorType getSMETileTypeForElement(Type elementType) {
-  unsigned minNumElts = getSMETileSliceMinNumElts(elementType);
-  return VectorType::get({minNumElts, minNumElts}, elementType, {true, true});
-}
-
 auto decompose2DVectorType(OpBuilder &builder, VectorType type,
                            VectorType subTileType,
                            bool transposeSubTileOrder = false) {
-  assert(isVectorTypeMultipleOfSMETileSize(type));
+  assert(isMultipleOfSMETileVectorType(type));
   return llvm::map_range(
       StaticTileOffsetRange(
           type.getShape(),
@@ -118,10 +95,10 @@ struct LegalizeVectorOuterProductOp
   matchAndRewrite(vector::OuterProductOp outerProductOp, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     auto vectorType = outerProductOp.getResultVectorType();
-    if (!isVectorTypeMultipleOfSMETileSize(vectorType))
+    if (!isMultipleOfSMETileVectorType(vectorType))
       return failure();
 
-    Value mask = {};
+    Value mask;
     Operation *rootOp = outerProductOp;
     auto loc = outerProductOp.getLoc();
     if (outerProductOp.isMasked()) {
@@ -138,7 +115,8 @@ struct LegalizeVectorOuterProductOp
     // present).
     ValueRange accSMETiles = adaptor.getAcc();
     if (!accSMETiles.empty())
-      accSMETiles[0].getDefiningOp()->moveBefore(rootOp);
+      accSMETiles[0].getDefiningOp<UnrealizedConversionCastOp>()->moveBefore(
+          rootOp);
 
     auto tileType = getSMETileTypeForElement(vectorType.getElementType());
     VectorType sliceType = VectorType::Builder(tileType).dropDim(0);
@@ -147,7 +125,7 @@ struct LegalizeVectorOuterProductOp
     for (auto [index, subTile] : llvm::enumerate(
              decompose2DVectorType(rewriter, vectorType, tileType))) {
 
-      auto subMask = subTile.extractMaskForSubTile(loc, mask);
+      auto subMask = subTile.extractMask(loc, mask);
       if (failed(subMask))
         return failure();
 
@@ -182,7 +160,7 @@ struct LegalizeTransferReadOp
   matchAndRewrite(vector::TransferReadOp readOp, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     auto vectorType = readOp.getVectorType();
-    if (!isVectorTypeMultipleOfSMETileSize(vectorType))
+    if (!isMultipleOfSMETileVectorType(vectorType))
       return failure();
 
     auto permutationMap = readOp.getPermutationMap();
@@ -199,13 +177,13 @@ struct LegalizeTransferReadOp
     SmallVector<Value> resultSMETiles;
     for (SubTileBuilder subTile : decompose2DVectorType(
              rewriter, vectorType, tileType, transposeTiles)) {
-      auto mask = subTile.extractMaskForSubTile(loc, readOp.getMask());
+      auto mask = subTile.extractMask(loc, readOp.getMask());
       if (failed(mask))
         return failure();
 
       auto transferRead = rewriter.create<vector::TransferReadOp>(
           loc, tileType, readOp.getSource(),
-          subTile.remapIndicesForSubTile(loc, readOp.getIndices()),
+          subTile.remapIndices(loc, readOp.getIndices()),
           readOp.getPermutationMapAttr(), readOp.getPadding(), *mask,
           readOp.getInBoundsAttr());
 
@@ -226,7 +204,7 @@ struct LegalizeTransferWriteOp
   matchAndRewrite(vector::TransferWriteOp writeOp, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     auto vectorType = writeOp.getVectorType();
-    if (!isVectorTypeMultipleOfSMETileSize(vectorType))
+    if (!isMultipleOfSMETileVectorType(vectorType))
       return failure();
 
     auto permutationMap = writeOp.getPermutationMap();
@@ -244,13 +222,13 @@ struct LegalizeTransferWriteOp
     Value destTensorOrMemref = writeOp.getSource();
     for (auto [index, subTile] : llvm::enumerate(decompose2DVectorType(
              rewriter, vectorType, tileType, transposeTiles))) {
-      auto mask = subTile.extractMaskForSubTile(loc, writeOp.getMask());
+      auto mask = subTile.extractMask(loc, writeOp.getMask());
       if (failed(mask))
         return failure();
 
       auto subWrite = rewriter.create<vector::TransferWriteOp>(
           loc, inputSMETiles[index], destTensorOrMemref,
-          subTile.remapIndicesForSubTile(loc, writeOp.getIndices()),
+          subTile.remapIndices(loc, writeOp.getIndices()),
           writeOp.getPermutationMapAttr(), *mask, writeOp.getInBoundsAttr());
 
       if (writeOp.hasPureTensorSemantics())
@@ -273,11 +251,12 @@ struct VectorLegalizationPass
     {
       OneToNTypeConverter typeConverter;
       RewritePatternSet patterns(context);
+
       typeConverter.addConversion([](Type type) { return type; });
       typeConverter.addConversion(
           [](VectorType vectorType,
              SmallVectorImpl<Type> &types) -> std::optional<LogicalResult> {
-            if (!isVectorTypeMultipleOfSMETileSize(vectorType))
+            if (!isMultipleOfSMETileVectorType(vectorType))
               return std::nullopt;
             auto subTileCount = getNumberOfSMESubTilesForVectorType(vectorType);
             auto tileType =
@@ -289,6 +268,7 @@ struct VectorLegalizationPass
       patterns.add<LegalizeVectorOuterProductOp, LegalizeTransferReadOp,
                    LegalizeTransferWriteOp>(typeConverter, context);
       scf::populateSCFStructuralOneToNTypeConversions(typeConverter, patterns);
+
       if (failed(applyPartialOneToNConversion(getOperation(), typeConverter,
                                               std::move(patterns))))
         return signalPassFailure();
