@@ -3,8 +3,10 @@
 #include "mlir/Dialect/ArmSME/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/Utils/IndexingUtils.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/OneToNTypeConversion.h"
 
 #define DEBUG_TYPE "arm-sme-vector-legalization"
 
@@ -95,7 +97,7 @@ auto decompose2DVectorType(OpBuilder &builder, VectorType type,
           {subTileType.getDimSize(0), subTileType.getDimSize(1)},
           transposeSubTileOrder ? ArrayRef<int64_t>{1, 0}
                                 : ArrayRef<int64_t>{0, 1}),
-      [&](auto indices) {
+      [&, subTileType = subTileType](auto indices) {
         return SubTileBuilder(builder, subTileType, indices[0], indices[1]);
       });
 }
@@ -108,79 +110,13 @@ int getNumberOfSMESubTilesForVectorType(VectorType type) {
   return (vectorRows * vectorCols) / (minNumElts * minNumElts);
 }
 
-ValueRange createUnrealizedConversionToSMETiles(PatternRewriter &rewriter,
-                                                Location loc, Value input) {
-  auto inputType = llvm::cast<VectorType>(input.getType());
-  VectorType tileType = getSMETileTypeForElement(inputType.getElementType());
-  SmallVector<Type> resultTiles(getNumberOfSMESubTilesForVectorType(inputType),
-                                tileType);
-  return rewriter.create<UnrealizedConversionCastOp>(loc, resultTiles, input)
-      .getResults();
-}
-
-Value createUnrealizedConversionFromSMETiles(PatternRewriter &rewriter,
-                                             Location loc, ValueRange input,
-                                             VectorType targetType) {
-  return rewriter.create<UnrealizedConversionCastOp>(loc, targetType, input)
-      .getResult(0);
-}
-
-struct LegalizeVectorLoad : public OpRewritePattern<vector::LoadOp> {
-  using OpRewritePattern<vector::LoadOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(vector::LoadOp loadOp,
-                                PatternRewriter &rewriter) const override {
-    auto vectorType = loadOp.getVectorType();
-    if (!isVectorTypeMultipleOfSMETileSize(vectorType))
-      return failure();
-
-    auto loc = loadOp.getLoc();
-    auto tileType = getSMETileTypeForElement(vectorType.getElementType());
-    auto resultSMETiles = llvm::map_to_vector(
-        decompose2DVectorType(rewriter, vectorType, tileType),
-        [&](SubTileBuilder subTile) -> Value {
-          return rewriter.create<vector::LoadOp>(
-              loc, tileType, loadOp.getBase(),
-              subTile.remapIndicesForSubTile(loc, loadOp.getIndices()));
-        });
-
-    rewriter.replaceOp(loadOp, createUnrealizedConversionFromSMETiles(
-                                   rewriter, loc, resultSMETiles, vectorType));
-    return success();
-  }
-};
-
-struct LegalizeVectorStore : public OpRewritePattern<vector::StoreOp> {
-  using OpRewritePattern<vector::StoreOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(vector::StoreOp storeOp,
-                                PatternRewriter &rewriter) const override {
-    auto vectorType = storeOp.getVectorType();
-    if (!isVectorTypeMultipleOfSMETileSize(vectorType))
-      return failure();
-
-    auto loc = storeOp.getLoc();
-    auto tileType = getSMETileTypeForElement(vectorType.getElementType());
-    auto inputSMETiles = createUnrealizedConversionToSMETiles(
-        rewriter, loc, storeOp.getValueToStore());
-
-    for (auto [index, subTile] : llvm::enumerate(
-             decompose2DVectorType(rewriter, vectorType, tileType))) {
-      rewriter.create<vector::StoreOp>(
-          loc, inputSMETiles[index], storeOp.getBase(),
-          subTile.remapIndicesForSubTile(loc, storeOp.getIndices()));
-    }
-
-    rewriter.eraseOp(storeOp);
-    return success();
-  }
-};
-
-struct LegalizeVectorOuterProduct
-    : public OpRewritePattern<vector::OuterProductOp> {
-  using OpRewritePattern<vector::OuterProductOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(vector::OuterProductOp outerProductOp,
-                                PatternRewriter &rewriter) const override {
+struct LegalizeVectorOuterProductOp
+    : public OneToNOpConversionPattern<vector::OuterProductOp> {
+  using OneToNOpConversionPattern<
+      vector::OuterProductOp>::OneToNOpConversionPattern;
+  LogicalResult
+  matchAndRewrite(vector::OuterProductOp outerProductOp, OpAdaptor adaptor,
+                  OneToNPatternRewriter &rewriter) const override {
     auto vectorType = outerProductOp.getResultVectorType();
     if (!isVectorTypeMultipleOfSMETileSize(vectorType))
       return failure();
@@ -198,11 +134,6 @@ struct LegalizeVectorOuterProduct
     auto tileType = getSMETileTypeForElement(vectorType.getElementType());
     VectorType sliceType = VectorType::Builder(tileType).dropDim(0);
 
-    ValueRange accSMETiles{};
-    if (outerProductOp.getAcc())
-      accSMETiles = createUnrealizedConversionToSMETiles(
-          rewriter, loc, outerProductOp.getAcc());
-
     SmallVector<Value> resultSMETiles;
     for (auto [index, subTile] : llvm::enumerate(
              decompose2DVectorType(rewriter, vectorType, tileType))) {
@@ -218,7 +149,7 @@ struct LegalizeVectorOuterProduct
 
       Operation *subOuterProduct = rewriter.create<vector::OuterProductOp>(
           loc, tileType, lhs, rhs,
-          !accSMETiles.empty() ? accSMETiles[index] : Value{},
+          !adaptor.getAcc().empty() ? adaptor.getAcc()[index] : Value{},
           outerProductOp.getKind());
 
       if (*subMask)
@@ -228,18 +159,19 @@ struct LegalizeVectorOuterProduct
       resultSMETiles.push_back(subOuterProduct->getResult(0));
     }
 
-    rewriter.replaceOp(rootOp, createUnrealizedConversionFromSMETiles(
-                                   rewriter, loc, resultSMETiles, vectorType));
-
+    rewriter.replaceOp(rootOp, resultSMETiles, adaptor.getResultMapping());
     return success();
   }
 };
 
-struct LegalizeTransferRead : public OpRewritePattern<vector::TransferReadOp> {
-  using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
+struct LegalizeTransferReadOp
+    : public OneToNOpConversionPattern<vector::TransferReadOp> {
+  using OneToNOpConversionPattern<
+      vector::TransferReadOp>::OneToNOpConversionPattern;
 
-  LogicalResult matchAndRewrite(vector::TransferReadOp readOp,
-                                PatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewrite(vector::TransferReadOp readOp, OpAdaptor adaptor,
+                  OneToNPatternRewriter &rewriter) const override {
     auto vectorType = readOp.getVectorType();
     if (!isVectorTypeMultipleOfSMETileSize(vectorType))
       return failure();
@@ -271,21 +203,20 @@ struct LegalizeTransferRead : public OpRewritePattern<vector::TransferReadOp> {
       resultSMETiles.push_back(transferRead);
     }
 
-    rewriter.replaceOp(readOp, createUnrealizedConversionFromSMETiles(
-                                   rewriter, loc, resultSMETiles, vectorType));
-
+    rewriter.replaceOp(readOp, resultSMETiles, adaptor.getResultMapping());
     return success();
   }
 };
 
-struct LegalizeTransferWrite
-    : public OpRewritePattern<vector::TransferWriteOp> {
-  using OpRewritePattern<vector::TransferWriteOp>::OpRewritePattern;
+struct LegalizeTransferWriteOp
+    : public OneToNOpConversionPattern<vector::TransferWriteOp> {
+  using OneToNOpConversionPattern<
+      vector::TransferWriteOp>::OneToNOpConversionPattern;
 
-  LogicalResult matchAndRewrite(vector::TransferWriteOp writeOp,
-                                PatternRewriter &rewriter) const override {
+  LogicalResult
+  matchAndRewrite(vector::TransferWriteOp writeOp, OpAdaptor adaptor,
+                  OneToNPatternRewriter &rewriter) const override {
     auto vectorType = writeOp.getVectorType();
-
     if (!isVectorTypeMultipleOfSMETileSize(vectorType))
       return failure();
 
@@ -299,8 +230,7 @@ struct LegalizeTransferWrite
 
     auto loc = writeOp.getLoc();
     auto tileType = getSMETileTypeForElement(vectorType.getElementType());
-    auto inputSMETiles = createUnrealizedConversionToSMETiles(
-        rewriter, loc, writeOp.getVector());
+    auto inputSMETiles = adaptor.getVector();
 
     Value destTensorOrMemref = writeOp.getSource();
     for (auto [index, subTile] : llvm::enumerate(decompose2DVectorType(
@@ -327,145 +257,32 @@ struct LegalizeTransferWrite
   }
 };
 
-struct LegalizeSCFYield : public OpRewritePattern<scf::YieldOp> {
-
-  LogicalResult matchAndRewrite(scf::YieldOp yieldOp,
-                                PatternRewriter &rewriter) const override {
-    auto loc = yieldOp.getLoc();
-    SmallVector<Value> expandedOperands;
-    expandedOperands.reserve(yieldOp.getNumOperands());
-    for (Value operand : yieldOp.getOperands()) {
-      auto vectorType = llvm::dyn_cast<VectorType>(operand.getType());
-      if (!vectorType || !isVectorTypeMultipleOfSMETileSize(vectorType)) {
-        expandedOperands.push_back(operand);
-        continue;
-      }
-      auto newOperands =
-          createUnrealizedConversionToSMETiles(rewriter, loc, operand);
-      expandedOperands.append(std::begin(newOperands), std::end(newOperands));
-    }
-    if (expandedOperands.size() == yieldOp.getNumOperands())
-      return failure();
-    rewriter.create<scf::YieldOp>(loc, expandedOperands);
-  }
-};
-
-struct FoldNonConstantExtractsOf2DScalableMasks
-    : public OpRewritePattern<vector::ExtractOp> {
-  using OpRewritePattern<vector::ExtractOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(vector::ExtractOp extractOp,
-                                PatternRewriter &rewriter) const override {
-    auto loc = extractOp.getLoc();
-    auto createMaskOp =
-        extractOp.getVector().getDefiningOp<vector::CreateMaskOp>();
-    if (!createMaskOp)
-      return failure();
-
-    VectorType extractedMaskType =
-        llvm::dyn_cast<VectorType>(extractOp.getResult().getType());
-
-    if (!extractedMaskType)
-      return failure();
-
-    if (extractOp.hasDynamicPosition())
-      return failure();
-
-    auto sourceVectorType = extractOp.getSourceVectorType();
-    ArrayRef<int64_t> extractOpPos = extractOp.getStaticPosition();
-
-    // TODO
-    if (extractOpPos.size() != 1)
-      return failure();
-
-    for (auto i = 0U; i < extractOpPos.size(); i++) {
-      if (sourceVectorType.getScalableDims()[i])
-        return failure();
-    }
-    auto numScalable = llvm::count(extractedMaskType.getScalableDims(), true);
-
-    if (numScalable != 2)
-      return failure();
-
-    auto operand = createMaskOp.getOperand(0);
-    if (operand.getDefiningOp<arith::ConstantOp>())
-      return failure();
-
-    auto index = rewriter.create<arith::ConstantIndexOp>(loc, extractOpPos[0]);
-    auto cond = rewriter.create<arith::CmpIOp>(
-        loc, rewriter.getI1Type(), arith::CmpIPredicate::slt, index, operand);
-    auto activeRows = rewriter.create<arith::SelectOp>(
-        loc, cond, createMaskOp.getOperand(1),
-        rewriter.create<arith::ConstantIndexOp>(loc, 0));
-    rewriter.replaceOpWithNewOp<vector::CreateMaskOp>(
-        extractOp, extractedMaskType,
-        ValueRange{activeRows.getResult(), createMaskOp.getOperand(2)});
-    return success();
-  }
-};
-
-struct FoldIllegalTransposeIntoTransferRead
-    : public OpRewritePattern<vector::TransposeOp> {
-  using OpRewritePattern<vector::TransposeOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(vector::TransposeOp tranposeOp,
-                                PatternRewriter &rewriter) const override {
-    auto sourceType = tranposeOp.getSourceVectorType();
-
-    bool seenSD = false;
-    bool iST = false;
-    for (bool s : sourceType.getScalableDims()) {
-      if (s)
-        seenSD = true;
-      if (!s && seenSD) {
-        iST = true;
-        break;
-      }
-    }
-
-    if (!iST)
-      return failure();
-    auto read = tranposeOp.getVector().getDefiningOp<vector::TransferReadOp>();
-    if (!read)
-      return failure();
-
-    if (!read.getPermutationMap().isIdentity())
-      return failure();
-
-    auto loc = tranposeOp.getLoc();
-    mlir::AffineMap map =
-        AffineMap::getPermutationMap(tranposeOp.getPermutation(), getContext());
-
-    Value mask = read.getMask();
-    if (mask)
-      mask = rewriter.create<vector::TransposeOp>(loc, mask,
-                                                  tranposeOp.getPermutation());
-
-    auto source = rewriter.create<memref::TransposeOp>(loc, read.getSource(),
-                                                       AffineMapAttr::get(map));
-    auto test = SmallVector{read.getIndices()[1], read.getIndices()[0]};
-
-    rewriter.replaceOpWithNewOp<vector::TransferReadOp>(
-        tranposeOp, tranposeOp.getResultVectorType(), source, test,
-        read.getPermutationMapAttr(), read.getPadding(), mask,
-        read.getInBoundsAttr());
-
-    return success();
-  }
-};
-
 struct VectorLegalizationPass
     : public arm_sme::impl::VectorLegalizationBase<VectorLegalizationPass> {
   void runOnOperation() override {
-    RewritePatternSet patterns(&getContext());
-    patterns
-        .add<LegalizeVectorLoad, LegalizeVectorStore,
-             LegalizeVectorOuterProduct, LegalizeTransferRead,
-             LegalizeTransferWrite, FoldNonConstantExtractsOf2DScalableMasks,
-             FoldIllegalTransposeIntoTransferRead>(patterns.getContext());
-    if (mlir::failed(mlir::applyPatternsAndFoldGreedily(getOperation(),
-                                                        std::move(patterns)))) {
-      signalPassFailure();
+    auto *context = &getContext();
+    {
+      OneToNTypeConverter typeConverter;
+      RewritePatternSet patterns(context);
+      typeConverter.addConversion([](Type type) { return type; });
+      typeConverter.addConversion(
+          [](VectorType vectorType,
+             SmallVectorImpl<Type> &types) -> std::optional<LogicalResult> {
+            if (!isVectorTypeMultipleOfSMETileSize(vectorType))
+              return std::nullopt;
+            auto subTileCount = getNumberOfSMESubTilesForVectorType(vectorType);
+            auto tileType =
+                getSMETileTypeForElement(vectorType.getElementType());
+            types = SmallVector<Type>(subTileCount, tileType);
+            return success();
+          });
+
+      patterns.add<LegalizeVectorOuterProductOp, LegalizeTransferReadOp,
+                   LegalizeTransferWriteOp>(typeConverter, context);
+      scf::populateSCFStructuralOneToNTypeConversions(typeConverter, patterns);
+      if (failed(applyPartialOneToNConversion(getOperation(), typeConverter,
+                                              std::move(patterns))))
+        return signalPassFailure();
     }
   }
 };
