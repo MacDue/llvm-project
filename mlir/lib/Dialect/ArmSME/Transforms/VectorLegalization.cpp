@@ -131,6 +131,15 @@ struct LegalizeVectorOuterProductOp
       rootOp = maskOp;
     }
 
+    // FIXME: This is a workaround for `vector.mask`; without this the
+    // unrealized_conversion_casts to the SME tile types are placed within the
+    // `vector.mask` region, which results in incorrect IR. This moves the
+    // unrealized_conversion_cast to just before the `vector.mask` op (if
+    // present).
+    ValueRange accSMETiles = adaptor.getAcc();
+    if (!accSMETiles.empty())
+      accSMETiles[0].getDefiningOp()->moveBefore(rootOp);
+
     auto tileType = getSMETileTypeForElement(vectorType.getElementType());
     VectorType sliceType = VectorType::Builder(tileType).dropDim(0);
 
@@ -149,7 +158,7 @@ struct LegalizeVectorOuterProductOp
 
       Operation *subOuterProduct = rewriter.create<vector::OuterProductOp>(
           loc, tileType, lhs, rhs,
-          !adaptor.getAcc().empty() ? adaptor.getAcc()[index] : Value{},
+          !accSMETiles.empty() ? accSMETiles[index] : Value{},
           outerProductOp.getKind());
 
       if (*subMask)
