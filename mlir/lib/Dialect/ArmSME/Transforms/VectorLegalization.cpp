@@ -22,7 +22,7 @@ using namespace mlir::arm_sme;
 namespace {
 
 struct SMETile {
-  // Note: The units of (row, col) vscale (as SME tiles are scalable).
+  // Note: The units of (row, col) are vscale (as SME tiles are scalable).
   int row{0};
   int col{0};
   VectorType type;
@@ -59,7 +59,7 @@ bool isSupportedMaskOp(Value mask) {
   return !mask || mask.getDefiningOp<vector::CreateMaskOp>();
 }
 
-/// Extracts a mask for a SME tile from the mask of a larger vector type.
+/// Extracts a mask for an SME tile from the mask of a larger vector type.
 Value extractSMEMask(OpBuilder &builder, Location loc, Value mask,
                      SMETile tileTile) {
   assert(isSupportedMaskOp(mask));
@@ -103,6 +103,7 @@ int getNumberOfSMETilesForVectorType(VectorType type) {
   return (vectorRows * vectorCols) / (minNumElts * minNumElts);
 }
 
+/// Legalize `vector.outerproduct` operations to fit within SME tiles.
 struct LegalizeVectorOuterProductOp
     : public OneToNOpConversionPattern<vector::OuterProductOp> {
   using OneToNOpConversionPattern::OneToNOpConversionPattern;
@@ -176,6 +177,7 @@ struct LegalizeMaskedVectorOuterProductOp
   }
 };
 
+/// Legalize `vector.transfer_read` operations to fit within SME tiles.
 struct LegalizeTransferReadOp
     : public OneToNOpConversionPattern<vector::TransferReadOp> {
   using OneToNOpConversionPattern::OneToNOpConversionPattern;
@@ -219,6 +221,7 @@ struct LegalizeTransferReadOp
   }
 };
 
+/// Legalize `vector.transfer_write` operations to fit within SME tiles.
 struct LegalizeTransferWriteOp
     : public OneToNOpConversionPattern<vector::TransferWriteOp> {
   using OneToNOpConversionPattern::OneToNOpConversionPattern;

@@ -35,16 +35,19 @@ bool isValidSMETileElementType(Type type);
 /// otherwise.
 bool isValidSMETileVectorType(VectorType vType);
 
-bool isMultipleOfSMETileVectorType(VectorType vType);
-
-VectorType getSMETileTypeForElement(Type elementType);
-
 /// Returns the type of SME tile this vector type corresponds to, or none if the
 /// vector type does not fit within an SME tile.
 std::optional<ArmSMETileType> getSMETileType(VectorType);
 
 /// Verifies the tile ID (if set) on this tile operation is valid.
 LogicalResult verifyOperationHasValidTileId(Operation *);
+
+/// Returns true if `vType` is a multiple of an SME tile size. Note returns
+/// false if the `vType` exactly matches the size of an SME tile.
+bool isMultipleOfSMETileVectorType(VectorType vType);
+
+/// Creates a vector type for the SME tile of `elementType`.
+VectorType getSMETileTypeForElement(Type elementType);
 
 } // namespace mlir::arm_sme
 
