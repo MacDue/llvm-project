@@ -80,16 +80,17 @@ Value extractSMEMask(OpBuilder &builder, Location loc, Value mask,
 /// contained within a VectorType.
 auto decomposeToSMETiles(OpBuilder &builder, VectorType type,
                          VectorType smeTileType,
-                         bool transposeTileOrder = false) {
+                         bool transposeIndices = false) {
   assert(isMultipleOfSMETileVectorType(type));
   return llvm::map_range(
-      StaticTileOffsetRange(
-          type.getShape(),
-          {smeTileType.getDimSize(0), smeTileType.getDimSize(1)},
-          transposeTileOrder ? ArrayRef<int64_t>{1, 0}
-                             : ArrayRef<int64_t>{0, 1}),
+      StaticTileOffsetRange(type.getShape(), {smeTileType.getDimSize(0),
+                                              smeTileType.getDimSize(1)}),
       [=](auto indices) {
-        return SMETile{int(indices[0]), int(indices[1]), smeTileType};
+        int row = int(indices[0]);
+        int col = int(indices[1]);
+        if (transposeIndices)
+          std::swap(row, col);
+        return SMETile{row, col, smeTileType};
       });
 }
 
@@ -199,14 +200,14 @@ struct LegalizeTransferReadOp
 
     // Note: For 2D vector types the only non-identity permutation is a simple
     // tranpose [1, 0].
-    bool transposeTiles = !permutationMap.isIdentity();
+    bool transposed = !permutationMap.isIdentity();
 
     auto loc = readOp.getLoc();
     auto tileType = getSMETileTypeForElement(vectorType.getElementType());
 
     SmallVector<Value> resultSMETiles;
     for (SMETile tileTile :
-         decomposeToSMETiles(rewriter, vectorType, tileType, transposeTiles)) {
+         decomposeToSMETiles(rewriter, vectorType, tileType, transposed)) {
       auto tileMask = extractSMEMask(rewriter, loc, mask, tileTile);
       auto transferRead = rewriter.create<vector::TransferReadOp>(
           loc, tileType, readOp.getSource(),
@@ -243,15 +244,15 @@ struct LegalizeTransferWriteOp
 
     // Note: For 2D vector types the only non-identity permutation is a simple
     // tranpose [1, 0].
-    bool transposeTiles = !permutationMap.isIdentity();
+    bool transposed = !permutationMap.isIdentity();
 
     auto loc = writeOp.getLoc();
     auto tileType = getSMETileTypeForElement(vectorType.getElementType());
     auto inputSMETiles = adaptor.getVector();
 
     Value destTensorOrMemref = writeOp.getSource();
-    for (auto [index, tileTile] : llvm::enumerate(decomposeToSMETiles(
-             rewriter, vectorType, tileType, transposeTiles))) {
+    for (auto [index, tileTile] : llvm::enumerate(
+             decomposeToSMETiles(rewriter, vectorType, tileType, transposed))) {
       auto tileMask = extractSMEMask(rewriter, loc, mask, tileTile);
       auto tileWrite = rewriter.create<vector::TransferWriteOp>(
           loc, inputSMETiles[index], destTensorOrMemref,

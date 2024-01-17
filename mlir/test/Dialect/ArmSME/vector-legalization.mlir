@@ -67,4 +67,22 @@ func.func @transfer_write_f32_scalable_8x8_masked(%dest: memref<?x?xf32>, %vec: 
   return
 }
 
-// func.func @
+#transpose = affine_map<(d0, d1) -> (d1, d0)>
+
+func.func @transpose_f32_scalable_4x16_via_read(%memref: memref<?x?xf32>)
+{
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f32
+  %0 = vector.transfer_read %memref[%c0, %c0], %pad {permutation_map = #transpose, in_bounds = [true, true]} : memref<?x?xf32>, vector<[8]x[8]xf32>
+  vector.transfer_write %0, %memref[%c0, %c0] {in_bounds = [true, true]} : vector<[8]x[8]xf32>, memref<?x?xf32>
+  return
+}
+
+func.func @transpose_f32_scalable_4x16_via_write(%memref: memref<?x?xf32>)
+{
+  %c0 = arith.constant 0 : index
+  %pad = arith.constant 0.0 : f32
+  %0 = vector.transfer_read %memref[%c0, %c0], %pad {in_bounds = [true, true]} : memref<?x?xf32>, vector<[8]x[8]xf32>
+  vector.transfer_write %0, %memref[%c0, %c0] {permutation_map = #transpose, in_bounds = [true, true]} : vector<[8]x[8]xf32>, memref<?x?xf32>
+  return
+}
