@@ -20,7 +20,7 @@ using namespace mlir::arm_sme;
 
 namespace {
 
-struct SubTile {
+struct SMETile {
   // Note: The units of (row, col) value (as SME tiles are scalable).
   int row{0};
   int col{0};
@@ -38,57 +38,57 @@ SmallVector<Value, 2> add2DScalableOffsetToIndices(OpBuilder &builder,
   auto colIndex = builder.create<arith::MulIOp>(
       loc, builder.create<arith::ConstantIndexOp>(loc, scalableOffset[1]),
       vscale);
-  auto subTileRowIndex =
+  auto tileTileRowIndex =
       builder.create<arith::AddIOp>(loc, rowIndex, indices[0]);
-  auto subTileColIndex =
+  auto tileTileColIndex =
       builder.create<arith::AddIOp>(loc, colIndex, indices[1]);
-  return {subTileRowIndex, subTileColIndex};
+  return {tileTileRowIndex, tileTileColIndex};
 }
 
-SmallVector<Value, 2> remapIndicesForSubTile(OpBuilder &builder, Location loc,
+SmallVector<Value, 2> remapIndicesForSMETile(OpBuilder &builder, Location loc,
                                              ValueRange indices,
-                                             SubTile subTile) {
-  int offset[2] = {subTile.row, subTile.col};
+                                             SMETile tileTile) {
+  int offset[2] = {tileTile.row, tileTile.col};
   return add2DScalableOffsetToIndices(builder, loc, indices, offset);
 }
 
-bool isSupportedMask(Value mask) {
+bool isSupportedMaskOp(Value mask) {
   return !mask || mask.getDefiningOp<vector::CreateMaskOp>();
 }
 
-Value extractSubMask(OpBuilder &builder, Location loc, Value mask,
-                     SubTile subTile) {
-  assert(isSupportedMask(mask));
+Value extractSMEMask(OpBuilder &builder, Location loc, Value mask,
+                     SMETile tileTile) {
+  assert(isSupportedMaskOp(mask));
   if (!mask)
     return Value{};
   auto createMask = mask.getDefiningOp<vector::CreateMaskOp>();
   // The the operands of `vector.create_mask` (from a 2D perspective) are the
-  // coordinates where the mask ends. So we subtract where this tile starts,
-  // from the mask operands to get the parameters for this sub tile.
-  int offset[2] = {-subTile.row, -subTile.col};
-  auto subMaskDims = add2DScalableOffsetToIndices(
+  // coordinates where the mask ends. So we tiletract where this tile starts,
+  // from the mask operands to get the parameters for this tile tile.
+  int offset[2] = {-tileTile.row, -tileTile.col};
+  auto tileMaskDims = add2DScalableOffsetToIndices(
       builder, loc, createMask.getOperands(), offset);
-  auto createSubTileMask = builder.create<vector::CreateMaskOp>(
-      loc, subTile.type.clone(builder.getI1Type()), subMaskDims);
-  return createSubTileMask.getResult();
+  auto createTileMask = builder.create<vector::CreateMaskOp>(
+      loc, tileTile.type.clone(builder.getI1Type()), tileMaskDims);
+  return createTileMask.getResult();
 }
 
-auto decompose2DVectorType(OpBuilder &builder, VectorType type,
-                           VectorType subTileType,
-                           bool transposeSubTileOrder = false) {
+auto decomposeToSMETiles(OpBuilder &builder, VectorType type,
+                         VectorType smeTileType,
+                         bool transposeTileOrder = false) {
   assert(isMultipleOfSMETileVectorType(type));
   return llvm::map_range(
       StaticTileOffsetRange(
           type.getShape(),
-          {subTileType.getDimSize(0), subTileType.getDimSize(1)},
-          transposeSubTileOrder ? ArrayRef<int64_t>{1, 0}
-                                : ArrayRef<int64_t>{0, 1}),
+          {smeTileType.getDimSize(0), smeTileType.getDimSize(1)},
+          transposeTileOrder ? ArrayRef<int64_t>{1, 0}
+                             : ArrayRef<int64_t>{0, 1}),
       [=](auto indices) {
-        return SubTile{int(indices[0]), int(indices[1]), subTileType};
+        return SMETile{int(indices[0]), int(indices[1]), smeTileType};
       });
 }
 
-int getNumberOfSMESubTilesForVectorType(VectorType type) {
+int getNumberOfSMETilesForVectorType(VectorType type) {
   int64_t vectorRows = type.getDimSize(0);
   int64_t vectorCols = type.getDimSize(1);
   auto elementType = type.getElementType();
@@ -117,7 +117,7 @@ struct LegalizeVectorOuterProductOp
       rootOp = maskOp;
     }
 
-    if (!isSupportedMask(mask))
+    if (!isSupportedMaskOp(mask))
       return failure();
 
     // FIXME: This is a workaround for `vector.mask`; without this the
@@ -134,22 +134,21 @@ struct LegalizeVectorOuterProductOp
     VectorType sliceType = VectorType::Builder(tileType).dropDim(0);
 
     SmallVector<Value> resultSMETiles;
-    for (auto [index, subTile] : llvm::enumerate(
-             decompose2DVectorType(rewriter, vectorType, tileType))) {
+    for (auto [index, tileTile] :
+         llvm::enumerate(decomposeToSMETiles(rewriter, vectorType, tileType))) {
 
-      auto subMask = extractSubMask(rewriter, loc, mask, subTile);
+      auto tileMask = extractSMEMask(rewriter, loc, mask, tileTile);
       auto lhs = rewriter.create<vector::ScalableExtractOp>(
-          loc, sliceType, outerProductOp.getLhs(), subTile.row);
+          loc, sliceType, outerProductOp.getLhs(), tileTile.row);
       auto rhs = rewriter.create<vector::ScalableExtractOp>(
-          loc, sliceType, outerProductOp.getRhs(), subTile.col);
-
-      auto subOuterProduct = rewriter.create<vector::OuterProductOp>(
+          loc, sliceType, outerProductOp.getRhs(), tileTile.col);
+      auto tileOuterProduct = rewriter.create<vector::OuterProductOp>(
           loc, tileType, lhs, rhs,
           !accSMETiles.empty() ? accSMETiles[index] : Value{},
           outerProductOp.getKind());
 
       auto maskedOuterProduct =
-          vector::maskOperation(rewriter, subOuterProduct, subMask);
+          vector::maskOperation(rewriter, tileOuterProduct, tileMask);
       resultSMETiles.push_back(maskedOuterProduct->getResult(0));
     }
 
@@ -171,7 +170,7 @@ struct LegalizeTransferReadOp
       return failure();
 
     auto mask = readOp.getMask();
-    if (!isSupportedMask(mask))
+    if (!isSupportedMaskOp(mask))
       return failure();
 
     auto permutationMap = readOp.getPermutationMap();
@@ -186,13 +185,13 @@ struct LegalizeTransferReadOp
     auto tileType = getSMETileTypeForElement(vectorType.getElementType());
 
     SmallVector<Value> resultSMETiles;
-    for (SubTile subTile : decompose2DVectorType(rewriter, vectorType, tileType,
-                                                 transposeTiles)) {
-      auto subMask = extractSubMask(rewriter, loc, mask, subTile);
+    for (SMETile tileTile :
+         decomposeToSMETiles(rewriter, vectorType, tileType, transposeTiles)) {
+      auto tileMask = extractSMEMask(rewriter, loc, mask, tileTile);
       auto transferRead = rewriter.create<vector::TransferReadOp>(
           loc, tileType, readOp.getSource(),
-          remapIndicesForSubTile(rewriter, loc, readOp.getIndices(), subTile),
-          readOp.getPermutationMapAttr(), readOp.getPadding(), subMask,
+          remapIndicesForSMETile(rewriter, loc, readOp.getIndices(), tileTile),
+          readOp.getPermutationMapAttr(), readOp.getPadding(), tileMask,
           readOp.getInBoundsAttr());
       resultSMETiles.push_back(transferRead);
     }
@@ -215,7 +214,7 @@ struct LegalizeTransferWriteOp
       return failure();
 
     auto mask = writeOp.getMask();
-    if (!isSupportedMask(mask))
+    if (!isSupportedMaskOp(mask))
       return failure();
 
     auto permutationMap = writeOp.getPermutationMap();
@@ -231,15 +230,15 @@ struct LegalizeTransferWriteOp
     auto inputSMETiles = adaptor.getVector();
 
     Value destTensorOrMemref = writeOp.getSource();
-    for (auto [index, subTile] : llvm::enumerate(decompose2DVectorType(
+    for (auto [index, tileTile] : llvm::enumerate(decomposeToSMETiles(
              rewriter, vectorType, tileType, transposeTiles))) {
-      auto subMask = extractSubMask(rewriter, loc, mask, subTile);
-      auto subWrite = rewriter.create<vector::TransferWriteOp>(
+      auto tileMask = extractSMEMask(rewriter, loc, mask, tileTile);
+      auto tileWrite = rewriter.create<vector::TransferWriteOp>(
           loc, inputSMETiles[index], destTensorOrMemref,
-          remapIndicesForSubTile(rewriter, loc, writeOp.getIndices(), subTile),
-          writeOp.getPermutationMapAttr(), subMask, writeOp.getInBoundsAttr());
+          remapIndicesForSMETile(rewriter, loc, writeOp.getIndices(), tileTile),
+          writeOp.getPermutationMapAttr(), tileMask, writeOp.getInBoundsAttr());
       if (writeOp.hasPureTensorSemantics())
-        destTensorOrMemref = subWrite.getResult();
+        destTensorOrMemref = tileWrite.getResult();
     }
 
     if (writeOp.hasPureTensorSemantics())
@@ -265,10 +264,10 @@ struct VectorLegalizationPass
              SmallVectorImpl<Type> &types) -> std::optional<LogicalResult> {
             if (!isMultipleOfSMETileVectorType(vectorType))
               return std::nullopt;
-            auto subTileCount = getNumberOfSMESubTilesForVectorType(vectorType);
+            auto tileTileCount = getNumberOfSMETilesForVectorType(vectorType);
             auto tileType =
                 getSMETileTypeForElement(vectorType.getElementType());
-            types = SmallVector<Type>(subTileCount, tileType);
+            types = SmallVector<Type>(tileTileCount, tileType);
             return success();
           });
 
