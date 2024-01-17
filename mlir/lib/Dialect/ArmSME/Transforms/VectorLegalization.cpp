@@ -20,49 +20,58 @@ using namespace mlir::arm_sme;
 
 namespace {
 
-struct SubTileBuilder {
-  SubTileBuilder(OpBuilder &builder, VectorType tileType, int row, int col)
-      : builder(builder), tileType(tileType), row(row), col(col) {}
-
-  int getRow() const { return row; }
-  int getCol() const { return col; }
-
-  SmallVector<Value, 2> remapIndices(Location loc,
-                                     ValueRange parentTileIndices) {
-    auto vscale = builder.create<vector::VectorScaleOp>(loc);
-    auto rowIndex = builder.create<arith::MulIOp>(
-        loc, builder.create<arith::ConstantIndexOp>(loc, getRow()), vscale);
-    auto colIndex = builder.create<arith::MulIOp>(
-        loc, builder.create<arith::ConstantIndexOp>(loc, getCol()), vscale);
-    auto subTileRowIndex =
-        builder.create<arith::AddIOp>(loc, rowIndex, parentTileIndices[0]);
-    auto subTileColIndex =
-        builder.create<arith::AddIOp>(loc, colIndex, parentTileIndices[1]);
-    return {subTileRowIndex, subTileColIndex};
-  }
-
-  FailureOr<Value> extractMask(Location loc, Value mask) {
-    if (!mask)
-      return Value{};
-    auto createMask = mask.getDefiningOp<vector::CreateMaskOp>();
-    if (!createMask)
-      return failure();
-    // The the operands of `vector.create_mask` (from a 2D perspective) are the
-    // coordinates where the mask ends. So we subtract where this tile starts,
-    // from the mask operands to get the parameters for this sub tile.
-    auto subMaskDims = SubTileBuilder(builder, tileType, -getRow(), -getCol())
-                           .remapIndices(loc, createMask.getOperands());
-    auto createSubTileMask = builder.create<vector::CreateMaskOp>(
-        loc, tileType.clone(builder.getI1Type()), subMaskDims);
-    return createSubTileMask.getResult();
-  }
-
-private:
-  OpBuilder &builder;
-  VectorType tileType;
+struct SubTile {
+  // Note: The units of (row, col) value (as SME tiles are scalable).
   int row{0};
   int col{0};
+  VectorType type;
 };
+
+SmallVector<Value, 2> add2DScalableOffsetToIndices(OpBuilder &builder,
+                                                   Location loc,
+                                                   ValueRange indices,
+                                                   int scalableOffset[2]) {
+  auto vscale = builder.create<vector::VectorScaleOp>(loc);
+  auto rowIndex = builder.create<arith::MulIOp>(
+      loc, builder.create<arith::ConstantIndexOp>(loc, scalableOffset[0]),
+      vscale);
+  auto colIndex = builder.create<arith::MulIOp>(
+      loc, builder.create<arith::ConstantIndexOp>(loc, scalableOffset[1]),
+      vscale);
+  auto subTileRowIndex =
+      builder.create<arith::AddIOp>(loc, rowIndex, indices[0]);
+  auto subTileColIndex =
+      builder.create<arith::AddIOp>(loc, colIndex, indices[1]);
+  return {subTileRowIndex, subTileColIndex};
+}
+
+SmallVector<Value, 2> remapIndicesForSubTile(OpBuilder &builder, Location loc,
+                                             ValueRange indices,
+                                             SubTile subTile) {
+  int offset[2] = {subTile.row, subTile.col};
+  return add2DScalableOffsetToIndices(builder, loc, indices, offset);
+}
+
+bool isSupportedMask(Value mask) {
+  return !mask || mask.getDefiningOp<vector::CreateMaskOp>();
+}
+
+Value extractSubMask(OpBuilder &builder, Location loc, Value mask,
+                     SubTile subTile) {
+  assert(isSupportedMask(mask));
+  if (!mask)
+    return Value{};
+  auto createMask = mask.getDefiningOp<vector::CreateMaskOp>();
+  // The the operands of `vector.create_mask` (from a 2D perspective) are the
+  // coordinates where the mask ends. So we subtract where this tile starts,
+  // from the mask operands to get the parameters for this sub tile.
+  int offset[2] = {-subTile.row, -subTile.col};
+  auto subMaskDims = add2DScalableOffsetToIndices(
+      builder, loc, createMask.getOperands(), offset);
+  auto createSubTileMask = builder.create<vector::CreateMaskOp>(
+      loc, subTile.type.clone(builder.getI1Type()), subMaskDims);
+  return createSubTileMask.getResult();
+}
 
 auto decompose2DVectorType(OpBuilder &builder, VectorType type,
                            VectorType subTileType,
@@ -74,8 +83,8 @@ auto decompose2DVectorType(OpBuilder &builder, VectorType type,
           {subTileType.getDimSize(0), subTileType.getDimSize(1)},
           transposeSubTileOrder ? ArrayRef<int64_t>{1, 0}
                                 : ArrayRef<int64_t>{0, 1}),
-      [&, subTileType = subTileType](auto indices) {
-        return SubTileBuilder(builder, subTileType, indices[0], indices[1]);
+      [=](auto indices) {
+        return SubTile{int(indices[0]), int(indices[1]), subTileType};
       });
 }
 
@@ -108,11 +117,14 @@ struct LegalizeVectorOuterProductOp
       rootOp = maskOp;
     }
 
+    if (!isSupportedMask(mask))
+      return failure();
+
     // FIXME: This is a workaround for `vector.mask`; without this the
-    // unrealized_conversion_casts to the SME tile types are placed within the
-    // `vector.mask` region, which results in incorrect IR. This moves the
-    // unrealized_conversion_cast to just before the `vector.mask` op (if
-    // present).
+    // unrealized_conversion_casts to the SME tile types are placed within
+    // the `vector.mask` region, which results in incorrect IR. This moves
+    // the unrealized_conversion_cast to just before the `vector.mask` op
+    // (if present).
     ValueRange accSMETiles = adaptor.getAcc();
     if (!accSMETiles.empty())
       accSMETiles[0].getDefiningOp<UnrealizedConversionCastOp>()->moveBefore(
@@ -125,25 +137,20 @@ struct LegalizeVectorOuterProductOp
     for (auto [index, subTile] : llvm::enumerate(
              decompose2DVectorType(rewriter, vectorType, tileType))) {
 
-      auto subMask = subTile.extractMask(loc, mask);
-      if (failed(subMask))
-        return failure();
-
+      auto subMask = extractSubMask(rewriter, loc, mask, subTile);
       auto lhs = rewriter.create<vector::ScalableExtractOp>(
-          loc, sliceType, outerProductOp.getLhs(), subTile.getRow());
+          loc, sliceType, outerProductOp.getLhs(), subTile.row);
       auto rhs = rewriter.create<vector::ScalableExtractOp>(
-          loc, sliceType, outerProductOp.getRhs(), subTile.getCol());
+          loc, sliceType, outerProductOp.getRhs(), subTile.col);
 
-      Operation *subOuterProduct = rewriter.create<vector::OuterProductOp>(
+      auto subOuterProduct = rewriter.create<vector::OuterProductOp>(
           loc, tileType, lhs, rhs,
           !accSMETiles.empty() ? accSMETiles[index] : Value{},
           outerProductOp.getKind());
 
-      if (*subMask)
-        subOuterProduct =
-            vector::maskOperation(rewriter, subOuterProduct, *subMask);
-
-      resultSMETiles.push_back(subOuterProduct->getResult(0));
+      auto maskedOuterProduct =
+          vector::maskOperation(rewriter, subOuterProduct, subMask);
+      resultSMETiles.push_back(maskedOuterProduct->getResult(0));
     }
 
     rewriter.replaceOp(rootOp, resultSMETiles, adaptor.getResultMapping());
@@ -163,6 +170,10 @@ struct LegalizeTransferReadOp
     if (!isMultipleOfSMETileVectorType(vectorType))
       return failure();
 
+    auto mask = readOp.getMask();
+    if (!isSupportedMask(mask))
+      return failure();
+
     auto permutationMap = readOp.getPermutationMap();
     if (!permutationMap.isPermutation())
       return failure();
@@ -175,18 +186,14 @@ struct LegalizeTransferReadOp
     auto tileType = getSMETileTypeForElement(vectorType.getElementType());
 
     SmallVector<Value> resultSMETiles;
-    for (SubTileBuilder subTile : decompose2DVectorType(
-             rewriter, vectorType, tileType, transposeTiles)) {
-      auto mask = subTile.extractMask(loc, readOp.getMask());
-      if (failed(mask))
-        return failure();
-
+    for (SubTile subTile : decompose2DVectorType(rewriter, vectorType, tileType,
+                                                 transposeTiles)) {
+      auto subMask = extractSubMask(rewriter, loc, mask, subTile);
       auto transferRead = rewriter.create<vector::TransferReadOp>(
           loc, tileType, readOp.getSource(),
-          subTile.remapIndices(loc, readOp.getIndices()),
-          readOp.getPermutationMapAttr(), readOp.getPadding(), *mask,
+          remapIndicesForSubTile(rewriter, loc, readOp.getIndices(), subTile),
+          readOp.getPermutationMapAttr(), readOp.getPadding(), subMask,
           readOp.getInBoundsAttr());
-
       resultSMETiles.push_back(transferRead);
     }
 
@@ -207,6 +214,10 @@ struct LegalizeTransferWriteOp
     if (!isMultipleOfSMETileVectorType(vectorType))
       return failure();
 
+    auto mask = writeOp.getMask();
+    if (!isSupportedMask(mask))
+      return failure();
+
     auto permutationMap = writeOp.getPermutationMap();
     if (!permutationMap.isPermutation())
       return failure();
@@ -222,15 +233,11 @@ struct LegalizeTransferWriteOp
     Value destTensorOrMemref = writeOp.getSource();
     for (auto [index, subTile] : llvm::enumerate(decompose2DVectorType(
              rewriter, vectorType, tileType, transposeTiles))) {
-      auto mask = subTile.extractMask(loc, writeOp.getMask());
-      if (failed(mask))
-        return failure();
-
+      auto subMask = extractSubMask(rewriter, loc, mask, subTile);
       auto subWrite = rewriter.create<vector::TransferWriteOp>(
           loc, inputSMETiles[index], destTensorOrMemref,
-          subTile.remapIndices(loc, writeOp.getIndices()),
-          writeOp.getPermutationMapAttr(), *mask, writeOp.getInBoundsAttr());
-
+          remapIndicesForSubTile(rewriter, loc, writeOp.getIndices(), subTile),
+          writeOp.getPermutationMapAttr(), subMask, writeOp.getInBoundsAttr());
       if (writeOp.hasPureTensorSemantics())
         destTensorOrMemref = subWrite.getResult();
     }
