@@ -2,6 +2,7 @@
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h"
 #include "mlir/Dialect/ArmSME/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/Transforms/OneToNFuncConversions.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/Utils/IndexingUtils.h"
@@ -273,6 +274,7 @@ struct VectorLegalizationPass
 
       patterns.add<LegalizeVectorOuterProductOp, LegalizeTransferReadOp,
                    LegalizeTransferWriteOp>(typeConverter, context);
+      populateFuncTypeConversionPatterns(typeConverter, patterns);
       scf::populateSCFStructuralOneToNTypeConversions(typeConverter, patterns);
 
       if (failed(applyPartialOneToNConversion(getOperation(), typeConverter,

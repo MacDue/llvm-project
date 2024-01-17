@@ -123,7 +123,7 @@ def TileAllocation
 }
 
 def VectorLegalization
-  : Pass<"arm-sme-vector-legalization", "mlir::func::FuncOp"> {
+  : Pass<"arm-sme-vector-legalization", "mlir::ModuleOp"> {
   let summary = "TODO";
   let description = [{ TODO }];
   let constructor = "mlir::arm_sme::createVectorLegalizationPass()";
