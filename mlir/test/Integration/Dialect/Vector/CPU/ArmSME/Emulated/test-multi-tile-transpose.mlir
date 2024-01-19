@@ -81,6 +81,7 @@ func.func @testTransposedWriteWithMask() {
   %pad = arith.constant 0.0 : f32
   %c0 = arith.constant 0 : index
 
+  /// A regular read.
   %read = vector.transfer_read %inDyn[%c0, %c0], %pad {in_bounds = [true, true]}
     : memref<?x?xf32>, vector<[16]x[4]xf32>
 
@@ -89,6 +90,8 @@ func.func @testTransposedWriteWithMask() {
   %maskCols = arith.constant 8 : index
   %mask = vector.create_mask %maskRows, %maskCols : vector<[4]x[16]xi1>
 
+  /// Write out the data with a transpose. Here (like the read test) the mask
+  /// matches the shape of the memory, not the vector.
   vector.transfer_write %read, %outDyn[%c0, %c0], %mask {permutation_map = #transpose, in_bounds = [true, true]}
     : vector<[16]x[4]xf32>, memref<?x?xf32>
 
