@@ -3,7 +3,7 @@
 // CHECK-LABEL: @outerproduct_f32_scalable_8x8_no_acc(
 // CHECK-SAME:                                        %[[LHS:.*]]: vector<[8]xf32>,
 // CHECK-SAME:                                        %[[RHS:.*]]: vector<[8]xf32>)
-// CHECK-SAME:  -> (vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>)
+// CHECK-SAME: -> (vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>)
 func.func @outerproduct_f32_scalable_8x8_no_acc(%lhs: vector<[8]xf32>, %rhs: vector<[8]xf32>) -> vector<[8]x[8]xf32>
 {
   // CHECK-DAG: %[[LHS_0:.*]] = vector.scalable.extract %[[LHS]][0] : vector<[4]xf32> from vector<[8]xf32>
@@ -22,13 +22,13 @@ func.func @outerproduct_f32_scalable_8x8_no_acc(%lhs: vector<[8]xf32>, %rhs: vec
 // -----
 
 // CHECK-LABEL: @outerproduct_f32_scalable_4x16_acc(
-// CHECK-SAME:                                        %[[LHS:.*]]: vector<[4]xf32>,
-// CHECK-SAME:                                        %[[RHS:.*]]: vector<[16]xf32>,
-// CHECK-SAME:                                        %[[ACC_0:.*]]: vector<[4]x[4]xf32>,
-// CHECK-SAME:                                        %[[ACC_1:.*]]: vector<[4]x[4]xf32>,
-// CHECK-SAME:                                        %[[ACC_2:.*]]: vector<[4]x[4]xf32>,
-// CHECK-SAME:                                        %[[ACC_3:.*]]: vector<[4]x[4]xf32>)
-// CHECK-SAME:  -> (vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>)
+// CHECK-SAME:                                      %[[LHS:.*]]: vector<[4]xf32>,
+// CHECK-SAME:                                      %[[RHS:.*]]: vector<[16]xf32>,
+// CHECK-SAME:                                      %[[ACC_0:.*]]: vector<[4]x[4]xf32>,
+// CHECK-SAME:                                      %[[ACC_1:.*]]: vector<[4]x[4]xf32>,
+// CHECK-SAME:                                      %[[ACC_2:.*]]: vector<[4]x[4]xf32>,
+// CHECK-SAME:                                      %[[ACC_3:.*]]: vector<[4]x[4]xf32>)
+// CHECK-SAME: -> (vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>)
 func.func @outerproduct_f32_scalable_4x16_acc(%lhs: vector<[4]xf32>, %rhs: vector<[16]xf32>, %acc: vector<[4]x[16]xf32>) -> vector<[4]x[16]xf32>
 {
   // CHECK-DAG: %[[LHS_0:.*]] = vector.scalable.extract %[[LHS]][0] : vector<[4]xf32> from vector<[4]xf32>
@@ -47,12 +47,12 @@ func.func @outerproduct_f32_scalable_4x16_acc(%lhs: vector<[4]xf32>, %rhs: vecto
 
 // -----
 
-// CHECK-LABEL: @outerproduct_f32_scalable_4x16_acc(
-// CHECK-SAME:                                      %[[LHS:.*]]: vector<[16]xf32>,
-// CHECK-SAME:                                      %[[RHS:.*]]: vector<[4]xf32>,
-// CHECK-SAME:                                      %[[LHS_DIM:.*]]: index,
-// CHECK-SAME:                                      %[[RHS_DIM:.*]]: index)
-// CHECK-SAME:  -> (vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>)
+// CHECK-LABEL: @outerproduct_f32_masked_scalable_16x4(
+// CHECK-SAME:                                         %[[LHS:.*]]: vector<[16]xf32>,
+// CHECK-SAME:                                         %[[RHS:.*]]: vector<[4]xf32>,
+// CHECK-SAME:                                         %[[LHS_DIM:.*]]: index,
+// CHECK-SAME:                                         %[[RHS_DIM:.*]]: index)
+// CHECK-SAME: -> (vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>, vector<[4]x[4]xf32>)
 func.func @outerproduct_f32_masked_scalable_16x4(%lhs: vector<[16]xf32>, %rhs: vector<[4]xf32>, %lhs_dim: index, %rhs_dim: index) -> vector<[16]x[4]xf32>
 {
   // CHECK-DAG: %[[VSCALE:.*]] = vector.vscale
@@ -91,7 +91,7 @@ func.func @outerproduct_f32_masked_scalable_16x4(%lhs: vector<[16]xf32>, %rhs: v
 // CHECK-LABEL: @outerproduct_f64_scalable_8x4_no_acc(
 // CHECK-SAME:                                      %[[LHS:.*]]: vector<[8]xf64>,
 // CHECK-SAME:                                      %[[RHS:.*]]: vector<[4]xf64>)
-// CHECK-SAME:  -> (vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>)
+// CHECK-SAME: -> (vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>, vector<[2]x[2]xf64>)
 func.func @outerproduct_f64_scalable_8x4_no_acc(%lhs: vector<[8]xf64>, %rhs: vector<[4]xf64>) -> vector<[8]x[4]xf64>
 {
   // CHECK-DAG: %[[LHS_0:.*]] = vector.scalable.extract %[[LHS]][0] : vector<[2]xf64> from vector<[8]xf64>
@@ -170,7 +170,7 @@ func.func @transpose_f32_scalable_4x16_via_read(%memref: memref<?x?xf32>)
 
 // -----
 
-// #transpose = affine_map<(d0, d1) -> (d1, d0)>
+#transpose = affine_map<(d0, d1) -> (d1, d0)>
 
 func.func @transpose_f32_scalable_4x16_via_write(%memref: memref<?x?xf32>)
 {
