@@ -19,9 +19,12 @@
 #include "mlir/Dialect/ArmSME/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/OneToNFuncConversions.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/Utils/IndexingUtils.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/OneToNTypeConversion.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "arm-sme-vector-legalization"
 
@@ -338,13 +341,200 @@ struct LegalizeTransferWriteOpsByDecomposition
   }
 };
 
+//===----------------------------------------------------------------------===//
+// ArmSME-specific fixup canonicalizations/folds
+//===----------------------------------------------------------------------===//
+
+/// Lowers a constant extract from a 3D `vector.create_mask` (which is a vector
+/// of SME-like masks), into a compare and a 2D `vector.create_mask`. This is
+/// necessary for the mask to be lowered to ArmSME.
+///
+///  BEFORE:
+///  ```mlir
+///  %mask = vector.create_mask %nonConstantDim, %a, %b : vector<4x[4]x[4]xi1>
+///  %subMask = vector.extract %mask[2]
+///          : vector<[4]x[4]xi1> from vector<4x[4]x[4]xi1>
+///  ```
+///
+///  AFTER:
+///  ```mlir
+///  %extractionInTrueRegion = arith.cmpi slt, %c2, %nonConstantDim : index
+///  %newMaskFrontDim = arith.select %extractionInTrueRegion, %a, %c0 : index
+///  %subMask = vector.create_mask %newMaskFrontDim, %b : vector<[4]x[4]xi1>
+///  ```
+struct FoldConstantExtractFromVectorOfSMECreateMasks
+    : public OpRewritePattern<vector::ExtractOp> {
+  using OpRewritePattern<vector::ExtractOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::ExtractOp extractOp,
+                                PatternRewriter &rewriter) const override {
+    auto loc = extractOp.getLoc();
+    auto createMaskOp =
+        extractOp.getVector().getDefiningOp<vector::CreateMaskOp>();
+    if (!createMaskOp)
+      return failure();
+
+    VectorType extractedMaskType =
+        llvm::dyn_cast<VectorType>(extractOp.getResult().getType());
+    if (!extractedMaskType)
+      return failure();
+
+    if (extractOp.hasDynamicPosition())
+      return failure();
+
+    ArrayRef<int64_t> extractOpPos = extractOp.getStaticPosition();
+    // TODO: Support multiple extraction indices.
+    if (extractOpPos.size() != 1)
+      return failure();
+
+    auto numScalable = llvm::count(extractedMaskType.getScalableDims(), true);
+    if (numScalable != 2)
+      return failure();
+
+    // There's other folds that can handle constant dims.
+    auto frontMaskDim = createMaskOp.getOperand(0);
+    if (frontMaskDim.getDefiningOp<arith::ConstantOp>())
+      return failure();
+
+    auto zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    auto extractionIndex =
+        rewriter.create<arith::ConstantIndexOp>(loc, extractOpPos[0]);
+    auto extractionInTrueRegion = rewriter.create<arith::CmpIOp>(
+        loc, rewriter.getI1Type(), arith::CmpIPredicate::slt, extractionIndex,
+        frontMaskDim);
+    auto newMaskFrontDim = rewriter.create<arith::SelectOp>(
+        loc, extractionInTrueRegion, createMaskOp.getOperand(1), zero);
+
+    rewriter.replaceOpWithNewOp<vector::CreateMaskOp>(
+        extractOp, extractedMaskType,
+        ValueRange{newMaskFrontDim, createMaskOp.getOperand(2)});
+    return success();
+  }
+};
+
+///  BEFORE:
+///  ```mlir
+///  %illegalRead = vector.transfer_read %subview[%c0, %c0]
+///                  : memref<?x?xf32>, vector<[8]x4xf32>
+///  %legalType = vector.transpose %illegalRead, [1, 0]
+///                  : vector<[8]x4xf32> to vector<4x[8]xf32>
+///  ```
+///
+///  AFTER:
+///  ```mlir
+///  %transpose = memref.transpose %subview (d0, d1) -> (d1, d0)
+///                  : memref<?x?xf32> to memref<?x?xf32>
+///  %legalType = vector.transfer_read %transpose[%c0, %c0]
+///                  : memref<?x?xf32>, vector<4x[8]xf32>
+///  ```
+struct LiftIllegalVectorTransposeToMemory
+    : public OpRewritePattern<vector::TransposeOp> {
+  using OpRewritePattern<vector::TransposeOp>::OpRewritePattern;
+
+  static bool isIllegalVectorType(VectorType vType) {
+    bool seenFixedDim = false;
+    for (bool scalableFlag : llvm::reverse(vType.getScalableDims())) {
+      seenFixedDim |= !scalableFlag;
+      if (seenFixedDim && scalableFlag)
+        return true;
+    }
+    return false;
+  }
+
+  static Value getExtensionSource(Operation *op) {
+    if (auto signExtend = dyn_cast<arith::ExtSIOp>(op))
+      return signExtend.getIn();
+    if (auto zeroExtend = dyn_cast<arith::ExtUIOp>(op))
+      return zeroExtend.getIn();
+    if (auto floatExtend = dyn_cast<arith::ExtFOp>(op))
+      return floatExtend.getIn();
+    return {};
+  }
+
+  static void replaceTranspose(PatternRewriter &rewriter, Location loc,
+                               vector::TransposeOp transposeOp,
+                               Value newTransposedValue,
+                               Operation *previousExtend) {
+    newTransposedValue = [&]() -> Value {
+      if (isa<arith::ExtSIOp>(previousExtend))
+        return rewriter.create<arith::ExtSIOp>(
+            loc, transposeOp.getResultVectorType(), newTransposedValue);
+      if (isa<arith::ExtUIOp>(previousExtend))
+        return rewriter.create<arith::ExtUIOp>(
+            loc, transposeOp.getResultVectorType(), newTransposedValue);
+      if (isa<arith::ExtFOp>(previousExtend))
+        return rewriter.create<arith::ExtFOp>(
+            loc, transposeOp.getResultVectorType(), newTransposedValue);
+      return newTransposedValue;
+    }();
+    rewriter.replaceOp(transposeOp, newTransposedValue);
+  }
+
+  LogicalResult matchAndRewrite(vector::TransposeOp transposeOp,
+                                PatternRewriter &rewriter) const override {
+    auto sourceType = transposeOp.getSourceVectorType();
+    if (!isIllegalVectorType(sourceType))
+      return failure();
+
+    Value maybeMemoryRead = transposeOp.getVector();
+    auto *transposeSourceOp = maybeMemoryRead.getDefiningOp();
+    if (Value extendSource = getExtensionSource(transposeSourceOp))
+      maybeMemoryRead = extendSource;
+
+    auto illegalRead = maybeMemoryRead.getDefiningOp<vector::TransferReadOp>();
+    if (!illegalRead)
+      return failure();
+
+    if (!illegalRead.getPermutationMap().isIdentity())
+      return failure();
+
+    // TODO: Make memref.subview of read then memref.transpose of that.
+
+    auto loc = transposeOp.getLoc();
+    mlir::AffineMap map = AffineMap::getPermutationMap(
+        transposeOp.getPermutation(), getContext());
+
+    Value mask = read.getMask();
+    if (mask)
+      mask = rewriter.create<vector::TransposeOp>(loc, mask,
+                                                  transposeOp.getPermutation());
+
+    auto source = rewriter.create<memref::TransposeOp>(loc, read.getSource(),
+                                                       AffineMapAttr::get(map));
+    auto test = SmallVector{read.getIndices()[1], read.getIndices()[0]};
+
+    Value ret = rewriter.create<vector::TransferReadOp>(
+        loc, transposeOp.getResultVectorType(), source, test,
+        read.getPermutationMapAttr(), read.getPadding(), mask,
+        read.getInBoundsAttr());
+
+    if (ext) {
+      ret = rewriter.create<arith::ExtSIOp>(
+          loc, transposeOp.getResultVectorType(), ret);
+    }
+
+    rewriter.replaceOp(transposeOp, ret);
+
+    return success();
+  }
+};
+
 struct VectorLegalizationPass
     : public arm_sme::impl::VectorLegalizationBase<VectorLegalizationPass> {
   void runOnOperation() override {
     auto *context = &getContext();
+
+    {
+      RewritePatternSet patterns(context);
+      patterns.add<LiftIllegalVectorTransposeToMemory,
+                   FoldConstantExtractFromVectorOfSMECreateMasks>(context);
+      if (failed(applyPatternsAndFoldGreedily(getOperation(),
+                                              std::move(patterns))))
+        return signalPassFailure();
+    }
+
     OneToNTypeConverter converter;
     RewritePatternSet patterns(context);
-
     converter.addConversion([](Type type) { return type; });
     converter.addConversion(
         [](VectorType vectorType,
