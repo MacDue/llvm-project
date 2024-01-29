@@ -388,7 +388,7 @@ struct FoldConstantExtractFromVectorOfSMECreateMasks
     auto numScalable = llvm::count(extractedMaskType.getScalableDims(), true);
     if (numScalable != 2)
       return rewriter.notifyMatchFailure(
-          extractOp, "expected extracted type to be SME-mask like");
+          extractOp, "expected extracted type to be an SME-like mask");
 
     // TODO: Support multiple extraction indices.
     if (extractOp.getStaticPosition().size() != 1)
@@ -472,11 +472,10 @@ struct LiftIllegalVectorTransposeToMemory
   LogicalResult matchAndRewrite(vector::TransposeOp transposeOp,
                                 PatternRewriter &rewriter) const override {
     auto sourceType = transposeOp.getSourceVectorType();
-    if (!isIllegalVectorType(sourceType))
-      return failure();
-
-    if (isIllegalVectorType(transposeOp.getResultVectorType()))
-      return failure();
+    auto resultType = transposeOp.getResultVectorType();
+    if (!isIllegalVectorType(sourceType) || isIllegalVectorType(resultType))
+      return rewriter.notifyMatchFailure(
+          transposeOp, "expected transpose from illegal type to legal type");
 
     Value maybeRead = transposeOp.getVector();
     auto *transposeSourceOp = maybeRead.getDefiningOp();
@@ -488,10 +487,13 @@ struct LiftIllegalVectorTransposeToMemory
 
     auto illegalRead = maybeRead.getDefiningOp<vector::TransferReadOp>();
     if (!illegalRead)
-      return failure();
+      return rewriter.notifyMatchFailure(
+          transposeOp,
+          "expected source to be (possibility extended) transfer_read");
 
     if (!illegalRead.getPermutationMap().isIdentity())
-      return failure();
+      return rewriter.notifyMatchFailure(
+          illegalRead, "expected read to have identity permutation map");
 
     auto loc = transposeOp.getLoc();
     auto zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
@@ -528,7 +530,7 @@ struct LiftIllegalVectorTransposeToMemory
 
     // Note: The indices are all zero as the subview is offset for the read.
     VectorType legalReadType =
-        VectorType::Builder(transposeOp.getResultVectorType())
+        VectorType::Builder(resultType)
             .setElementType(illegalRead.getVectorType().getElementType());
     SmallVector<Value> readIndices(illegalRead.getIndices().size(), zero);
     Value legalRead = rewriter.create<vector::TransferReadOp>(
@@ -541,14 +543,11 @@ struct LiftIllegalVectorTransposeToMemory
       if (!extendOp)
         return legalRead;
       if (isa<arith::ExtSIOp>(extendOp))
-        return rewriter.create<arith::ExtSIOp>(
-            loc, transposeOp.getResultVectorType(), legalRead);
+        return rewriter.create<arith::ExtSIOp>(loc, resultType, legalRead);
       if (isa<arith::ExtUIOp>(extendOp))
-        return rewriter.create<arith::ExtUIOp>(
-            loc, transposeOp.getResultVectorType(), legalRead);
+        return rewriter.create<arith::ExtUIOp>(loc, resultType, legalRead);
       if (isa<arith::ExtFOp>(extendOp))
-        return rewriter.create<arith::ExtFOp>(
-            loc, transposeOp.getResultVectorType(), legalRead);
+        return rewriter.create<arith::ExtFOp>(loc, resultType, legalRead);
       return legalRead;
     }());
 
