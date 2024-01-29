@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/ArmSME/IR/ArmSME.h"
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h"
 #include "mlir/Dialect/ArmSME/Utils/Utils.h"
@@ -375,33 +376,34 @@ struct FoldConstantExtractFromVectorOfSMECreateMasks
     auto createMaskOp =
         extractOp.getVector().getDefiningOp<vector::CreateMaskOp>();
     if (!createMaskOp)
-      return failure();
+      return rewriter.notifyMatchFailure(
+          extractOp, "extract not from vector.create_mask op");
 
     VectorType extractedMaskType =
         llvm::dyn_cast<VectorType>(extractOp.getResult().getType());
     if (!extractedMaskType)
-      return failure();
-
-    if (extractOp.hasDynamicPosition())
-      return failure();
-
-    ArrayRef<int64_t> extractOpPos = extractOp.getStaticPosition();
-    // TODO: Support multiple extraction indices.
-    if (extractOpPos.size() != 1)
-      return failure();
+      return rewriter.notifyMatchFailure(extractOp,
+                                         "extracted type is not a vector type");
 
     auto numScalable = llvm::count(extractedMaskType.getScalableDims(), true);
     if (numScalable != 2)
-      return failure();
+      return rewriter.notifyMatchFailure(
+          extractOp, "expected extracted type to be SME-mask like");
 
-    // There's other folds that can handle constant dims.
+    // TODO: Support multiple extraction indices.
+    if (extractOp.getStaticPosition().size() != 1)
+      return rewriter.notifyMatchFailure(
+          extractOp, "only a single extraction index is supported");
+
     auto frontMaskDim = createMaskOp.getOperand(0);
     if (frontMaskDim.getDefiningOp<arith::ConstantOp>())
-      return failure();
+      return rewriter.notifyMatchFailure(
+          extractOp,
+          "constant vector.create_masks dims should be folded elsewhere");
 
     auto zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    auto extractionIndex =
-        rewriter.create<arith::ConstantIndexOp>(loc, extractOpPos[0]);
+    auto extractionIndex = getValueOrCreateConstantIndexOp(
+        rewriter, loc, extractOp.getMixedPosition()[0]);
     auto extractionInTrueRegion = rewriter.create<arith::CmpIOp>(
         loc, rewriter.getI1Type(), arith::CmpIPredicate::slt, extractionIndex,
         frontMaskDim);
@@ -525,9 +527,12 @@ struct LiftIllegalVectorTransposeToMemory
         loc, readSubview, AffineMapAttr::get(transposeMap));
 
     // Note: The indices are all zero as the subview is offset for the read.
+    VectorType legalReadType =
+        VectorType::Builder(transposeOp.getResultVectorType())
+            .setElementType(illegalRead.getVectorType().getElementType());
     SmallVector<Value> readIndices(illegalRead.getIndices().size(), zero);
     Value legalRead = rewriter.create<vector::TransferReadOp>(
-        loc, transposeOp.getResultVectorType(), transposedSubview, readIndices,
+        loc, legalReadType, transposedSubview, readIndices,
         illegalRead.getPermutationMapAttr(), illegalRead.getPadding(), mask,
         illegalRead.getInBoundsAttr());
 
