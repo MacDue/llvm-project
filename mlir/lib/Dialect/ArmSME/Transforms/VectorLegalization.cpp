@@ -7,8 +7,6 @@
 //===----------------------------------------------------------------------===//
 //
 // This pass legalizes vector operations so they can be lowered to ArmSME.
-// Currently, this only implements the decomposition of vector operations that
-// use vector sizes larger than an SME tile, into multiple SME-sized operations.
 //
 // Note: In the context of this pass 'tile' always refers to an SME tile.
 //
@@ -22,7 +20,6 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/Utils/IndexingUtils.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/OneToNTypeConversion.h"
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -39,7 +36,7 @@ using namespace mlir::arm_sme;
 namespace {
 
 //===----------------------------------------------------------------------===//
-// SME vector decomposition
+// Decomposition of vector operations larger than an SME tile
 //===----------------------------------------------------------------------===//
 
 // Common match failure reasons.
@@ -353,6 +350,8 @@ struct LegalizeTransferWriteOpsByDecomposition
 /// of SME-like masks), into a compare and a 2D `vector.create_mask`. This is
 /// necessary for the mask to be lowered to ArmSME.
 ///
+/// Example:
+///
 ///  BEFORE:
 ///  ```mlir
 ///  %mask = vector.create_mask %nonConstantDim, %a, %b : vector<4x[4]x[4]xi1>
@@ -416,9 +415,20 @@ struct FoldConstantExtractFromVectorOfSMECreateMasks
   }
 };
 
+/// Lifts an illegal vector.transpose and vector.transfer_read to a
+/// memref.subview + memref.transpose, followed by a legal read.
+///
+/// 'Illegal' here means a leading scalable dimension and a fixed trailing
+/// dimension, which has no valid lowering.
+///
+/// The memref.transpose is metadata-only transpose that produces a strided
+/// memref, which eventually becomes a loop reading individual elements.
+///
+/// Example:
+///
 ///  BEFORE:
 ///  ```mlir
-///  %illegalRead = vector.transfer_read %subview[%c0, %c0]
+///  %illegalRead = vector.transfer_read %memref[%a, %b]
 ///                  : memref<?x?xf32>, vector<[8]x4xf32>
 ///  %legalType = vector.transpose %illegalRead, [1, 0]
 ///                  : vector<[8]x4xf32> to vector<4x[8]xf32>
@@ -426,7 +436,9 @@ struct FoldConstantExtractFromVectorOfSMECreateMasks
 ///
 ///  AFTER:
 ///  ```mlir
-///  %transpose = memref.transpose %subview (d0, d1) -> (d1, d0)
+///  %readSubview = memref.subview %memref[%a, %b] [%c8_vscale, %c4] [%c1, %c1]
+///                  : memref<?x?xf32> to memref<?x?xf32>
+///  %transpose = memref.transpose %readSubview (d0, d1) -> (d1, d0)
 ///                  : memref<?x?xf32> to memref<?x?xf32>
 ///  %legalType = vector.transfer_read %transpose[%c0, %c0]
 ///                  : memref<?x?xf32>, vector<4x[8]xf32>
@@ -455,42 +467,24 @@ struct LiftIllegalVectorTransposeToMemory
     return {};
   }
 
-  static void replaceTranspose(PatternRewriter &rewriter, Location loc,
-                               vector::TransposeOp transposeOp,
-                               Value newTransposedValue,
-                               Operation *previousExtend) {
-    newTransposedValue = [&]() -> Value {
-      if (!previousExtend)
-        return newTransposedValue;
-      if (isa<arith::ExtSIOp>(previousExtend))
-        return rewriter.create<arith::ExtSIOp>(
-            loc, transposeOp.getResultVectorType(), newTransposedValue);
-      if (isa<arith::ExtUIOp>(previousExtend))
-        return rewriter.create<arith::ExtUIOp>(
-            loc, transposeOp.getResultVectorType(), newTransposedValue);
-      if (isa<arith::ExtFOp>(previousExtend))
-        return rewriter.create<arith::ExtFOp>(
-            loc, transposeOp.getResultVectorType(), newTransposedValue);
-      return newTransposedValue;
-    }();
-    rewriter.replaceOp(transposeOp, newTransposedValue);
-  }
-
   LogicalResult matchAndRewrite(vector::TransposeOp transposeOp,
                                 PatternRewriter &rewriter) const override {
     auto sourceType = transposeOp.getSourceVectorType();
     if (!isIllegalVectorType(sourceType))
       return failure();
 
-    Value maybeMemoryRead = transposeOp.getVector();
-    auto *transposeSourceOp = maybeMemoryRead.getDefiningOp();
+    if (isIllegalVectorType(transposeOp.getResultVectorType()))
+      return failure();
+
+    Value maybeRead = transposeOp.getVector();
+    auto *transposeSourceOp = maybeRead.getDefiningOp();
     Operation *extendOp = nullptr;
     if (Value extendSource = getExtensionSource(transposeSourceOp)) {
-      maybeMemoryRead = extendSource;
+      maybeRead = extendSource;
       extendOp = transposeSourceOp;
     }
 
-    auto illegalRead = maybeMemoryRead.getDefiningOp<vector::TransferReadOp>();
+    auto illegalRead = maybeRead.getDefiningOp<vector::TransferReadOp>();
     if (!illegalRead)
       return failure();
 
@@ -498,8 +492,12 @@ struct LiftIllegalVectorTransposeToMemory
       return failure();
 
     auto loc = transposeOp.getLoc();
+    auto zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    auto one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+
+    // Create a subview that matches the size of the illegal read vector type.
     auto readType = illegalRead.getVectorType();
-    auto readSize = llvm::map_to_vector(
+    auto readSizes = llvm::map_to_vector(
         llvm::zip_equal(readType.getShape(), readType.getScalableDims()),
         [&](auto dim) -> Value {
           auto [size, isScalable] = dim;
@@ -509,10 +507,9 @@ struct LiftIllegalVectorTransposeToMemory
           auto vscale = rewriter.create<vector::VectorScaleOp>(loc);
           return rewriter.create<arith::MulIOp>(loc, vscale, dimSize);
         });
-    auto c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    SmallVector<Value> strides(readType.getRank(), Value(c1));
+    SmallVector<Value> strides(readType.getRank(), Value(one));
     auto readSubview = rewriter.create<memref::SubViewOp>(
-        loc, illegalRead.getSource(), illegalRead.getIndices(), readSize,
+        loc, illegalRead.getSource(), illegalRead.getIndices(), readSizes,
         strides);
 
     // Note: The transpose for the mask should fold into the
@@ -527,15 +524,29 @@ struct LiftIllegalVectorTransposeToMemory
     auto transposedSubview = rewriter.create<memref::TransposeOp>(
         loc, readSubview, AffineMapAttr::get(transposeMap));
 
-    auto zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    SmallVector<Value> newReadIndices(illegalRead.getIndices().size(), zero);
-
+    // Note: The indices are all zero as the subview is offset for the read.
+    SmallVector<Value> readIndices(illegalRead.getIndices().size(), zero);
     Value legalRead = rewriter.create<vector::TransferReadOp>(
-        loc, transposeOp.getResultVectorType(), transposedSubview,
-        newReadIndices, illegalRead.getPermutationMapAttr(),
-        illegalRead.getPadding(), mask, illegalRead.getInBoundsAttr());
+        loc, transposeOp.getResultVectorType(), transposedSubview, readIndices,
+        illegalRead.getPermutationMapAttr(), illegalRead.getPadding(), mask,
+        illegalRead.getInBoundsAttr());
 
-    replaceTranspose(rewriter, loc, transposeOp, legalRead, extendOp);
+    // Replace the transpose (with an arith::ExtOp if necessary).
+    rewriter.replaceOp(transposeOp, [&]() -> Value {
+      if (!extendOp)
+        return legalRead;
+      if (isa<arith::ExtSIOp>(extendOp))
+        return rewriter.create<arith::ExtSIOp>(
+            loc, transposeOp.getResultVectorType(), legalRead);
+      if (isa<arith::ExtUIOp>(extendOp))
+        return rewriter.create<arith::ExtUIOp>(
+            loc, transposeOp.getResultVectorType(), legalRead);
+      if (isa<arith::ExtFOp>(extendOp))
+        return rewriter.create<arith::ExtFOp>(
+            loc, transposeOp.getResultVectorType(), legalRead);
+      return legalRead;
+    }());
+
     return success();
   }
 };
@@ -544,16 +555,6 @@ struct VectorLegalizationPass
     : public arm_sme::impl::VectorLegalizationBase<VectorLegalizationPass> {
   void runOnOperation() override {
     auto *context = &getContext();
-
-    {
-      RewritePatternSet patterns(context);
-      patterns.add<LiftIllegalVectorTransposeToMemory,
-                   FoldConstantExtractFromVectorOfSMECreateMasks>(context);
-      if (failed(applyPatternsAndFoldGreedily(getOperation(),
-                                              std::move(patterns))))
-        return signalPassFailure();
-    }
-
     OneToNTypeConverter converter;
     RewritePatternSet patterns(context);
     converter.addConversion([](Type type) { return type; });
@@ -569,6 +570,8 @@ struct VectorLegalizationPass
           return success();
         });
 
+    patterns.add<LiftIllegalVectorTransposeToMemory,
+                 FoldConstantExtractFromVectorOfSMECreateMasks>(context);
     // Note: High benefit to ensure masked outer products are lowered first.
     patterns.add<LegalizeMaskedVectorOuterProductOpsByDecomposition>(
         converter, context, 1024);
