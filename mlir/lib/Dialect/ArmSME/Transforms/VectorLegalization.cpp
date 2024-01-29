@@ -38,6 +38,10 @@ using namespace mlir::arm_sme;
 
 namespace {
 
+//===----------------------------------------------------------------------===//
+// SME vector decomposition
+//===----------------------------------------------------------------------===//
+
 // Common match failure reasons.
 static constexpr StringLiteral MATCH_FAILURE_NOT_SME_TILE_TYPE_MULTIPLE(
     "op vector size is not multiple of SME tiles");
@@ -456,6 +460,8 @@ struct LiftIllegalVectorTransposeToMemory
                                Value newTransposedValue,
                                Operation *previousExtend) {
     newTransposedValue = [&]() -> Value {
+      if (!previousExtend)
+        return newTransposedValue;
       if (isa<arith::ExtSIOp>(previousExtend))
         return rewriter.create<arith::ExtSIOp>(
             loc, transposeOp.getResultVectorType(), newTransposedValue);
@@ -478,8 +484,11 @@ struct LiftIllegalVectorTransposeToMemory
 
     Value maybeMemoryRead = transposeOp.getVector();
     auto *transposeSourceOp = maybeMemoryRead.getDefiningOp();
-    if (Value extendSource = getExtensionSource(transposeSourceOp))
+    Operation *extendOp = nullptr;
+    if (Value extendSource = getExtensionSource(transposeSourceOp)) {
       maybeMemoryRead = extendSource;
+      extendOp = transposeSourceOp;
+    }
 
     auto illegalRead = maybeMemoryRead.getDefiningOp<vector::TransferReadOp>();
     if (!illegalRead)
@@ -488,33 +497,45 @@ struct LiftIllegalVectorTransposeToMemory
     if (!illegalRead.getPermutationMap().isIdentity())
       return failure();
 
-    // TODO: Make memref.subview of read then memref.transpose of that.
-
     auto loc = transposeOp.getLoc();
-    mlir::AffineMap map = AffineMap::getPermutationMap(
-        transposeOp.getPermutation(), getContext());
+    auto readType = illegalRead.getVectorType();
+    auto readSize = llvm::map_to_vector(
+        llvm::zip_equal(readType.getShape(), readType.getScalableDims()),
+        [&](auto dim) -> Value {
+          auto [size, isScalable] = dim;
+          auto dimSize = rewriter.create<arith::ConstantIndexOp>(loc, size);
+          if (!isScalable)
+            return dimSize;
+          auto vscale = rewriter.create<vector::VectorScaleOp>(loc);
+          return rewriter.create<arith::MulIOp>(loc, vscale, dimSize);
+        });
+    auto c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    SmallVector<Value> strides(readType.getRank(), Value(c1));
+    auto readSubview = rewriter.create<memref::SubViewOp>(
+        loc, illegalRead.getSource(), illegalRead.getIndices(), readSize,
+        strides);
 
-    Value mask = read.getMask();
+    // Note: The transpose for the mask should fold into the
+    // vector.create_mask/constant_mask op, which will then become legal.
+    Value mask = illegalRead.getMask();
     if (mask)
       mask = rewriter.create<vector::TransposeOp>(loc, mask,
                                                   transposeOp.getPermutation());
 
-    auto source = rewriter.create<memref::TransposeOp>(loc, read.getSource(),
-                                                       AffineMapAttr::get(map));
-    auto test = SmallVector{read.getIndices()[1], read.getIndices()[0]};
+    mlir::AffineMap transposeMap = AffineMap::getPermutationMap(
+        transposeOp.getPermutation(), getContext());
+    auto transposedSubview = rewriter.create<memref::TransposeOp>(
+        loc, readSubview, AffineMapAttr::get(transposeMap));
 
-    Value ret = rewriter.create<vector::TransferReadOp>(
-        loc, transposeOp.getResultVectorType(), source, test,
-        read.getPermutationMapAttr(), read.getPadding(), mask,
-        read.getInBoundsAttr());
+    auto zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    SmallVector<Value> newReadIndices(illegalRead.getIndices().size(), zero);
 
-    if (ext) {
-      ret = rewriter.create<arith::ExtSIOp>(
-          loc, transposeOp.getResultVectorType(), ret);
-    }
+    Value legalRead = rewriter.create<vector::TransferReadOp>(
+        loc, transposeOp.getResultVectorType(), transposedSubview,
+        newReadIndices, illegalRead.getPermutationMapAttr(),
+        illegalRead.getPadding(), mask, illegalRead.getInBoundsAttr());
 
-    rewriter.replaceOp(transposeOp, ret);
-
+    replaceTranspose(rewriter, loc, transposeOp, legalRead, extendOp);
     return success();
   }
 };
