@@ -14,6 +14,7 @@
 #include "mlir/Dialect/ArmSME/IR/ArmSME.h"
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h"
 #include "mlir/Dialect/ArmSME/Transforms/Transforms.h"
+#include "mlir/Dialect/ArmSVE/IR/ArmSVEDialect.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/PatternMatch.h"
@@ -78,16 +79,6 @@ static LogicalResult isCompatible(PatternRewriter &rewriter,
     });
 
   return success();
-}
-
-// Create 'llvm.experimental.vector.interleave2' intrinsic from `lhs` and `rhs`.
-static Value createInterleave2Intrinsic(RewriterBase &rewriter, Location loc,
-                                        Value lhs, Value rhs) {
-  auto inputType = cast<VectorType>(lhs.getType());
-  VectorType inputTypeX2 =
-      VectorType::Builder(inputType).setDim(0, inputType.getShape()[0] * 2);
-  return rewriter.create<LLVM::experimental_vector_interleave2>(
-      loc, inputTypeX2, lhs, rhs);
 }
 
 // Fuse two 'arm_sme.outerproduct' operations that are chained via the
@@ -170,7 +161,7 @@ public:
 
     auto loc = op.getLoc();
     auto packInputs = [&](Value lhs, Value rhs) {
-      return createInterleave2Intrinsic(rewriter, loc, lhs, rhs);
+      return rewriter.create<vector::InterleaveOp>(loc, lhs, rhs);
     };
 
     auto lhs = packInputs(op1.getLhs().getDefiningOp()->getOperand(0),
@@ -320,7 +311,7 @@ public:
 
     auto loc = op.getLoc();
     auto packInputs = [&](Value lhs, Value rhs) {
-      return createInterleave2Intrinsic(rewriter, loc, lhs, rhs);
+      return rewriter.create<vector::InterleaveOp>(loc, lhs, rhs);
     };
 
     auto lhs0 = packInputs(op1.getLhs().getDefiningOp()->getOperand(0),
@@ -336,16 +327,16 @@ public:
     auto rhs = packInputs(rhs0, rhs1);
 
     Value lhsMask, rhsMask;
-    if (op1.getLhsMask() || op2.getLhsMask() || op3.getLhsMask() ||
-        op4.getLhsMask()) {
-      auto lhs0Mask = packInputs(op1.getLhsMask(), op3.getLhsMask());
-      auto lhs1Mask = packInputs(op2.getLhsMask(), op4.getLhsMask());
-      lhsMask = packInputs(lhs0Mask, lhs1Mask);
+    // if (op1.getLhsMask() || op2.getLhsMask() || op3.getLhsMask() ||
+    //     op4.getLhsMask()) {
+    //   auto lhs0Mask = packInputs(op1.getLhsMask(), op3.getLhsMask());
+    //   auto lhs1Mask = packInputs(op2.getLhsMask(), op4.getLhsMask());
+    //   lhsMask = packInputs(lhs0Mask, lhs1Mask);
 
-      auto rhs0Mask = packInputs(op1.getRhsMask(), op3.getRhsMask());
-      auto rhs1Mask = packInputs(op2.getRhsMask(), op4.getRhsMask());
-      rhsMask = packInputs(rhs0Mask, rhs1Mask);
-    }
+    //   auto rhs0Mask = packInputs(op1.getRhsMask(), op3.getRhsMask());
+    //   auto rhs1Mask = packInputs(op2.getRhsMask(), op4.getRhsMask());
+    //   rhsMask = packInputs(rhs0Mask, rhs1Mask);
+    // }
 
     auto lhsExtOp = op.getLhs().getDefiningOp();
     auto rhsExtOp = op.getRhs().getDefiningOp();
@@ -556,6 +547,203 @@ struct SwapVectorScalableExtractOfArithExtend
   }
 };
 
+/// Pushes interleaves before vector.scalable.extracts.
+///
+/// Example:
+///
+///  BEFORE:
+///  ```mlir
+///  %0 = vector.scalable.extract %a[4] : vector<[4]xi8> from vector<[8]xi8>
+///  %1 = vector.scalable.extract %b[4] : vector<[4]xi8> from vector<[8]xi8>
+///  %result = vector.interleave %0, %1 : vector<[4]xi8>
+///  ```
+///  AFTER:
+///  ```mlir
+///  %0 = vector.interleave %a, %b : vector<[8]xi8>
+///  %result = vector.scalable.extract %0[8]
+///             : vector<[8]xi8> from vector<[16]xi8>
+///  ```
+struct SwapVectorInterleaveOfScalableExtract
+    : public OpRewritePattern<vector::InterleaveOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::InterleaveOp interleaveOp,
+                                PatternRewriter &rewriter) const override {
+
+    auto lhs = interleaveOp.getLhs();
+    auto lhsExtract = lhs.getDefiningOp<vector::ScalableExtractOp>();
+    auto rhs = interleaveOp.getRhs();
+    auto rhsExtract = rhs.getDefiningOp<vector::ScalableExtractOp>();
+
+    if (!lhsExtract || !rhsExtract)
+      return failure();
+    if (lhsExtract.getPos() != rhsExtract.getPos())
+      return failure();
+    if (lhsExtract.getSourceVectorType() != rhsExtract.getSourceVectorType())
+      return failure();
+    if (lhsExtract.getResultVectorType() != rhsExtract.getResultVectorType())
+      return failure();
+
+    auto loc = interleaveOp.getLoc();
+    auto interleave = rewriter.create<vector::InterleaveOp>(
+        loc, lhsExtract.getSource(), rhsExtract.getSource());
+
+    rewriter.replaceOpWithNewOp<vector::ScalableExtractOp>(
+        interleaveOp, interleaveOp.getResultVectorType(), interleave,
+        lhsExtract.getPos() * 2);
+
+    return success();
+  }
+};
+
+/// Optimistically creates underutilised multi-vector zip.x4 ops for the inputs
+/// of a four-way MOPA, with hopes that after `-cse` and with multiple MOPAs,
+/// the result will be one zip.x4 used by all MOPAs.
+///
+/// Note: The example _looks_ like more code, but as this can generate the input
+/// for all four MOPAs, the final result is much less code.
+///
+/// Example:
+///
+///  BEFORE:
+///  ```mlir
+///  // Input from matrix A:
+///  %aZip0 = vector.interleave %a0, %a2 : vector<[8]xi8>
+///  %aZip1 = vector.interleave %a3, %a4 : vector<[8]xi8>
+///  %aZip = vector.interleave %aZip0, %aZip1 : vector<[16]xi8>
+///  // Input from matrix B:
+///  %bZip0 = vector.interleave %b0, %b2 : vector<[8]xi8>
+///  %bZip1 = vector.interleave %b3, %b4 : vector<[8]xi8>
+///  %bZip = vector.interleave %bZip0, %bZip1 : vector<[16]xi8>
+///
+///  %lhs = vector.scalable.extract %aZip[0]
+///          : vector<[16]xi8> from vector<[32]xi8>
+///  %rhs = vector.scalable.extract %bZip[0]
+///          : vector<[16]xi8> from vector<[32]xi8>
+///
+///  %result = arm_sme.smopa_4way %lhs, %rhs
+///    : vector<[16]xi8>, vector<[16]xi8> into vector<[4]x[4]xi32>
+///  ```
+///  AFTER:
+///  ```mlir
+///  %0 = vector.scalable.insert %a0, %cst[0]
+///             : vector<[8]xi8> into vector<[16]xi8>
+///  %concat0 = vector.scalable.insert %b0, %0[8]
+///             : vector<[8]xi8> into vector<[16]xi8>
+///  %1 = vector.scalable.insert %a1, %cst[0]
+///             : vector<[8]xi8> into vector<[16]xi8>
+///  %concat1 = vector.scalable.insert %b1, %1[8]
+///             : vector<[8]xi8> into vector<[16]xi8>
+///  %2 = vector.scalable.insert %a2, %cst[0]
+///             : vector<[8]xi8> into vector<[16]xi8>
+///  %concat2 = vector.scalable.insert %b2, %2[8]
+///             : vector<[8]xi8> into vector<[16]xi8>
+///  %3 = vector.scalable.insert %a3, %cst[0]
+///             : vector<[8]xi8> into vector<[16]xi8>
+///  %concat3 = vector.scalable.insert %b3, %3[8]
+///             : vector<[8]xi8> into vector<[16]xi8>
+///  %lhs, %unused0, %rhs, %unused1 = arm_sve.zip.x4
+///     %concat0, %concat1, %concat2, %concat3 : vector<[16]xi8>
+///  %result = arm_sme.smopa_4way %lhs, %rhs
+///             : vector<[16]xi8>, vector<[16]xi8> into vector<[4]x[4]xi32>
+///  ```
+struct OptimisticVectorInterleaveToZipX4Optimization
+    : public OpRewritePattern<arm_sme::SMopa4WayOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  FailureOr<std::array<Value, 4>>
+  matchFourWayInterleave(vector::InterleaveOp root) const {
+    auto lhsInterleave = root.getLhs().getDefiningOp<vector::InterleaveOp>();
+    auto rhsInterleave = root.getRhs().getDefiningOp<vector::InterleaveOp>();
+
+    if (!lhsInterleave || !rhsInterleave)
+      return failure();
+
+    Value src1 = lhsInterleave.getLhs();
+    Value src3 = lhsInterleave.getRhs();
+    Value src2 = rhsInterleave.getLhs();
+    Value src4 = rhsInterleave.getRhs();
+    return std::array{src1, src2, src3, src4};
+  }
+
+  bool isHalfAnSVEVector(VectorType vType) const {
+    return vType.getShape() ==
+               ArrayRef<int64_t>{64 / vType.getElementTypeBitWidth()} &&
+           vType.isScalable();
+  }
+
+  // TODO: Match on interface for 4-way MOPAs.
+  LogicalResult matchAndRewrite(arm_sme::SMopa4WayOp fourWayMopa,
+                                PatternRewriter &rewriter) const override {
+    auto lhs = fourWayMopa.getLhs();
+    auto lhsExtract = lhs.getDefiningOp<vector::ScalableExtractOp>();
+    auto rhs = fourWayMopa.getRhs();
+    auto rhsExtract = rhs.getDefiningOp<vector::ScalableExtractOp>();
+
+    if (!lhsExtract || !rhsExtract)
+      return failure();
+
+    if (!llvm::is_contained({0u, 16u}, lhsExtract.getPos()))
+      return failure();
+
+    if (!llvm::is_contained({0u, 16u}, rhsExtract.getPos()))
+      return failure();
+
+    auto lhsInterleave =
+        lhsExtract.getSource().getDefiningOp<vector::InterleaveOp>();
+    auto rhsInterleave =
+        rhsExtract.getSource().getDefiningOp<vector::InterleaveOp>();
+
+    if (!lhsInterleave || !rhsInterleave)
+      return failure();
+
+    auto maybeLhsFourWay = matchFourWayInterleave(lhsInterleave);
+    auto maybeRhsFourWay = matchFourWayInterleave(rhsInterleave);
+
+    if (failed(maybeLhsFourWay) || failed(maybeRhsFourWay))
+      return failure();
+
+    auto lhsValues = *maybeLhsFourWay;
+    auto rhsValues = *maybeRhsFourWay;
+
+    if (!isHalfAnSVEVector(cast<VectorType>(lhsValues[0].getType())))
+      return failure();
+
+    if (!isHalfAnSVEVector(cast<VectorType>(rhsValues[0].getType())))
+      return failure();
+
+    auto loc = fourWayMopa.getLoc();
+    auto concat2 = [&](Value a, Value b) -> Value {
+      auto vType = cast<VectorType>(a.getType());
+      VectorType doubleWidthVType =
+          VectorType::Builder(vType).setDim(0, vType.getDimSize(0) * 2);
+      auto cst = rewriter.create<arith::ConstantOp>(
+          loc, doubleWidthVType, rewriter.getZeroAttr(doubleWidthVType));
+      auto res0 = rewriter.create<vector::ScalableInsertOp>(loc, a, cst, 0);
+      return rewriter.create<vector::ScalableInsertOp>(loc, b, res0,
+                                                       vType.getDimSize(0));
+    };
+
+    auto v1 = concat2(lhsValues[0], rhsValues[0]);
+    auto v2 = concat2(lhsValues[1], rhsValues[1]);
+    auto v3 = concat2(lhsValues[2], rhsValues[2]);
+    auto v4 = concat2(lhsValues[3], rhsValues[3]);
+    auto zipX4 = rewriter.create<arm_sve::ZipX4Op>(loc, v1, v2, v3, v4);
+    rewriter.modifyOpInPlace(fourWayMopa, [&] {
+      if (lhsExtract.getPos() == 0)
+        fourWayMopa.getLhsMutable().set(zipX4.getResult(0));
+      if (lhsExtract.getPos() == 16)
+        fourWayMopa.getLhsMutable().set(zipX4.getResult(1));
+      if (rhsExtract.getPos() == 0)
+        fourWayMopa.getRhsMutable().set(zipX4.getResult(2));
+      if (rhsExtract.getPos() == 16)
+        fourWayMopa.getRhsMutable().set(zipX4.getResult(3));
+    });
+
+    return success();
+  }
+};
+
 struct OuterProductFusionPass
     : public arm_sme::impl::OuterProductFusionBase<OuterProductFusionPass> {
 
@@ -577,7 +765,9 @@ void mlir::arm_sme::populateOuterProductFusionPatterns(
   // Note: High benefit to ensure extract(extend) are swapped first.
   patterns.add<SwapVectorExtractOfArithExtend,
                SwapVectorScalableExtractOfArithExtend>(context, 1024);
-  patterns.add<OuterProductFusion2Way, OuterProductFusion4Way>(context);
+  patterns.add<OuterProductFusion2Way, OuterProductFusion4Way,
+               SwapVectorInterleaveOfScalableExtract,
+               OptimisticVectorInterleaveToZipX4Optimization>(context);
 }
 
 std::unique_ptr<Pass> mlir::arm_sme::createOuterProductFusionPass() {
