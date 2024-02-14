@@ -382,10 +382,10 @@ Operation *LivenessBlockInfo::getEndOperation(Value value,
   Operation *endOperation = startOperation;
   for (Operation *useOp : value.getUsers()) {
     // Find the associated operation in the current block (if any).
-    useOp = block->findAncestorOpInBlock(*useOp);
+    auto ancestor = block->findAncestorOpInBlock(*useOp);
     // Check whether the use is in our block and after the current end
     // operation.
-    if (useOp && endOperation->isBeforeInBlock(useOp))
+    if (ancestor && endOperation->isBeforeInBlock(ancestor))
       endOperation = useOp;
   }
   return endOperation;

@@ -40,11 +40,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/ArmSME/IR/ArmSME.h"
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/EquivalenceClasses.h"
+#include "llvm/ADT/IntervalMap.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "allocate-arm-sme-tiles"
@@ -151,146 +154,301 @@ static FailureOr<unsigned> allocateTileId(ArmSMETileType tileType,
   return failure();
 }
 
-/// Collects transitive uses of a root value through control flow. This can
-/// handle basic SCF constructs, along with control flow (br and cond_br).
-/// Simple loops work at the SCF level, while more complex control flow can be
-/// dealt with after lowering to CF. This is used to implement basic tile
-/// allocation.
-static void findDependantOps(Value rootValue,
-                             SetVector<Operation *> &dependantOps) {
-  auto traverseCorrespondingValues = [&](auto inputValues, auto exitValues) {
-    for (auto [idx, value] : llvm::enumerate(inputValues)) {
-      if (value == rootValue)
-        findDependantOps(exitValues[idx], dependantOps);
-    }
-  };
-  for (Operation *user : rootValue.getUsers()) {
-    if (dependantOps.contains(user))
-      continue;
-    dependantOps.insert(user);
-    TypeSwitch<Operation *>(user)
-        .Case<cf::BranchOp>([&](auto branchOp) {
-          // (CF) Follow branch.
-          traverseCorrespondingValues(branchOp.getDestOperands(),
-                                      branchOp.getDest()->getArguments());
-        })
-        .Case<cf::CondBranchOp>([&](auto condBranchOp) {
-          // (CF) Follow true branch.
-          traverseCorrespondingValues(
-              condBranchOp.getTrueOperands(),
-              condBranchOp.getTrueDest()->getArguments());
-          // (CF) Follow false branch.
-          traverseCorrespondingValues(
-              condBranchOp.getFalseOperands(),
-              condBranchOp.getFalseDest()->getArguments());
-        })
-        .Case<LoopLikeOpInterface>([&](auto loopOp) {
-          // (SCF) Follow iter_args of (basic) loops (e.g. for loops).
-          traverseCorrespondingValues(loopOp.getInits(),
-                                      loopOp.getRegionIterArgs());
-        })
-        .Case<scf::YieldOp>([&](auto yieldOp) {
-          // (SCF) Follow yields of (basic) control flow (e.g. for loops).
-          auto parent = user->getParentOp();
-          traverseCorrespondingValues(user->getOperands(),
-                                      parent->getResults());
-        })
-        .Default([&](auto) {
-          // Otherwise, assume users of _any_ result are dependant.
-          for (Value result : user->getResults())
-            findDependantOps(result, dependantOps);
-        });
-  }
-}
-struct AssignTileIDsPattern
+struct HandleTileMoves
     : public OpInterfaceRewritePattern<ArmSMETileOpInterface> {
   using OpInterfaceRewritePattern::OpInterfaceRewritePattern;
   LogicalResult matchAndRewrite(ArmSMETileOpInterface tileOp,
                                 PatternRewriter &rewriter) const override {
-    if (tileOp.getTileId())
+
+    auto tileId = tileOp.getTileId();
+    if (!tileId)
       return failure();
-
-    auto func = tileOp->getParentOfType<FunctionOpInterface>();
-    auto getDiscardableIntAttr = [&](StringRef name, unsigned defaultVal = 0) {
-      if (auto attr = llvm::dyn_cast_or_null<IntegerAttr>(
-              func->getDiscardableAttr(name)))
-        return unsigned(attr.getInt());
-      return defaultVal;
-    };
-    auto setDiscardableIntAttr = [&](StringRef name, auto value) {
-      rewriter.modifyOpInPlace(tileOp, [&] {
-        func->setDiscardableAttr(name,
-                                 rewriter.getI32IntegerAttr((unsigned)value));
-      });
-    };
-
-    std::optional<ArmSMETileType> tileType = tileOp.getAllocatedTileType();
-    if (!tileType)
-      return rewriter.notifyMatchFailure(tileOp, "op does not allocate a tile");
-
-    TileMask tilesInUse =
-        static_cast<TileMask>(getDiscardableIntAttr(kTilesInUseAttr));
-    auto tileId = allocateTileId(*tileType, tilesInUse);
-    bool tileIsInMemory = failed(tileId);
-    if (tileIsInMemory) {
-      // If we could not find a real tile ID, use an in-memory tile ID (ID >=
-      // 16). A later pass will insert the necessary spills and reloads.
-      tileId =
-          getDiscardableIntAttr(kNextInMemoryTileIdAttr, kInMemoryTileIdBase);
-      tileOp->emitWarning(
-          "failed to allocate SME virtual tile to operation, all tile "
-          "operations will go through memory, expect degraded performance");
-    }
-
-    // Set all operations dependent on `tileOp` to use the same tile ID.
-    // This is a naive tile allocation scheme, but works for common cases. For
-    // example, as this only allocates tile IDs to existing ops, it can't solve
-    // cases like this (%tileA and %tileB come from different root operations):
-    //
-    // %tile = scf.if %some_cond -> vector<[4]x[4]xi32> {
-    //   scf.yield %tileA {tile_id = 0} : vector<[4]x[4]xi32>
-    // } else {
-    //   scf.yield %tileB {tile_id = 1} : vector<[4]x[4]xi32>
-    // }
-    //
-    // This case would require allocating a new tile for the result of the
-    // scf.if, and moving the contents of %tileA or %tileB to result tile (based
-    // on the %some_cond).
-    // Find all the ops that (transitively) depend on this tile.
-    SetVector<Operation *> dependantOps;
-    findDependantOps(tileOp->getResult(0), dependantOps);
-    auto tileIDAttr = rewriter.getI32IntegerAttr(*tileId);
-    for (auto *op : dependantOps) {
-      if (auto dependantTileOp = llvm::dyn_cast<ArmSMETileOpInterface>(op)) {
-        auto currentTileId = dependantTileOp.getTileId();
-        if (currentTileId && unsigned(currentTileId.getInt()) != tileId)
-          return dependantTileOp.emitOpError(
-              "already assigned different SME virtual tile!");
+    bool updated = false;
+    for (auto &arg : tileOp->getOpOperands()) {
+      if (auto zeroOp = arg.get().getDefiningOp<arm_sme::ZeroOp>()) {
+        if (zeroOp.getTileId() && zeroOp.getTileId() != tileId) {
+          auto newZero = zeroOp.clone();
+          newZero.setTileId(tileId);
+          rewriter.insert(newZero);
+          rewriter.modifyOpInPlace(tileOp,
+                                   [&] { arg.assign(newZero.getResult()); });
+          updated = true;
+        }
       }
     }
 
-    // Rewrite IR.
-    if (!tileIsInMemory)
-      setDiscardableIntAttr(kTilesInUseAttr, tilesInUse);
-    else
-      setDiscardableIntAttr(kNextInMemoryTileIdAttr, *tileId + 1);
-    rewriter.modifyOpInPlace(tileOp, [&] { tileOp.setTileId(tileIDAttr); });
-    for (auto *op : dependantOps) {
-      if (auto dependantTileOp = llvm::dyn_cast<ArmSMETileOpInterface>(op)) {
-        rewriter.modifyOpInPlace(
-            dependantTileOp, [&] { dependantTileOp.setTileId(tileIDAttr); });
-      }
-    }
-
-    return success();
+    if (updated)
+      return success();
+    return failure();
   }
 };
 
 struct TileAllocationPass
     : public arm_sme::impl::TileAllocationBase<TileAllocationPass> {
   void runOnOperation() override {
+    auto &liveness = getAnalysis<Liveness>();
+
+    DenseMap<Operation *, unsigned> opToFirstIndex;
+    DenseMap<Operation *, unsigned> opToLastIndex;
+
+    unsigned index = 0;
+    llvm::unique_function<void(Operation *)> walk = [&](Operation *op) {
+      opToFirstIndex.try_emplace(op, index++);
+      for (Region &region : op->getRegions())
+        for (Block &block : region.getBlocks())
+          for (Operation &nested : block)
+            walk(&nested);
+      opToLastIndex.try_emplace(op, index - 1);
+    };
+    walk(getOperation());
+
+    // FIXME: This is all dumb hacks.
+
+    struct LiveRange {
+      struct Range {
+        unsigned start;
+        unsigned end;
+
+        bool overlaps(Range other) const {
+          return std::max(start, other.start) < std::min(end, other.end);
+        }
+      };
+
+      unsigned getEnd() const {
+        unsigned end = 0;
+        for (auto r : ranges) {
+          end = std::max(end, r.end);
+        }
+        return end;
+      }
+
+      bool isLive(unsigned programPoint) const {
+        for (auto range : ranges) {
+          if (programPoint >= range.start && programPoint <= range.end)
+            return true;
+        }
+        return false;
+      }
+
+      bool overlaps(LiveRange const &other) const {
+        for (auto rangeA : ranges) {
+          for (auto rangeB : other.ranges) {
+            if (rangeA.overlaps(rangeB))
+              return true;
+          }
+        }
+        return false;
+      }
+
+      SmallVector<Value> values;
+      SmallVector<Range> ranges;
+      int tileId = -1;
+    };
+
+    DenseMap<Value, LiveRange> liveRanges;
+    getOperation()->walk([&](Block *block) {
+      const LivenessBlockInfo *info = liveness.getLiveness(block);
+      assert(info && "expected liveness info for block");
+      auto processValue = [&](Value value, Operation *firstUseOrDef) {
+        auto vType = dyn_cast<VectorType>(value.getType());
+        if (!vType || !isValidSMETileVectorType(vType))
+          return;
+        auto liveRange = liveRanges.try_emplace(value).first;
+        liveRange->second.values.push_back(value);
+        liveRange->second.ranges.push_back(
+            {opToLastIndex[firstUseOrDef],
+             opToFirstIndex[info->getEndOperation(value, firstUseOrDef)]});
+      };
+
+      // Process the live-ins of this block.
+      for (Value liveIn : info->in()) {
+        // Only process the value if it has been defined in the current region.
+        if (liveIn.getParentRegion() == block->getParent())
+          processValue(liveIn, &block->front());
+      }
+
+      // Process the block arguments for the entry block (those are not
+      // live-in).
+      if (block->isEntryBlock()) {
+        for (Value argument : block->getArguments())
+          processValue(argument, &block->front());
+      }
+
+      // Process any new defs within this block.
+      for (Operation &op : *block)
+        for (Value result : op.getResults())
+          processValue(result, &op);
+    });
+
+    llvm::EquivalenceClasses<void *> valueMerges;
+    for (auto [value, _] : liveRanges) {
+      valueMerges.insert(value.getAsOpaquePointer());
+    }
+
+    auto tryMergeRanges = [&](Value a, Value b) {
+      if (!liveRanges[a].overlaps(liveRanges[b])) {
+        valueMerges.unionSets(a.getAsOpaquePointer(), b.getAsOpaquePointer());
+      }
+    };
+
+    for (auto [value, range] : liveRanges) {
+      if (auto op = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>()) {
+        for (auto arg : op->getOperands()) {
+          auto vType = dyn_cast<VectorType>(arg.getType());
+          if (vType && arm_sme::isValidSMETileVectorType(vType)) {
+            tryMergeRanges(value, arg);
+          }
+        }
+      }
+      if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+        Block *block = blockArg.getOwner();
+
+        for (Block *pred : block->getPredecessors()) {
+          auto branch = pred->getTerminator();
+          if (auto br = dyn_cast<cf::BranchOp>(branch)) {
+            Value operand =
+                *(br.getDestOperands().begin() + blockArg.getArgNumber());
+            tryMergeRanges(value, operand);
+          } else if (auto condBr = dyn_cast<cf::CondBranchOp>(branch)) {
+            if (condBr.getFalseDest() == block) {
+              Value operand = *(condBr.getFalseDestOperands().begin() +
+                                blockArg.getArgNumber());
+              tryMergeRanges(value, operand);
+            }
+            if (condBr.getTrueDest() == block) {
+              Value operand = *(condBr.getTrueDestOperands().begin() +
+                                blockArg.getArgNumber());
+              tryMergeRanges(value, operand);
+            }
+          }
+        }
+      }
+    }
+
+    SmallVector<LiveRange> finalLiveRanges;
+    for (llvm::EquivalenceClasses<void *>::iterator I = valueMerges.begin(),
+                                                    E = valueMerges.end();
+         I != E; ++I) {
+      if (!I->isLeader())
+        continue; // Ignore non-leader sets.
+      LiveRange mergedRange;
+      for (llvm::EquivalenceClasses<void *>::member_iterator MI =
+               valueMerges.member_begin(I);
+           MI != valueMerges.member_end(); ++MI) {
+        Value value = Value::getFromOpaquePointer(*MI);
+        mergedRange.values.push_back(value);
+        auto &smallerRange = liveRanges[value];
+        mergedRange.ranges.append(smallerRange.ranges.begin(),
+                                  smallerRange.ranges.end());
+      }
+      std::sort(mergedRange.ranges.begin(), mergedRange.ranges.end(),
+                [&](auto &a, auto &b) { return a.start < b.start; });
+      finalLiveRanges.push_back(mergedRange);
+    }
+
+    std::sort(finalLiveRanges.begin(), finalLiveRanges.end(),
+              [&](auto &a, auto &b) {
+                return a.ranges[0].start < b.ranges[0].start;
+              });
+
+    // TODO: Proper allocation
+    std::array<bool, 4> freeTiles = {true, true, true, true};
+
+    SmallVector<LiveRange *> allocatedRanges;
+    for (auto &liveRange : finalLiveRanges) {
+      allocatedRanges.erase(
+          std::remove_if(allocatedRanges.begin(), allocatedRanges.end(),
+                         [&](auto *range) {
+                           if (range->getEnd() <= liveRange.ranges[0].start) {
+                             freeTiles[range->tileId] = true;
+                             return true;
+                           }
+                           return false;
+                         }),
+          allocatedRanges.end());
+
+      int rangeTileId = -1;
+      for (auto [tileId, free] : llvm::enumerate(freeTiles)) {
+        if (free) {
+          rangeTileId = tileId;
+          freeTiles[tileId] = false;
+          break;
+        }
+      }
+
+      if (rangeTileId < 0) {
+        llvm::dbgs() << "Here?\n";
+        signalPassFailure();
+        break;
+      }
+
+      for (auto value : liveRange.values) {
+        auto smeOp = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>();
+        if (smeOp) {
+          smeOp.setTileId(IntegerAttr::get(IntegerType::get(&getContext(), 32),
+                                           rangeTileId));
+        }
+      }
+      liveRange.tileId = rangeTileId;
+      allocatedRanges.push_back(&liveRange);
+    }
+
+    for (auto &liveRange : finalLiveRanges) {
+      auto tileIdAttr = IntegerAttr::get(IntegerType::get(&getContext(), 32),
+                                         liveRange.tileId);
+      for (auto value : liveRange.values) {
+        for (auto *user : value.getUsers()) {
+          if (auto armSmeOp = dyn_cast<arm_sme::ArmSMETileOpInterface>(user)) {
+            if (!armSmeOp.getTileId()) {
+              armSmeOp.setTileId(tileIdAttr);
+            }
+          }
+        }
+      }
+    }
+
+    // return;
+
+    llvm::unique_function<void(Operation *, int)> walk2 = [&](Operation *op,
+                                                              int level) {
+      auto idxHere = opToFirstIndex[op];
+      for (auto &range : finalLiveRanges) {
+        if (range.isLive(idxHere)) {
+          if (!range.isLive(idxHere - 1))
+            llvm::dbgs() << "S";
+          else if (!range.isLive(idxHere + 1))
+            llvm::dbgs() << "E";
+          else
+            llvm::dbgs() << "|";
+        } else {
+          llvm::dbgs() << " ";
+        }
+      }
+      llvm::dbgs() << " ";
+      for (int i = 0; i < level; i++)
+        llvm::dbgs() << ' ';
+      llvm::dbgs() << op->getName();
+      llvm::dbgs() << " | firstIndex = " << opToFirstIndex[op];
+      llvm::dbgs() << ", lastIndex = " << opToLastIndex[op] << '\n';
+      for (auto [regionIdx, region] : llvm::enumerate(op->getRegions())) {
+        for (int i = 0; i < level; i++)
+          llvm::dbgs() << ' ';
+        llvm::dbgs() << "START NESTED REGION\n";
+        for (auto [blockIdx, block] : llvm::enumerate(region.getBlocks())) {
+          for (int i = 0; i < level; i++)
+            llvm::dbgs() << ' ';
+          llvm::dbgs() << "^bb" << blockIdx++ << ":\n";
+          for (Operation &nested : block)
+            walk2(&nested, level + 2);
+        }
+        for (int i = 0; i < level; i++)
+          llvm::dbgs() << ' ';
+        llvm::dbgs() << "END NESTED REGION\n";
+      }
+    };
+    walk2(getOperation(), 0);
     RewritePatternSet patterns(&getContext());
-    patterns.add<AssignTileIDsPattern>(patterns.getContext());
+    patterns.add<HandleTileMoves>(patterns.getContext());
     GreedyRewriteConfig config;
     // Setting useTopDownTraversal ensures tiles are allocated in program
     // order.
