@@ -265,6 +265,14 @@ protected:
 
   ValueBoundsConstraintSet(MLIRContext *ctx);
 
+  int64_t populateConstantBoundSet(presburger::BoundType type, Value value,
+                                   std::optional<int64_t> dim = std::nullopt,
+                                   StopConditionFn stopCondition = nullptr);
+
+  int64_t populateConstantBoundSet(presburger::BoundType type, AffineMap map,
+                                   ValueDimList mapOperands,
+                                   StopConditionFn stopCondition = nullptr);
+
   /// Iteratively process all elements on the worklist until an index-typed
   /// value or shaped value meets `stopCondition`. Such values are not processed
   /// any further.
