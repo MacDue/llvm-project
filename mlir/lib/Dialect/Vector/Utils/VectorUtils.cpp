@@ -313,23 +313,28 @@ struct ScalableValueBoundsConstraintSet : public ValueBoundsConstraintSet {
   }
 
   static FailureOr<vector::BoundSize>
-  computeScalableConstantUpperBound(Value value, std::optional<int64_t> dim,
-                                    int vscaleMaxPow2, int vscaleMinPow2) {
+  computeScalableUpperBound(Value value, std::optional<int64_t> dim,
+                            unsigned vscaleMin, unsigned vscaleMax,
+                            bool vscaleIsPow2) {
+    assert(vscaleMin <= vscaleMax);
+    if (vscaleIsPow2) {
+      assert(llvm::isPowerOf2_32(vscaleMin) && llvm::isPowerOf2_32(vscaleMax) &&
+             "expected `vscaleMin` and `vscaleMax` to be powers of 2");
+    }
+
     constexpr auto boundType = presburger::BoundType::UB;
 
-    // There should only be one vector.vscale ater -cse.
+    // There's likely to only be one vscale value due to `-cse`.
     SmallVector<Value, 1> vscaleValues;
     ScalableValueBoundsConstraintSet cstr(value.getContext());
 
-    // TODO: Find a suitable stop condition that leads to decent results.
     int64_t pos = cstr.populateConstantBoundSet(
         boundType, value, dim, [&](Value v, auto) {
           if (isa_and_present<vector::VectorScaleOp>(getOwnerOfValue(v))) {
             // If we see `vector.vscale` add a conservative range for the value.
             vscaleValues.push_back(v);
-            cstr.bound(v) >= vscaleMinPow2;
-            cstr.bound(v) <= vscaleMaxPow2;
-            return false;
+            cstr.bound(v) >= vscaleMin;
+            cstr.bound(v) <= vscaleMax;
           }
           return false;
         });
@@ -338,28 +343,29 @@ struct ScalableValueBoundsConstraintSet : public ValueBoundsConstraintSet {
     if (!bound)
       return {};
 
-    auto decreaseVscaleTo = [&](int64_t newVscale) {
+    auto decreaseVscaleTo = [&](unsigned newVscale) {
       for (Value vscale : vscaleValues)
         cstr.bound(vscale) <= newVscale;
     };
 
+    auto nextVscaleValue = [&](unsigned currentValue) {
+      return vscaleIsPow2 ? currentValue / 2 : currentValue - 1;
+    };
+
     // Shrink the range of vscale and observe if the bounds change
-    // proportionally. This assumes that `vscaleMinPow2` to `vscaleMaxPow2` is
-    // the full range of valid vscale values and all values of `vscale` are a
-    // power of 2. This only matches the simple case where the bound = <vscale>
-    // * constant.
-    int vscaleValue = vscaleMaxPow2 / 2;
+    // proportionally.
+    unsigned vscaleValue = nextVscaleValue(vscaleMax);
     const int64_t conservativeBound = *bound;
     int64_t currentBound = conservativeBound;
-    while (vscaleValue >= vscaleMinPow2) {
+    while (vscaleValue >= vscaleMin) {
       decreaseVscaleTo(vscaleValue);
 
       // Unexpected/non-shrinking pattern: Just return a conservative bound.
       auto newBound = cstr.cstr.getConstantBound64(boundType, pos);
-      if (newBound != currentBound / 2)
+      if (newBound != nextVscaleValue(currentBound))
         return vector::BoundSize::makeFixed(conservativeBound);
 
-      vscaleValue /= 2;
+      vscaleValue = nextVscaleValue(vscaleValue);
       currentBound = *newBound;
     }
 
@@ -379,7 +385,8 @@ Value vector::BoundSize::getAsValue(OpBuilder &builder, Location loc) const {
 
 FailureOr<vector::BoundSize>
 vector::computeScalableUpperBound(Value value, std::optional<int64_t> dim,
-                                  int vscaleMaxPow2, int vscaleMinPow2) {
-  return ScalableValueBoundsConstraintSet::computeScalableConstantUpperBound(
-      value, dim, vscaleMaxPow2, vscaleMinPow2);
+                                  unsigned vscaleMin, unsigned vscaleMax,
+                                  bool vscaleIsPow2) {
+  return ScalableValueBoundsConstraintSet::computeScalableUpperBound(
+      value, dim, vscaleMin, vscaleMax, vscaleIsPow2);
 }

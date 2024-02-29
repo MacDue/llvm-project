@@ -125,22 +125,23 @@ private:
   bool scalable{false};
 };
 
-/// Computes a (possibly) scalable constant upperbound for a given value. It
+/// Computes a (possibly) scalable constant upper bound for a given value. It
 /// uses the same underlying mechanism as
 /// `ValueBoundsConstraintSet::computeConstantBound()`, however, after finding a
-/// upperbound assuming `vscale = vscaleMax` repeatedly halves the bound on
-/// vscale until `vscaleMin` in reached. Each time it halves `vscale` it
-/// recomputes the upperbound, if each time the bound also halves, it concludes
-/// the bound is scalable i.e. the bound is `(bound at vscale = 1) * vscale`.
-/// If the bound does not follow this pattern (but can be computed) a
-/// conservative fixed-size upper bound is returned.
+/// upper bound assuming `vscale = vscaleMax` it repeatedly shrinks the bound on
+/// `vscale` and checks to see if the upper bound shrinks proportionally. If it
+/// does for every value of `vscale` it concludes the bound is scalable, i.e.
+/// the bound is `(bound at vscale = 1) * vscale`. If the bound does not follow
+/// this pattern (but can be computed) a conservative fixed-size upper bound is
+/// returned.
 ///
-/// This assumes that all possible values of vscale are within the range
-/// [vscaleMin, vscaleMax] and all are powers of 2.
+/// This checks log2(vscaleMax - vscaleMin) extra bounds if `vscaleIsPow2` and
+/// `vscaleMax - vscaleMin` otherwise.
 FailureOr<BoundSize> computeScalableUpperBound(Value value,
                                                std::optional<int64_t> dim,
-                                               int vscaleMax = 16,
-                                               int vscaleMin = 1);
+                                               unsigned vscaleMin = 1,
+                                               unsigned vscaleMax = 16,
+                                               bool vscaleIsPow2 = true);
 
 } // namespace vector
 

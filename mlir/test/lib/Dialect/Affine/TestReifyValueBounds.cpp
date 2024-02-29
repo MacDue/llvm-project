@@ -148,8 +148,19 @@ static LogicalResult testReifyValueBounds(func::FuncOp funcOp,
           reified =
               FailureOr<OpFoldResult>(rewriter.getIndexAttr(*reifiedConst));
       } else if (scalable) {
+        unsigned vscaleMin = 1;
+        unsigned vscaleMax = 16;
+        bool vscaleIsPow2 = true;
+
+        if (auto attr = "vscale_min"; op->hasAttrOfType<IntegerAttr>(attr))
+          vscaleMin = unsigned(op->getAttrOfType<IntegerAttr>(attr).getInt());
+        if (auto attr = "vscale_max"; op->hasAttrOfType<IntegerAttr>(attr))
+          vscaleMax = unsigned(op->getAttrOfType<IntegerAttr>(attr).getInt());
+        if (auto attr = "vscale_is_pow_2"; op->hasAttrOfType<BoolAttr>(attr))
+          vscaleIsPow2 = op->getAttrOfType<BoolAttr>(attr).getValue();
+
         auto reifiedScalable = vector::computeScalableUpperBound(
-            value, dim, /*vscaleMax=*/16, /*vscaleMin=*/1);
+            value, dim, vscaleMin, vscaleMax, vscaleIsPow2);
         if (succeeded(reifiedScalable)) {
           reified =
               OpFoldResult(reifiedScalable->getAsValue(rewriter, op->getLoc()));
