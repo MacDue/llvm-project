@@ -98,6 +98,50 @@ bool isContiguousSlice(MemRefType memrefType, VectorType vectorType);
 std::optional<StaticTileOffsetRange>
 createUnrollIterator(VectorType vType, int64_t targetRank = 1);
 
+struct BoundSize {
+  constexpr BoundSize() = default;
+  explicit constexpr BoundSize(int64_t quantity, bool scalable)
+      : quantity(quantity), scalable(scalable){};
+
+  static constexpr BoundSize makeFixed(int64_t size) {
+    return BoundSize(size, false);
+  };
+
+  static constexpr BoundSize makeScalable(int64_t size) {
+    return BoundSize(size, true);
+  };
+
+  constexpr bool isScalable() const { return scalable; }
+  constexpr int64_t getMinSize() const { return quantity; }
+  constexpr int64_t getFixedSize() const {
+    assert(!isScalable());
+    return quantity;
+  }
+
+  Value getAsValue(OpBuilder &builder, Location loc) const;
+
+private:
+  int64_t quantity{0};
+  bool scalable{false};
+};
+
+/// Computes a (possibly) scalable constant upperbound for a given value. It
+/// uses the same underlying mechanism as
+/// `ValueBoundsConstraintSet::computeConstantBound()`, however, after finding a
+/// upperbound assuming `vscale = vscaleMax` repeatedly halves the bound on
+/// vscale until `vscaleMin` in reached. Each time it halves `vscale` it
+/// recomputes the upperbound, if each time the bound also halves, it concludes
+/// the bound is scalable i.e. the bound is `(bound at vscale = 1) * vscale`.
+/// If the bound does not follow this pattern (but can be computed) a
+/// conservative fixed-size upper bound is returned.
+///
+/// This assumes that all possible values of vscale are within the range
+/// [vscaleMin, vscaleMax] and all are powers of 2.
+FailureOr<BoundSize> computeScalableUpperBound(Value value,
+                                               std::optional<int64_t> dim,
+                                               int vscaleMax = 16,
+                                               int vscaleMin = 1);
+
 } // namespace vector
 
 /// Constructs a permutation map of invariant memref indices to vector

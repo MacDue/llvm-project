@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Vector/Utils/VectorUtils.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "mlir/Pass/Pass.h"
@@ -75,7 +76,8 @@ static LogicalResult testReifyValueBounds(func::FuncOp funcOp,
   WalkResult result = funcOp.walk([&](Operation *op) {
     // Look for test.reify_bound ops.
     if (op->getName().getStringRef() == "test.reify_bound" ||
-        op->getName().getStringRef() == "test.reify_constant_bound") {
+        op->getName().getStringRef() == "test.reify_constant_bound" ||
+        op->getName().getStringRef() == "test.reify_scalable_bound") {
       if (op->getNumOperands() != 1 || op->getNumResults() != 1 ||
           !op->getResultTypes()[0].isIndex()) {
         op->emitOpError("invalid op");
@@ -110,6 +112,14 @@ static LogicalResult testReifyValueBounds(func::FuncOp funcOp,
       bool constant =
           op->getName().getStringRef() == "test.reify_constant_bound";
 
+      bool scalable = !constant && op->getName().getStringRef() ==
+                                       "test.reify_scalable_bound";
+
+      if (scalable && *boundType != BoundType::UB) {
+        op->emitOpError("unsupported bound request");
+        return WalkResult::interrupt();
+      }
+
       // Prepare stop condition. By default, reify in terms of the op's
       // operands. No stop condition is used when a constant was requested.
       std::function<bool(Value, std::optional<int64_t>)> stopCondition =
@@ -137,6 +147,13 @@ static LogicalResult testReifyValueBounds(func::FuncOp funcOp,
         if (succeeded(reifiedConst))
           reified =
               FailureOr<OpFoldResult>(rewriter.getIndexAttr(*reifiedConst));
+      } else if (scalable) {
+        auto reifiedScalable = vector::computeScalableUpperBound(
+            value, dim, /*vscaleMax=*/16, /*vscaleMin=*/1);
+        if (succeeded(reifiedScalable)) {
+          reified =
+              OpFoldResult(reifiedScalable->getAsValue(rewriter, op->getLoc()));
+        }
       } else {
         if (dim) {
           if (useArithOps) {
