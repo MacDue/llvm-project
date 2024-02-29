@@ -98,6 +98,51 @@ bool isContiguousSlice(MemRefType memrefType, VectorType vectorType);
 std::optional<StaticTileOffsetRange>
 createUnrollIterator(VectorType vType, int64_t targetRank = 1);
 
+struct BoundSize {
+  constexpr BoundSize() = default;
+  explicit constexpr BoundSize(int64_t quantity, bool scalable)
+      : quantity(quantity), scalable(scalable){};
+
+  static constexpr BoundSize makeFixed(int64_t size) {
+    return BoundSize(size, false);
+  };
+
+  static constexpr BoundSize makeScalable(int64_t size) {
+    return BoundSize(size, true);
+  };
+
+  constexpr bool isScalable() const { return scalable; }
+  constexpr int64_t getMinSize() const { return quantity; }
+  constexpr int64_t getFixedSize() const {
+    assert(!isScalable());
+    return quantity;
+  }
+
+  Value getAsValue(OpBuilder &builder, Location loc) const;
+
+private:
+  int64_t quantity{0};
+  bool scalable{false};
+};
+
+/// Computes a (possibly) scalable constant upper bound for a given value. It
+/// uses the same underlying mechanism as
+/// `ValueBoundsConstraintSet::computeConstantBound()`, however, after finding a
+/// upper bound assuming `vscale = vscaleMax` it repeatedly shrinks the bound on
+/// `vscale` and checks to see if the upper bound shrinks proportionally. If it
+/// does for every value of `vscale` it concludes the bound is scalable, i.e.
+/// the bound is `(bound at vscale = 1) * vscale`. If the bound does not follow
+/// this pattern (but can be computed) a conservative fixed-size upper bound is
+/// returned.
+///
+/// This checks log2(vscaleMax - vscaleMin) extra bounds if `vscaleIsPow2` and
+/// `vscaleMax - vscaleMin` otherwise.
+FailureOr<BoundSize> computeScalableUpperBound(Value value,
+                                               std::optional<int64_t> dim,
+                                               unsigned vscaleMin = 1,
+                                               unsigned vscaleMax = 16,
+                                               bool vscaleIsPow2 = true);
+
 } // namespace vector
 
 /// Constructs a permutation map of invariant memref indices to vector

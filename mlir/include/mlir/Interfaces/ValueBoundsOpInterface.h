@@ -265,10 +265,29 @@ protected:
 
   ValueBoundsConstraintSet(MLIRContext *ctx);
 
+  /// A callback to allow injecting custom value bounds constraints.
+  /// It takes the current value, the dim (or kIndexValue), and a reference to
+  /// the constraints set.
+  using PopulateCustomValueBoundsFn =
+      function_ref<void(Value, int64_t, ValueBoundsConstraintSet &)>;
+
+  /// Populates the constraint set for a value/map without actually computing
+  /// the bound.
+  int64_t populateConstraintsSet(
+      presburger::BoundType type, Value value,
+      std::optional<int64_t> dim = std::nullopt,
+      PopulateCustomValueBoundsFn customValueBounds = nullptr,
+      StopConditionFn stopCondition = nullptr);
+  int64_t populateConstraintsSet(
+      presburger::BoundType type, AffineMap map, ValueDimList mapOperands,
+      PopulateCustomValueBoundsFn customValueBounds = nullptr,
+      StopConditionFn stopCondition = nullptr);
+
   /// Iteratively process all elements on the worklist until an index-typed
   /// value or shaped value meets `stopCondition`. Such values are not processed
   /// any further.
-  void processWorklist(StopConditionFn stopCondition);
+  void processWorklist(StopConditionFn stopCondition,
+                       PopulateCustomValueBoundsFn customValueBounds = nullptr);
 
   /// Bound the given column in the underlying constraint set by the given
   /// expression.

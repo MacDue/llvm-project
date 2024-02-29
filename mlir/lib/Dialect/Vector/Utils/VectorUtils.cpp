@@ -24,6 +24,7 @@
 #include "mlir/IR/IntegerSet.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/MathExtras.h"
 
@@ -299,4 +300,105 @@ vector::createUnrollIterator(VectorType vType, int64_t targetRank) {
   // Create an unroll iterator for leading dimensions.
   shapeToUnroll = shapeToUnroll.slice(0, firstScalableDim);
   return StaticTileOffsetRange(shapeToUnroll, /*unrollStep=*/1);
+}
+
+namespace {
+struct ScalableValueBoundsConstraintSet : public ValueBoundsConstraintSet {
+  using ValueBoundsConstraintSet::ValueBoundsConstraintSet;
+
+  static Operation *getOwnerOfValue(Value value) {
+    if (auto bbArg = dyn_cast<BlockArgument>(value))
+      return bbArg.getOwner()->getParentOp();
+    return value.getDefiningOp();
+  }
+
+  static FailureOr<vector::BoundSize>
+  computeScalableUpperBound(Value value, std::optional<int64_t> dim,
+                            unsigned vscaleMin, unsigned vscaleMax,
+                            bool vscaleIsPow2) {
+    assert(vscaleMin <= vscaleMax);
+    if (vscaleIsPow2) {
+      assert(llvm::isPowerOf2_32(vscaleMin) && llvm::isPowerOf2_32(vscaleMax) &&
+             "expected `vscaleMin` and `vscaleMax` to be powers of 2");
+    }
+
+    constexpr auto boundType = presburger::BoundType::UB;
+
+    // There's likely to only be one vscale value due to `-cse`.
+    SmallVector<Value, 1> vscaleValues;
+    ScalableValueBoundsConstraintSet cstr(value.getContext());
+
+    int64_t pos = cstr.populateConstraintsSet(
+        boundType, value, dim,
+        [&vscaleValues, vscaleMin, vscaleMax](Value value, int64_t dim,
+                                              ValueBoundsConstraintSet &cstr) {
+          if (dim != ValueBoundsConstraintSet::kIndexValue)
+            return;
+          if (isa_and_present<vector::VectorScaleOp>(getOwnerOfValue(value))) {
+            // If we see `vector.vscale` add a conservative range for
+            // the value.
+            vscaleValues.push_back(value);
+            cstr.bound(value) >= vscaleMin;
+            cstr.bound(value) <= vscaleMax;
+          }
+        },
+        [](auto, auto) {
+          // Keep adding constraints till the worklist is empty.
+          return false;
+        });
+
+    auto bound = cstr.cstr.getConstantBound64(boundType, pos);
+    if (!bound)
+      return {};
+
+    if (vscaleMin == vscaleMax)
+      return vector::BoundSize::makeFixed(*bound);
+
+    auto decreaseVscaleTo = [&](unsigned newVscale) {
+      for (Value vscale : vscaleValues)
+        cstr.bound(vscale) <= newVscale;
+    };
+
+    auto nextVscaleValue = [&](unsigned currentValue) {
+      return vscaleIsPow2 ? currentValue / 2 : currentValue - 1;
+    };
+
+    // Shrink the range of vscale and observe if the bounds change
+    // proportionally.
+    unsigned vscaleValue = nextVscaleValue(vscaleMax);
+    const int64_t conservativeBound = *bound;
+    int64_t currentBound = conservativeBound;
+
+    while (vscaleValue >= vscaleMin) {
+      decreaseVscaleTo(vscaleValue);
+
+      // Unexpected/non-shrinking pattern: Just return a conservative bound.
+      auto newBound = cstr.cstr.getConstantBound64(boundType, pos);
+      if (newBound != nextVscaleValue(currentBound))
+        return vector::BoundSize::makeFixed(conservativeBound);
+
+      vscaleValue = nextVscaleValue(vscaleValue);
+      currentBound = *newBound;
+    }
+
+    return vector::BoundSize::makeScalable(currentBound);
+  }
+};
+
+} // namespace
+
+Value vector::BoundSize::getAsValue(OpBuilder &builder, Location loc) const {
+  auto constant = builder.create<arith::ConstantIndexOp>(loc, quantity);
+  if (!isScalable())
+    return constant;
+  return builder.create<arith::MulIOp>(
+      loc, constant, builder.create<vector::VectorScaleOp>(loc));
+}
+
+FailureOr<vector::BoundSize>
+vector::computeScalableUpperBound(Value value, std::optional<int64_t> dim,
+                                  unsigned vscaleMin, unsigned vscaleMax,
+                                  bool vscaleIsPow2) {
+  return ScalableValueBoundsConstraintSet::computeScalableUpperBound(
+      value, dim, vscaleMin, vscaleMax, vscaleIsPow2);
 }
