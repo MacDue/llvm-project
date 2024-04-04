@@ -172,10 +172,31 @@ AffineMap mlir::vector::getTransferMinorIdentityMap(ShapedType shapedType,
 
 bool mlir::vector::checkSameValueRAW(vector::TransferWriteOp defWrite,
                                      vector::TransferReadOp read) {
-  return !defWrite.hasOutOfBoundsDim() && !defWrite.getMask() &&
-         !read.getMask() && defWrite.getIndices() == read.getIndices() &&
+  auto isSameValueWithMasking = [&] {
+    if (defWrite.getMask() != read.getMask())
+      return false; // Mismatched masks.
+    if (!defWrite.getMask())
+      return true; // No masks (values will be the same).
+    DenseElementsAttr splatAttr;
+    if (!matchPattern(defWrite.getVector(),
+                      m_Constant<DenseElementsAttr>(&splatAttr)) ||
+        !splatAttr.isSplat()) {
+      // Write not of a constant splat (values could be unknown).
+      // TODO: It may be possible to extend this to more than splats.
+      return false;
+    }
+    Attribute padAttr;
+    if (!matchPattern(read.getPadding(), m_Constant(&padAttr)))
+      return false;
+    // If the pad value is the same as the splat value, then the values will be
+    // the same.
+    return padAttr == splatAttr.getSplatValue<Attribute>();
+  };
+  return !defWrite.hasOutOfBoundsDim() &&
+         defWrite.getIndices() == read.getIndices() &&
          defWrite.getVectorType() == read.getVectorType() &&
-         defWrite.getPermutationMap() == read.getPermutationMap();
+         defWrite.getPermutationMap() == read.getPermutationMap() &&
+         isSameValueWithMasking();
 }
 
 bool mlir::vector::checkSameValueWAW(vector::TransferWriteOp write,
