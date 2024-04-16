@@ -297,6 +297,20 @@ def GetTileOp : ArmSME_Op<"get_tile", [ArmSMETileOpInterface]> {
   }];
 }
 
+def CopyTileOp : ArmSME_Op<"copy_tile", [
+  ArmSMETileOpInterface,
+  AllTypesMatch<["tile", "result"]>
+]> {
+  let arguments = (ins SMETile:$tile);
+  let results = (outs SMETile:$result);
+  let assemblyFormat = "$tile attr-dict `:` type($result)";
+  let extraClassDeclaration = [{
+    VectorType getTileType() {
+      return ::llvm::cast<VectorType>(getResult().getType());
+    }
+  }];
+}
+
 def MaterializeSSATileOp : ArmSME_Op<"materialize_ssa_tile", [Pure]> {
   let summary = "SME tile placeholder";
   let description = [{
