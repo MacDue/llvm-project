@@ -49,6 +49,7 @@
 #include "llvm/ADT/EquivalenceClasses.h"
 #include "llvm/ADT/IntervalMap.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include <algorithm>
 
 #define DEBUG_TYPE "allocate-arm-sme-tiles"
 
@@ -227,6 +228,8 @@ struct LiveRange {
     return false;
   }
 
+  unsigned length() const { return getEnd() - ranges[0].start; }
+
   ArmSMETileType getTileType() const {
     return *arm_sme::getSMETileType(cast<VectorType>(values[0].getType()));
   }
@@ -312,19 +315,15 @@ struct TileAllocationPass
     auto &liveness = getAnalysis<Liveness>();
     for (Block &block : function.getBlocks()) {
       LivenessBlockInfo const *livenessInfo = liveness.getLiveness(&block);
-      // Process the block arguments for the entry block (those are not
-      // live-in).
       if (block.isEntryBlock()) {
         for (Value argument : block.getArguments())
           updateLiveRanges(argument, &block.front(), *livenessInfo);
       }
 
-      // Process the live-ins of this block.
       for (Value liveIn : livenessInfo->in()) {
         updateLiveRanges(liveIn, &block.front(), *livenessInfo);
       }
 
-      // Process any new defs within this block.
       for (Operation &op : block)
         for (Value result : op.getResults())
           updateLiveRanges(result, &op, *livenessInfo);
@@ -413,30 +412,15 @@ struct TileAllocationPass
       });
 
       auto tileId = tileAllocator.allocateTileId(liveRange.getTileType());
-
       if (failed(tileId)) {
-        llvm::dbgs() << "here??\n";
-        LiveRange *maxLiveRange = nullptr;
-        int maxLen = 0;
-        for (auto *allocRange : allocatedRanges) {
-          auto end = allocRange->getEnd();
-          auto start = allocRange->ranges[0].start;
-          auto len = end - start;
-
-          if (!maxLiveRange) {
-            maxLiveRange = allocRange;
-            maxLen = len;
-            continue;
-          }
-          if (len > maxLen) {
-            maxLiveRange = allocRange;
-            maxLen = len;
-          }
-        }
-        tileId = maxLiveRange->tileId;
-        maxLiveRange->tileId = tileAllocator.allocateInMemoryTileId();
-        llvm::dbgs() << "Free'd tile " << *tileId << '\n';
-        allocatedRanges.remove(maxLiveRange);
+        LiveRange *longestActiveRange =
+            *std::max_element(allocatedRanges.begin(), allocatedRanges.end(),
+                              [](LiveRange *a, LiveRange *b) {
+                                return a->length() < b->length();
+                              });
+        tileId = longestActiveRange->tileId;
+        longestActiveRange->tileId = tileAllocator.allocateInMemoryTileId();
+        allocatedRanges.remove(longestActiveRange);
       }
 
       liveRange.tileId = *tileId;
@@ -471,46 +455,6 @@ struct TileAllocationPass
     }
 
     deleteDeadArmSMEOps(getOperation());
-
-    // return;
-
-    llvm::unique_function<void(Operation *, int)> walk2 = [&](Operation *op,
-                                                              int level) {
-      auto idxHere = operationToIndexMap[op];
-      for (auto &range : finalLiveRanges) {
-        if (range.isLive(idxHere)) {
-          if (!range.isLive(idxHere - 1))
-            llvm::dbgs() << "S";
-          else if (!range.isLive(idxHere + 1))
-            llvm::dbgs() << "E";
-          else
-            llvm::dbgs() << "|";
-        } else {
-          llvm::dbgs() << " ";
-        }
-      }
-      llvm::dbgs() << " ";
-      for (int i = 0; i < level; i++)
-        llvm::dbgs() << ' ';
-      llvm::dbgs() << op->getName();
-      llvm::dbgs() << " | index = " << operationToIndexMap[op] << '\n';
-      for (auto [regionIdx, region] : llvm::enumerate(op->getRegions())) {
-        for (int i = 0; i < level; i++)
-          llvm::dbgs() << ' ';
-        llvm::dbgs() << "START NESTED REGION\n";
-        for (auto [blockIdx, block] : llvm::enumerate(region.getBlocks())) {
-          for (int i = 0; i < level; i++)
-            llvm::dbgs() << ' ';
-          llvm::dbgs() << "^bb" << blockIdx++ << ":\n";
-          for (Operation &nested : block)
-            walk2(&nested, level + 2);
-        }
-        for (int i = 0; i < level; i++)
-          llvm::dbgs() << ' ';
-        llvm::dbgs() << "END NESTED REGION\n";
-      }
-    };
-    walk2(getOperation(), 0);
   }
 };
 } // namespace
