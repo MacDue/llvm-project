@@ -402,19 +402,15 @@ struct TileAllocationPass
               });
 
     TileAllocator tileAllocator;
-    SmallVector<LiveRange *> allocatedRanges;
+    SetVector<LiveRange *> allocatedRanges;
     for (auto &liveRange : finalLiveRanges) {
-      allocatedRanges.erase(
-          std::remove_if(allocatedRanges.begin(), allocatedRanges.end(),
-                         [&](auto *range) {
-                           if (range->getEnd() <= liveRange.ranges[0].start) {
-                             tileAllocator.releaseTileId(range->getTileType(),
-                                                         range->tileId);
-                             return true;
-                           }
-                           return false;
-                         }),
-          allocatedRanges.end());
+      allocatedRanges.remove_if([&](LiveRange *range) {
+        if (range->getEnd() <= liveRange.ranges[0].start) {
+          tileAllocator.releaseTileId(range->getTileType(), range->tileId);
+          return true;
+        }
+        return false;
+      });
 
       auto tileId = tileAllocator.allocateTileId(liveRange.getTileType());
 
@@ -440,14 +436,11 @@ struct TileAllocationPass
         tileId = maxLiveRange->tileId;
         maxLiveRange->tileId = tileAllocator.allocateInMemoryTileId();
         llvm::dbgs() << "Free'd tile " << *tileId << '\n';
-        allocatedRanges.erase(
-            std::remove_if(allocatedRanges.begin(), allocatedRanges.end(),
-                           [&](auto *range) { return range == maxLiveRange; }),
-            allocatedRanges.end());
+        allocatedRanges.remove(maxLiveRange);
       }
 
       liveRange.tileId = *tileId;
-      allocatedRanges.push_back(&liveRange);
+      allocatedRanges.insert(&liveRange);
     }
 
     IRRewriter rewriter(&getContext());
