@@ -50,6 +50,7 @@
 #include "llvm/ADT/IntervalMap.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include <algorithm>
+#include <vector>
 
 #define DEBUG_TYPE "allocate-arm-sme-tiles"
 
@@ -64,10 +65,6 @@ using namespace mlir;
 using namespace mlir::arm_sme;
 
 namespace {
-
-static constexpr StringLiteral kTilesInUseAttr("arm_sme.tiles_in_use");
-static constexpr StringLiteral
-    kNextInMemoryTileIdAttr("arm_sme.next_in_memory_tile_id");
 
 enum class TileMask : unsigned {
   // clang-format off
@@ -193,50 +190,44 @@ generateOperationNumbering(FunctionOpInterface func) {
 }
 
 struct LiveRange {
-  struct Range {
-    unsigned start;
-    unsigned end;
+  using RangeSet = llvm::IntervalMap<uint64_t, uint8_t, 16,
+                                     llvm::IntervalMapHalfOpenInfo<unsigned>>;
+  using Allocator = RangeSet::Allocator;
 
-    bool overlaps(Range other) const {
-      return std::max(start, other.start) < std::min(end, other.end);
-    }
-  };
+  LiveRange(Allocator &allocator)
+      : ranges(std::make_unique<RangeSet>(allocator)) {}
 
-  unsigned getEnd() const {
-    unsigned end = 0;
-    for (auto r : ranges) {
-      end = std::max(end, r.end);
-    }
-    return end;
-  }
-
-  bool isLive(unsigned programPoint) const {
-    for (auto range : ranges) {
-      if (programPoint >= range.start && programPoint <= range.end)
-        return true;
-    }
-    return false;
-  }
+  bool isLive(unsigned pos) const { return ranges->lookup(pos, 0) != 0; }
 
   bool overlaps(LiveRange const &other) const {
-    for (auto rangeA : ranges) {
-      for (auto rangeB : other.ranges) {
-        if (rangeA.overlaps(rangeB))
-          return true;
-      }
-    }
-    return false;
+    return llvm::IntervalMapOverlaps<RangeSet, RangeSet>(*ranges, *other.ranges)
+        .valid();
   }
 
-  unsigned length() const { return getEnd() - ranges[0].start; }
+  void unionWith(LiveRange const &other) {
+    for (auto it = other.ranges->begin(); it != other.ranges->end(); ++it) {
+      ranges->insert(it.start(), it.stop(), /*dummy*/ 0xFF);
+    }
+    values.set_union(other.values);
+  }
+
+  bool empty() const { return ranges->empty(); }
+  unsigned start() const { return ranges->start(); }
+  unsigned end() const { return ranges->stop(); }
+  unsigned length() const { return end() - start(); }
 
   ArmSMETileType getTileType() const {
     return *arm_sme::getSMETileType(cast<VectorType>(values[0].getType()));
   }
 
+  void insert(Value value, unsigned start, unsigned end) {
+    values.insert(value);
+    ranges->insert(start, end, /*dummy*/ 0xFF);
+  }
+
+  std::unique_ptr<RangeSet> ranges;
   SetVector<Value> values;
-  SmallVector<Range> ranges;
-  unsigned tileId = kInMemoryTileIdBase;
+  std::optional<unsigned> tileId;
 };
 
 static void insertCopies(Operation *func) {
@@ -298,18 +289,21 @@ struct TileAllocationPass
     insertCopies(function);
     auto operationToIndexMap = generateOperationNumbering(function);
 
+    LiveRange::Allocator liveRangeAllocator;
     DenseMap<Value, LiveRange> liveRanges;
     auto updateLiveRanges = [&](Value value, Operation *firstUseOrDef,
                                 LivenessBlockInfo const &livenessInfo) {
       auto vType = dyn_cast<VectorType>(value.getType());
       if (!vType || !arm_sme::isValidSMETileVectorType(vType))
         return;
-      auto liveRange = liveRanges.try_emplace(value).first;
-      liveRange->second.values.insert(value);
-      liveRange->second.ranges.push_back(
-          {operationToIndexMap[firstUseOrDef],
-           operationToIndexMap[livenessInfo.getEndOperation(value,
-                                                            firstUseOrDef)]});
+      auto it = liveRanges.try_emplace(value, liveRangeAllocator).first;
+      auto lastUseInBlock = livenessInfo.getEndOperation(value, firstUseOrDef);
+      unsigned start = operationToIndexMap[firstUseOrDef];
+      unsigned end = operationToIndexMap[lastUseInBlock];
+      if (start == end) {
+        ++end;
+      }
+      it->second.insert(value, start, end);
     };
 
     auto &liveness = getAnalysis<Liveness>();
@@ -330,17 +324,17 @@ struct TileAllocationPass
     }
 
     llvm::EquivalenceClasses<void *> valueMerges;
-    for (auto [value, _] : liveRanges) {
+    for (auto &[value, _] : liveRanges) {
       valueMerges.insert(value.getAsOpaquePointer());
     }
 
     auto tryMergeRanges = [&](Value a, Value b) {
-      if (!liveRanges[a].overlaps(liveRanges[b])) {
+      if (!liveRanges.at(a).overlaps(liveRanges.at(b))) {
         valueMerges.unionSets(a.getAsOpaquePointer(), b.getAsOpaquePointer());
       }
     };
 
-    for (auto [value, range] : liveRanges) {
+    for (auto &[value, range] : liveRanges) {
       if (auto op = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>()) {
         for (auto arg : op->getOperands()) {
           auto vType = dyn_cast<VectorType>(arg.getType());
@@ -374,63 +368,58 @@ struct TileAllocationPass
       }
     }
 
-    SmallVector<LiveRange> finalLiveRanges;
+    std::vector<LiveRange> coalescedLiveRanges;
     for (llvm::EquivalenceClasses<void *>::iterator I = valueMerges.begin(),
                                                     E = valueMerges.end();
          I != E; ++I) {
       if (!I->isLeader())
         continue; // Ignore non-leader sets.
-      LiveRange mergedRange;
+      LiveRange mergedRange(liveRangeAllocator);
       for (llvm::EquivalenceClasses<void *>::member_iterator MI =
                valueMerges.member_begin(I);
            MI != valueMerges.member_end(); ++MI) {
         Value value = Value::getFromOpaquePointer(*MI);
-        mergedRange.values.insert(value);
-        auto &smallerRange = liveRanges[value];
-        mergedRange.ranges.append(smallerRange.ranges.begin(),
-                                  smallerRange.ranges.end());
+        mergedRange.unionWith(liveRanges.at(value));
       }
-      std::sort(mergedRange.ranges.begin(), mergedRange.ranges.end(),
-                [&](auto &a, auto &b) { return a.start < b.start; });
-      finalLiveRanges.push_back(mergedRange);
+      coalescedLiveRanges.emplace_back(std::move(mergedRange));
     }
 
-    std::sort(finalLiveRanges.begin(), finalLiveRanges.end(),
-              [&](auto &a, auto &b) {
-                return a.ranges[0].start < b.ranges[0].start;
-              });
+    std::sort(
+        coalescedLiveRanges.begin(), coalescedLiveRanges.end(),
+        [&](LiveRange &a, LiveRange &b) { return a.start() < b.start(); });
 
     TileAllocator tileAllocator;
     SetVector<LiveRange *> allocatedRanges;
-    for (auto &liveRange : finalLiveRanges) {
-      allocatedRanges.remove_if([&](LiveRange *range) {
-        if (range->getEnd() <= liveRange.ranges[0].start) {
-          tileAllocator.releaseTileId(range->getTileType(), range->tileId);
+    for (auto &newRange : coalescedLiveRanges) {
+      allocatedRanges.remove_if([&](LiveRange *allocatedRange) {
+        if (allocatedRange->end() <= newRange.start()) {
+          tileAllocator.releaseTileId(allocatedRange->getTileType(),
+                                      *allocatedRange->tileId);
           return true;
         }
         return false;
       });
 
-      auto tileId = tileAllocator.allocateTileId(liveRange.getTileType());
+      auto tileId = tileAllocator.allocateTileId(newRange.getTileType());
       if (failed(tileId)) {
         LiveRange *longestActiveRange =
             *std::max_element(allocatedRanges.begin(), allocatedRanges.end(),
                               [](LiveRange *a, LiveRange *b) {
                                 return a->length() < b->length();
                               });
-        tileId = longestActiveRange->tileId;
+        tileId = *longestActiveRange->tileId;
         longestActiveRange->tileId = tileAllocator.allocateInMemoryTileId();
         allocatedRanges.remove(longestActiveRange);
       }
 
-      liveRange.tileId = *tileId;
-      allocatedRanges.insert(&liveRange);
+      newRange.tileId = *tileId;
+      allocatedRanges.insert(&newRange);
     }
 
     IRRewriter rewriter(&getContext());
-    for (auto &liveRange : finalLiveRanges) {
+    for (auto &liveRange : coalescedLiveRanges) {
       auto tileIdAttr = IntegerAttr::get(IntegerType::get(&getContext(), 32),
-                                         liveRange.tileId);
+                                         *liveRange.tileId);
       for (auto value : liveRange.values) {
         if (auto armSmeOp =
                 value.getDefiningOp<arm_sme::ArmSMETileOpInterface>())
@@ -453,6 +442,44 @@ struct TileAllocationPass
         }
       }
     }
+
+    llvm::unique_function<void(Operation *, int)> walk2 = [&](Operation *op,
+                                                              int level) {
+      auto idxHere = operationToIndexMap[op];
+      for (auto &range : coalescedLiveRanges) {
+        if (range.isLive(idxHere)) {
+          if (!range.isLive(idxHere - 1))
+            llvm::dbgs() << "S";
+          else if (!range.isLive(idxHere + 1))
+            llvm::dbgs() << "E";
+          else
+            llvm::dbgs() << "|";
+        } else {
+          llvm::dbgs() << " ";
+        }
+      }
+      llvm::dbgs() << " ";
+      for (int i = 0; i < level; i++)
+        llvm::dbgs() << ' ';
+      llvm::dbgs() << op->getName();
+      llvm::dbgs() << " | index = " << operationToIndexMap[op] << '\n';
+      for (auto [regionIdx, region] : llvm::enumerate(op->getRegions())) {
+        for (int i = 0; i < level; i++)
+          llvm::dbgs() << ' ';
+        llvm::dbgs() << "START NESTED REGION\n";
+        for (auto [blockIdx, block] : llvm::enumerate(region.getBlocks())) {
+          for (int i = 0; i < level; i++)
+            llvm::dbgs() << ' ';
+          llvm::dbgs() << "^bb" << blockIdx++ << ":\n";
+          for (Operation &nested : block)
+            walk2(&nested, level + 2);
+        }
+        for (int i = 0; i < level; i++)
+          llvm::dbgs() << ' ';
+        llvm::dbgs() << "END NESTED REGION\n";
+      }
+    };
+    walk2(getOperation(), 0);
 
     deleteDeadArmSMEOps(getOperation());
   }
