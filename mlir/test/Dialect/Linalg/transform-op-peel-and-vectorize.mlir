@@ -63,11 +63,11 @@ func.func @matmul(%A: tensor<1024x512xf32>,
 }
 
 module attributes {transform.with_named_sequence} {
-  transform.named_sequence @__transform_main(%root: !transform.any_op {transform.readonly}) {
+  transform.named_sequence @__transform_main(%root: !transform.any_op {transform.consumed}) {
     %matmul = transform.structured.match ops{["linalg.matmul"]} in %root : (!transform.any_op) -> !transform.any_op
     // 1. Scalable tiling
     %_, %loop_1, %loop_2, %loop_3 =
-      transform.structured.tile_using_for %matmul [8, [16], 1] : (!transform.any_op)
+      transform.structured.tile_using_for %matmul [[8], [8], 1] : (!transform.any_op)
       -> (!transform.any_op, !transform.op<"scf.for">, !transform.op<"scf.for">,!transform.op<"scf.for">)
 
     // 2. Loop peeling (only the middle dimension)
@@ -75,11 +75,36 @@ module attributes {transform.with_named_sequence} {
 
     // 3. Vectorize the main loop
     %matmul_main = transform.structured.match ops{["linalg.matmul"]} in %main_loop : (!transform.op<"scf.for">) -> !transform.any_op
-    transform.structured.vectorize %matmul_main vector_sizes [8, [16], 1] : !transform.any_op
+    transform.structured.vectorize %matmul_main vector_sizes [[8], [8], 1] : !transform.any_op
 
     // 4. Vectorize the remainder loop
     %matmul_remainder = transform.structured.match ops{["linalg.matmul"]} in %remainder_loop : (!transform.op<"scf.for">) -> !transform.any_op
-    transform.structured.vectorize %matmul_remainder vector_sizes [8, [16], 1] : !transform.any_op
+    transform.structured.vectorize %matmul_remainder vector_sizes [[8], [8], 1] : !transform.any_op
+
+    // Step 3: Bufferize ahead of TransferReadDropUnitDimsPattern, which
+    // currently only supports memrefs.
+    %bufferize = transform.bufferization.one_shot_bufferize %root
+      {bufferize_function_boundaries=true} : (!transform.any_op) -> !transform.any_op
+
+    %func = transform.structured.match ops{["func.func"]} in %bufferize
+      : (!transform.any_op) -> !transform.any_op
+
+    // Step 4: Lower vector.multi_reduction to vector.contract (+ some helpful patterns).
+    transform.apply_patterns to %func {
+      transform.apply_patterns.vector.lower_masked_transfers
+      transform.apply_patterns.vector.transfer_permutation_patterns
+      transform.apply_patterns.vector.reduction_to_contract
+    } : !transform.any_op
+
+    // Step 5: Lower vector.contract to vector.outerproduct. Also drop unit
+    // dims, specifically to prevent vector.transfer_read of vector<[8]x1xf32>,
+    // which can't be lowered in generic path.
+    transform.apply_patterns to %func {
+      transform.apply_patterns.vector.lower_contraction lowering_strategy = "outerproduct"
+      transform.apply_patterns.vector.lower_masks
+      transform.apply_patterns.vector.rank_reducing_subview_patterns
+    } : !transform.any_op
+
 
     transform.yield
   }
