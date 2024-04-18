@@ -30,7 +30,7 @@ std::unique_ptr<Pass> createEnableArmStreamingPass(
     const ArmZaMode = ArmZaMode::Disabled, bool onlyIfRequiredByOps = false);
 
 /// Pass that allocates tile IDs to ArmSME operations.
-std::unique_ptr<Pass> createTileAllocationPass();
+std::unique_ptr<Pass> createTestTileAllocationPass();
 
 /// Pass that fuses 'arm_sme.outerproduct' ops into 2-way or 4-way widening
 /// variants.

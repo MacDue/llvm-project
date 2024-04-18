@@ -1,4 +1,5 @@
-//===- TileAllocation.cpp - Allocate SME ZA tiles -------------------------===//
+//===- TestTileAllocation.cpp - Allocate SME ZA tiles
+//-------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -56,7 +57,7 @@
 #define DEBUG_TYPE "allocate-arm-sme-tiles"
 
 namespace mlir::arm_sme {
-#define GEN_PASS_DEF_TILEALLOCATION
+#define GEN_PASS_DEF_TESTTILEALLOCATION
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h.inc"
 } // namespace mlir::arm_sme
 
@@ -430,24 +431,14 @@ void assignTileIdsAndFoldCopies(IRRewriter &rewriter,
       rewriter.replaceAllUsesWith(copyOp, clonedZeroOp);
     }
   };
-  auto assignTileId = [&](unsigned tileId,
-                          arm_sme::ArmSMETileOpInterface tileOp) {
-    if (tileId >= kInMemoryTileIdBase) {
-      tileOp->emitWarning(
-          "failed to allocate SME virtual tile to operation, all tile "
-          "operations will go through memory, expect degraded performance");
-    }
-    auto tileIdAttr = rewriter.getI32IntegerAttr(tileId);
-    tileOp.setTileId(tileIdAttr);
-  };
   for (LiveRange const &liveRange : allocatedLiveRanges) {
-    unsigned tileId = *liveRange.tileId;
+    auto tileIdAttr = rewriter.getI32IntegerAttr(*liveRange.tileId);
     for (Value value : liveRange.values) {
       if (auto tileOp = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>())
-        assignTileId(tileId, tileOp);
+        tileOp.setTileId(tileIdAttr);
       for (Operation *user : value.getUsers()) {
         if (auto tileOp = dyn_cast<arm_sme::ArmSMETileOpInterface>(user))
-          assignTileId(tileId, tileOp);
+          tileOp.setTileId(tileIdAttr);
       }
       if (auto copyOp = value.getDefiningOp<arm_sme::CopyTileOp>())
         tryFoldCopy(liveRange, copyOp);
@@ -457,22 +448,26 @@ void assignTileIdsAndFoldCopies(IRRewriter &rewriter,
 
 void eraseTriviallyDeadArmSMEOps(IRRewriter &rewriter,
                                  FunctionOpInterface function) {
-  bool stillOpsToCheck = true;
-  while (stillOpsToCheck) {
-    stillOpsToCheck = false;
-    function->walk([&](Operation *op) {
-      auto armSMEOp = dyn_cast<arm_sme::ArmSMETileOpInterface>(op);
-      if (armSMEOp && armSMEOp.use_empty() &&
-          !mlir::hasEffect<MemoryEffects::Write>(op)) {
-        rewriter.eraseOp(armSMEOp);
-        stillOpsToCheck = true;
-      }
-    });
+  SmallVector<Operation *> worklist;
+  function->walk([&](Operation *op) {
+    auto armSMEOp = dyn_cast<arm_sme::ArmSMETileOpInterface>(op);
+    if (armSMEOp && isOpTriviallyDead(armSMEOp))
+      worklist.push_back(armSMEOp);
+  });
+  while (!worklist.empty()) {
+    Operation *op = worklist.pop_back_val();
+    if (!isOpTriviallyDead(op))
+      continue;
+    for (Value value : op->getOperands()) {
+      if (auto armSMEOp = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>())
+        worklist.push_back(armSMEOp);
+    }
+    rewriter.eraseOp(op);
   }
 }
 
-struct TileAllocationPass
-    : public arm_sme::impl::TileAllocationBase<TileAllocationPass> {
+struct TestTileAllocationPass
+    : public arm_sme::impl::TestTileAllocationBase<TestTileAllocationPass> {
   void runOnOperation() override {
     if (failed(arm_sme::allocateSMETiles(getOperation())))
       signalPassFailure();
@@ -507,11 +502,12 @@ LogicalResult mlir::arm_sme::allocateSMETiles(FunctionOpInterface function) {
   assignTileIdsAndFoldCopies(rewriter, function, coalescedLiveRanges);
 
   /// 6. Erase trivially dead ArmSME operations (e.g. a ZeroOp with no
-  /// users).
+  /// users). This prevents the LLVM conversion from spilling operations (e.g.)
+  /// constants that are actually dead.
   eraseTriviallyDeadArmSMEOps(rewriter, function);
   return success();
 }
 
-std::unique_ptr<Pass> mlir::arm_sme::createTileAllocationPass() {
-  return std::make_unique<TileAllocationPass>();
+std::unique_ptr<Pass> mlir::arm_sme::createTestTileAllocationPass() {
+  return std::make_unique<TestTileAllocationPass>();
 }

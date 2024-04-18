@@ -124,16 +124,16 @@ def EnableArmStreaming
   let dependentDialects = ["func::FuncDialect"];
 }
 
-def TileAllocation
-    : Pass<"allocate-arm-sme-tiles", "mlir::func::FuncOp"> {
-  let summary = "Allocate SME tiles";
+def TestTileAllocation
+    : Pass<"test-arm-sme-tile-allocation", "mlir::func::FuncOp"> {
+  let summary = "Tests SME tile allocation";
   let description = [{
     This pass does tile allocation for SME "virtual tiles". It is run at the
     'func.func' op level, and assigns tile IDs (via an attribute) to all ops
     that implement the `ArmSMETileOpInterface`. An error will be emitted when
     there's no tiles left.
   }];
-  let constructor = "mlir::arm_sme::createTileAllocationPass()";
+  let constructor = "mlir::arm_sme::createTestTileAllocationPass()";
   let dependentDialects = ["func::FuncDialect"];
 }
 

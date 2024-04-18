@@ -241,7 +241,7 @@ def ArmSME_TypeSizeAttr : EnumAttr<ArmSME_Dialect, TypeSize,
 class ArmSME_Op<string mnemonic, list<Trait> traits = []> :
   Op<ArmSME_Dialect, mnemonic, traits> {}
 
-def GetTileOp : ArmSME_Op<"get_tile", [ArmSMETileOpInterface, ConstantLike, Pure]> {
+def GetTileOp : ArmSME_Op<"get_tile", [ArmSMETileOpInterface, Pure]> {
   let summary = "Returns a SME virtual tile";
   let description = [{
     Allocates a new SME "virtual tile" within a function. The contents of the
@@ -298,7 +298,7 @@ def CopyTileOp : ArmSME_Op<"copy_tile", [
 // Tile reset.
 //
 
-def ZeroOp : ArmSME_Op<"zero", [ArmSMETileOpInterface, ConstantLike, Pure]> {
+def ZeroOp : ArmSME_Op<"zero", [ArmSMETileOpInterface, Pure]> {
   let summary = "Initialize the two-dimensional ZA array with 0s";
   let results = (outs SMETile:$res);
   let description = [{

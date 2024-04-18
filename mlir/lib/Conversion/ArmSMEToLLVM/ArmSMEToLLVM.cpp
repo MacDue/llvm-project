@@ -16,6 +16,7 @@
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ArmSME/IR/ArmSME.h"
+#include "mlir/Dialect/ArmSME/Transforms/Transforms.h"
 #include "mlir/Dialect/ArmSME/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -244,6 +245,10 @@ struct ConvertArmSMESpillsAndFillsToLLVM : public ConvertToLLVMPattern {
     // Tile has a real (hardware) tile. No spills/reloads required.
     if (!tileOp.isInMemoryTile())
       return failure();
+
+    tileOp->emitWarning(
+        "failed to allocate SME virtual tile to operation, all tile "
+        "operations will go through memory, expect degraded performance");
 
     // Step 1. Create an alloca for the tile at the top of the function (if one
     // does not already exist).
@@ -852,14 +857,18 @@ namespace {
 struct ConvertArmSMEToLLVMPass
     : public impl::ConvertArmSMEToLLVMBase<ConvertArmSMEToLLVMPass> {
   void runOnOperation() override {
+    auto function = getOperation();
+
+    if (failed(arm_sme::allocateSMETiles(function)))
+      return signalPassFailure();
+
     LLVMConversionTarget target(getContext());
     RewritePatternSet patterns(&getContext());
     LLVMTypeConverter converter(&getContext());
     configureArmSMEToLLVMConversionLegality(target);
     populateArmSMEToLLVMConversionPatterns(converter, patterns);
 
-    if (failed(applyPartialConversion(getOperation(), target,
-                                      std::move(patterns))))
+    if (failed(applyPartialConversion(function, target, std::move(patterns))))
       signalPassFailure();
   }
 };

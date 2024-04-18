@@ -12,6 +12,7 @@
 #include <memory>
 
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 namespace mlir {
 class Pass;

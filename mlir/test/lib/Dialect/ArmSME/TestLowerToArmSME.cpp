@@ -65,13 +65,6 @@ void buildTestLowerToArmSME(OpPassManager &pm,
   pm.addPass(createConvertVectorToSCFPass(
       VectorTransferToSCFOptions().enableFullUnroll()));
 
-  // Allocate tiles for ArmSME operations.
-  //
-  // Later passes may create further ArmSME ops that implement the
-  // ArmSMETileOpInterface, but tiles are allocated for root operations,
-  // all of which should now exist.
-  pm.addPass(arm_sme::createTileAllocationPass());
-
   // Enable streaming-mode and ZA.
   pm.addPass(arm_sme::createEnableArmStreamingPass(
       arm_sme::ArmStreamingMode::StreamingLocally, arm_sme::ArmZaMode::NewZA,
