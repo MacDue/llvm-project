@@ -43,6 +43,7 @@
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/ArmSME/IR/ArmSME.h"
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h"
+#include "mlir/Dialect/ArmSME/Transforms/Transforms.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -54,12 +55,10 @@
 
 #define DEBUG_TYPE "allocate-arm-sme-tiles"
 
-namespace mlir {
-namespace arm_sme {
+namespace mlir::arm_sme {
 #define GEN_PASS_DEF_TILEALLOCATION
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h.inc"
-} // namespace arm_sme
-} // namespace mlir
+} // namespace mlir::arm_sme
 
 using namespace mlir;
 using namespace mlir::arm_sme;
@@ -475,38 +474,43 @@ void eraseTriviallyDeadArmSMEOps(IRRewriter &rewriter,
 struct TileAllocationPass
     : public arm_sme::impl::TileAllocationBase<TileAllocationPass> {
   void runOnOperation() override {
-    FunctionOpInterface function = getOperation();
-    LiveRange::Allocator liveRangeAllocator;
-    IRRewriter rewriter(&getContext());
-
-    // 1. Insert copy operations at branch operations (i.e. the predecessors to
-    // block arguments).
-    insertCopies(rewriter, function);
-
-    // 2. Gather live ranges for each ArmSME tile within the function.
-    auto &liveness = getAnalysis<Liveness>();
-    auto initialLiveRanges =
-        gatherLiveRanges(liveRangeAllocator, liveness, function);
-
-    // 3. Coalesce (non-overlapping) live ranges where it would be beneficial
-    // for tile allocation. E.g. Unify the result of an operation with it's
-    // operands.
-    auto coalescedLiveRanges =
-        coalesceLiveRanges(liveRangeAllocator, initialLiveRanges);
-
-    // 4. Allocate tile IDs to live ranges.
-    allocateLiveRanges(coalescedLiveRanges);
-
-    // 5. Assign the tile IDs back to the ArmSME operations (and fold way
-    // redundant copies).
-    assignTileIdsAndFoldCopies(rewriter, function, coalescedLiveRanges);
-
-    /// 6. Erase trivially dead ArmSME operations (e.g. a ZeroOp with no
-    /// users).
-    eraseTriviallyDeadArmSMEOps(rewriter, function);
+    if (failed(arm_sme::allocateSMETiles(getOperation())))
+      signalPassFailure();
   }
 };
 } // namespace
+
+LogicalResult mlir::arm_sme::allocateSMETiles(FunctionOpInterface function) {
+  LiveRange::Allocator liveRangeAllocator;
+  IRRewriter rewriter(function.getContext());
+
+  // 1. Insert copy operations at branch operations (i.e. the predecessors to
+  // block arguments).
+  insertCopies(rewriter, function);
+
+  // 2. Gather live ranges for each ArmSME tile within the function.
+  Liveness liveness(function);
+  auto initialLiveRanges =
+      gatherLiveRanges(liveRangeAllocator, liveness, function);
+
+  // 3. Coalesce (non-overlapping) live ranges where it would be beneficial
+  // for tile allocation. E.g. Unify the result of an operation with it's
+  // operands.
+  auto coalescedLiveRanges =
+      coalesceLiveRanges(liveRangeAllocator, initialLiveRanges);
+
+  // 4. Allocate tile IDs to live ranges.
+  allocateLiveRanges(coalescedLiveRanges);
+
+  // 5. Assign the tile IDs back to the ArmSME operations (and fold way
+  // redundant copies).
+  assignTileIdsAndFoldCopies(rewriter, function, coalescedLiveRanges);
+
+  /// 6. Erase trivially dead ArmSME operations (e.g. a ZeroOp with no
+  /// users).
+  eraseTriviallyDeadArmSMEOps(rewriter, function);
+  return success();
+}
 
 std::unique_ptr<Pass> mlir::arm_sme::createTileAllocationPass() {
   return std::make_unique<TileAllocationPass>();
