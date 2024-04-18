@@ -431,14 +431,24 @@ void assignTileIdsAndFoldCopies(IRRewriter &rewriter,
       rewriter.replaceAllUsesWith(copyOp, clonedZeroOp);
     }
   };
+  auto assignTileId = [&](unsigned tileId,
+                          arm_sme::ArmSMETileOpInterface tileOp) {
+    if (tileId >= kInMemoryTileIdBase) {
+      tileOp->emitWarning(
+          "failed to allocate SME virtual tile to operation, all tile "
+          "operations will go through memory, expect degraded performance");
+    }
+    auto tileIdAttr = rewriter.getI32IntegerAttr(tileId);
+    tileOp.setTileId(tileIdAttr);
+  };
   for (LiveRange const &liveRange : allocatedLiveRanges) {
-    auto tileIdAttr = rewriter.getI32IntegerAttr(*liveRange.tileId);
+    unsigned tileId = *liveRange.tileId;
     for (Value value : liveRange.values) {
-      if (auto armSmeOp = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>())
-        armSmeOp.setTileId(tileIdAttr);
+      if (auto tileOp = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>())
+        assignTileId(tileId, tileOp);
       for (Operation *user : value.getUsers()) {
-        if (auto armSmeOp = dyn_cast<arm_sme::ArmSMETileOpInterface>(user))
-          armSmeOp.setTileId(tileIdAttr);
+        if (auto tileOp = dyn_cast<arm_sme::ArmSMETileOpInterface>(user))
+          assignTileId(tileId, tileOp);
       }
       if (auto copyOp = value.getDefiningOp<arm_sme::CopyTileOp>())
         tryFoldCopy(liveRange, copyOp);
