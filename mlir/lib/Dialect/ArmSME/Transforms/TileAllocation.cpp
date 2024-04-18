@@ -415,6 +415,11 @@ void allocateLiveRanges(MutableArrayRef<LiveRange> liveRanges) {
   }
 }
 
+bool isTriviallyCloneableTileOp(arm_sme::ArmSMETileOpInterface tileOp) {
+  return tileOp->getNumResults() == 1 && tileOp->getNumOperands() == 0 &&
+         isPure(tileOp);
+}
+
 void assignTileIdsAndFoldCopies(IRRewriter &rewriter,
                                 FunctionOpInterface function,
                                 ArrayRef<LiveRange> allocatedLiveRanges) {
@@ -423,12 +428,14 @@ void assignTileIdsAndFoldCopies(IRRewriter &rewriter,
     Value copySourceTile = copyOp.getTile();
     if (copyLiveness.values.contains(copyOp.getTile()))
       return rewriter.replaceAllUsesWith(copyOp, copySourceTile);
-    if (auto zeroOp = copySourceTile.getDefiningOp<arm_sme::ZeroOp>()) {
+    if (auto tileOp =
+            copySourceTile.getDefiningOp<arm_sme::ArmSMETileOpInterface>();
+        tileOp && isTriviallyCloneableTileOp(tileOp)) {
       rewriter.setInsertionPoint(copyOp);
-      auto clonedZeroOp = zeroOp.clone();
-      clonedZeroOp.setTileId(copyOp.getTileId());
-      rewriter.insert(clonedZeroOp);
-      rewriter.replaceAllUsesWith(copyOp, clonedZeroOp);
+      auto clonedOp = tileOp.clone();
+      clonedOp.setTileId(copyOp.getTileId());
+      rewriter.insert(clonedOp);
+      rewriter.replaceAllUsesWith(copyOp, clonedOp->getResult(0));
     }
   };
   for (LiveRange const &liveRange : allocatedLiveRanges) {
