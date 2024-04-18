@@ -240,44 +240,48 @@ struct LiveRange {
   std::optional<unsigned> tileId;
 };
 
-FailureOr<DenseMap<Operation *, unsigned>>
-generateOperationNumbering(FunctionOpInterface func) {
+DenseMap<Operation *, unsigned>
+generateOperationNumbering(FunctionOpInterface function) {
   unsigned index = 0;
   DenseMap<Operation *, unsigned> operationToIndexMap;
-  for (Block &block : func.getBlocks()) {
+  for (Block &block : function.getBlocks()) {
+    // Make each block header have it's own number (distinct from the first
+    // operation). This will be used for live-ins.
+    ++index;
     for (Operation &op : block.getOperations()) {
-      // This is only correct for flat (CF) control flow.
-      if (op.getNumRegions() != 0) {
-        func.emitOpError(
-            "ArmSME tile allocation does not support nested regions");
-        return failure();
-      }
-      operationToIndexMap.try_emplace(&op, index++);
+      // This is only correct if all ArmSME have been converted to CF.
+#ifndef NDEBUG
+      op.walk([&](arm_sme::ArmSMETileOpInterface nestedOp) {
+        if (&op != nestedOp.getOperation()) {
+          assert(false &&
+                 "ArmSME tile allocation does not support nested regions");
+        }
+      });
+#endif
+      operationToIndexMap.try_emplace(&op, ++index);
     }
   }
   return operationToIndexMap;
 }
 
-FailureOr<DenseMap<Value, LiveRange>>
-gatherLiveRanges(LiveRange::Allocator &liveRangeAllocator, Liveness &liveness,
+DenseMap<Value, LiveRange>
+gatherLiveRanges(DenseMap<Operation *, unsigned> const &operationToIndexMap,
+                 LiveRange::Allocator &liveRangeAllocator, Liveness &liveness,
                  FunctionOpInterface function) {
-  auto maybeOperationToIndexMap = generateOperationNumbering(function);
-  if (failed(maybeOperationToIndexMap))
-    return failure();
-
-  auto operationToIndexMap = std::move(*maybeOperationToIndexMap);
   DenseMap<Value, LiveRange> liveRanges;
   auto updateLiveRanges = [&](Value value, Operation *firstUseOrDef,
-                              LivenessBlockInfo const &livenessInfo) {
+                              LivenessBlockInfo const &livenessInfo,
+                              bool liveIn = false) {
     if (!arm_sme::isValidSMETileVectorType(value.getType()))
       return;
     auto it = liveRanges.try_emplace(value, liveRangeAllocator).first;
     auto lastUseInBlock = livenessInfo.getEndOperation(value, firstUseOrDef);
-    unsigned start = operationToIndexMap[firstUseOrDef];
-    unsigned end = operationToIndexMap[lastUseInBlock];
-    if (start == end) {
+    // Make live ins start at the block header (which has its own number). This
+    // prevents fake overlaps.
+    unsigned start = operationToIndexMap.at(firstUseOrDef) + (liveIn ? -1 : 0);
+    unsigned end = operationToIndexMap.at(lastUseInBlock);
+    if (start == end)
       ++end;
-    }
     it->second.insert(value, start, end);
   };
 
@@ -285,11 +289,12 @@ gatherLiveRanges(LiveRange::Allocator &liveRangeAllocator, Liveness &liveness,
     LivenessBlockInfo const *livenessInfo = liveness.getLiveness(&block);
     if (block.isEntryBlock()) {
       for (Value argument : block.getArguments())
-        updateLiveRanges(argument, &block.front(), *livenessInfo);
+        updateLiveRanges(argument, &block.front(), *livenessInfo,
+                         /*liveIn=*/true);
     }
 
     for (Value liveIn : livenessInfo->in()) {
-      updateLiveRanges(liveIn, &block.front(), *livenessInfo);
+      updateLiveRanges(liveIn, &block.front(), *livenessInfo, /*liveIn=*/true);
     }
 
     for (Operation &op : block)
@@ -300,21 +305,20 @@ gatherLiveRanges(LiveRange::Allocator &liveRangeAllocator, Liveness &liveness,
   return liveRanges;
 }
 SmallVector<LiveRange *>
-coalesceLiveRanges(LiveRange::Allocator &liveRangeAllocator,
-                   DenseMap<Value, LiveRange> &initialLiveRanges) {
+coalesceLiveRanges(DenseMap<Value, LiveRange> &initialLiveRanges) {
   DenseMap<Value, LiveRange *> liveRanges;
   for (auto &[value, liveRange] : initialLiveRanges) {
     liveRanges.insert({value, &liveRange});
   }
 
+  // TODO: Come up with something more optimal?
   auto mergeValuesIfNonOverlapping = [&](Value a, Value b) {
-    auto aIt = liveRanges.find(a);
-    auto bIt = liveRanges.find(b);
-    LiveRange &aLiveRange = *aIt->second;
-    LiveRange &bLiveRange = *bIt->second;
-    if (!aLiveRange.overlaps(bLiveRange)) {
-      aLiveRange.unionWith(bLiveRange);
-      bIt->second = &aLiveRange;
+    LiveRange *aLiveRange = liveRanges.at(a);
+    LiveRange *bLiveRange = liveRanges.at(b);
+    if (aLiveRange != bLiveRange && !aLiveRange->overlaps(*bLiveRange)) {
+      aLiveRange->unionWith(*bLiveRange);
+      for (Value value : bLiveRange->values)
+        liveRanges[value] = aLiveRange;
     }
   };
 
@@ -487,6 +491,32 @@ struct TestTileAllocationPass
 };
 } // namespace
 
+void dumpLiveRanges(DenseMap<Operation *, unsigned> const &operationToIndexMap,
+                    ArrayRef<LiveRange const *> liveRanges,
+                    FunctionOpInterface function) {
+  for (auto [blockIdx, block] : llvm::enumerate(function.getBlocks())) {
+    llvm::errs() << "^bb" << blockIdx << ":\n";
+    for (Operation &op : block.getOperations()) {
+      unsigned operationIndex = operationToIndexMap.at(&op);
+      for (LiveRange const *range : liveRanges) {
+        if (operationIndex == range->start()) {
+          llvm::errs() << 'S'; // Start
+        } else if (operationIndex == range->end()) {
+          llvm::errs() << 'E'; // End
+        } else if (range->isLive(operationIndex)) {
+          llvm::errs() << '|'; // Live
+        } else if (operationIndex >= range->start() &&
+                   operationIndex < range->end()) {
+          llvm::errs() << 'x'; // In range but unreachable (not live)
+        } else {
+          llvm::errs() << ' '; // Not live
+        }
+      }
+      llvm::errs() << ' ' << op.getName() << '\n';
+    }
+  }
+}
+
 LogicalResult mlir::arm_sme::allocateSMETiles(FunctionOpInterface function) {
   LiveRange::Allocator liveRangeAllocator;
   IRRewriter rewriter(function.getContext());
@@ -497,16 +527,25 @@ LogicalResult mlir::arm_sme::allocateSMETiles(FunctionOpInterface function) {
 
   // 2. Gather live ranges for each ArmSME tile within the function.
   Liveness liveness(function);
-  auto initialLiveRanges =
-      gatherLiveRanges(liveRangeAllocator, liveness, function);
-  if (failed(initialLiveRanges))
-    return failure();
+  auto operationToIndexMap = generateOperationNumbering(function);
+  auto initialLiveRanges = gatherLiveRanges(
+      operationToIndexMap, liveRangeAllocator, liveness, function);
+
+  // SmallVector<LiveRange *> test;
+  // for (auto &[_, range] : initialLiveRanges) {
+  //   test.push_back(&range);
+  // }
+  // std::sort(test.begin(), test.end(),
+  //           [](LiveRange *a, LiveRange *b) { return *a < *b; });
+  // dumpLiveRanges(*operationToIndexMap, test, function);
+
+  // llvm::dbgs() << "\n\n=====\n";
 
   // 3. Coalesce (non-overlapping) live ranges where it would be beneficial
   // for tile allocation. E.g. Unify the result of an operation with it's
   // operands.
-  auto coalescedLiveRanges =
-      coalesceLiveRanges(liveRangeAllocator, *initialLiveRanges);
+  auto coalescedLiveRanges = coalesceLiveRanges(initialLiveRanges);
+  dumpLiveRanges(operationToIndexMap, coalescedLiveRanges, function);
 
   // 4. Allocate tile IDs to live ranges.
   allocateLiveRanges(coalescedLiveRanges);
