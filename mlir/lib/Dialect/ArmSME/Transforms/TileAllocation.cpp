@@ -531,21 +531,12 @@ LogicalResult mlir::arm_sme::allocateSMETiles(FunctionOpInterface function) {
   auto initialLiveRanges = gatherLiveRanges(
       operationToIndexMap, liveRangeAllocator, liveness, function);
 
-  // SmallVector<LiveRange *> test;
-  // for (auto &[_, range] : initialLiveRanges) {
-  //   test.push_back(&range);
-  // }
-  // std::sort(test.begin(), test.end(),
-  //           [](LiveRange *a, LiveRange *b) { return *a < *b; });
-  // dumpLiveRanges(*operationToIndexMap, test, function);
-
-  // llvm::dbgs() << "\n\n=====\n";
-
   // 3. Coalesce (non-overlapping) live ranges where it would be beneficial
   // for tile allocation. E.g. Unify the result of an operation with it's
   // operands.
   auto coalescedLiveRanges = coalesceLiveRanges(initialLiveRanges);
-  dumpLiveRanges(operationToIndexMap, coalescedLiveRanges, function);
+
+  // dumpLiveRanges(operationToIndexMap, coalescedLiveRanges, function);
 
   // 4. Allocate tile IDs to live ranges.
   allocateLiveRanges(coalescedLiveRanges);
