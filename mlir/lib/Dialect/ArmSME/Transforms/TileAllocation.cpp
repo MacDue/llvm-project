@@ -299,49 +299,22 @@ gatherLiveRanges(LiveRange::Allocator &liveRangeAllocator, Liveness &liveness,
 
   return liveRanges;
 }
-
-class ValueUnionFind {
-public:
-  struct Comparator {
-    bool operator()(Value const &a, Value const &b) const {
-      return a.getImpl() < b.getImpl();
-    }
-  };
-  using EquivalenceClasses = llvm::EquivalenceClasses<Value, Comparator>;
-  using MemberIterator = EquivalenceClasses::member_iterator;
-  using MembersCallback = function_ref<void(MemberIterator, MemberIterator)>;
-
-  void insert(Value value) { equivalenceClasses.insert(value); }
-  void unionSets(Value a, Value b) { equivalenceClasses.unionSets(a, b); }
-
-  void forEachEquivalenceClass(MembersCallback callback) {
-    for (EquivalenceClasses::iterator it = equivalenceClasses.begin(),
-                                      end = equivalenceClasses.end();
-         it != end; ++it) {
-      if (!it->isLeader())
-        continue;
-      callback(equivalenceClasses.member_begin(it),
-               equivalenceClasses.member_end());
-    }
-  };
-
-private:
-  EquivalenceClasses equivalenceClasses;
-};
-
-SmallVector<LiveRange>
+SmallVector<LiveRange *>
 coalesceLiveRanges(LiveRange::Allocator &liveRangeAllocator,
-                   DenseMap<Value, LiveRange> const &initialLiveRanges) {
-  ValueUnionFind valueMerges;
-  for (auto &[value, _] : initialLiveRanges) {
-    valueMerges.insert(value);
+                   DenseMap<Value, LiveRange> &initialLiveRanges) {
+  DenseMap<Value, LiveRange *> liveRanges;
+  for (auto &[value, liveRange] : initialLiveRanges) {
+    liveRanges.insert({value, &liveRange});
   }
 
   auto mergeValuesIfNonOverlapping = [&](Value a, Value b) {
-    LiveRange const &aLiveRange = initialLiveRanges.at(a);
-    LiveRange const &bLiveRange = initialLiveRanges.at(b);
+    auto aIt = liveRanges.find(a);
+    auto bIt = liveRanges.find(b);
+    LiveRange &aLiveRange = *aIt->second;
+    LiveRange &bLiveRange = *bIt->second;
     if (!aLiveRange.overlaps(bLiveRange)) {
-      valueMerges.unionSets(a, b);
+      aLiveRange.unionWith(bLiveRange);
+      bIt->second = &aLiveRange;
     }
   };
 
@@ -391,27 +364,25 @@ coalesceLiveRanges(LiveRange::Allocator &liveRangeAllocator,
     unifyBlockArgumentsWithPredecessors(value);
   }
 
-  SmallVector<LiveRange> coalescedLiveRanges;
-  valueMerges.forEachEquivalenceClass([&](auto memberBegin, auto memberEnd) {
-    LiveRange coalescedLiveRange(liveRangeAllocator);
-    for (Value value : llvm::make_range(memberBegin, memberEnd)) {
-      coalescedLiveRange.unionWith(initialLiveRanges.at(value));
-    }
-    coalescedLiveRanges.emplace_back(std::move(coalescedLiveRange));
-  });
+  // Remove duplicate live range entries.
+  SetVector<LiveRange *> uniqueLiveRanges;
+  for (auto [_, liveRange] : liveRanges)
+    uniqueLiveRanges.insert(liveRange);
 
-  // Sort the new live ranges (ready for tile allocation).
-  std::sort(coalescedLiveRanges.begin(), coalescedLiveRanges.end());
+  // Sort the new live ranges by start point (ready for tile allocation).
+  auto coalescedLiveRanges = uniqueLiveRanges.takeVector();
+  std::sort(coalescedLiveRanges.begin(), coalescedLiveRanges.end(),
+            [](LiveRange *a, LiveRange *b) { return *a < *b; });
   return coalescedLiveRanges;
 }
 
-void allocateLiveRanges(MutableArrayRef<LiveRange> liveRanges) {
+void allocateLiveRanges(ArrayRef<LiveRange *> liveRanges) {
   TileAllocator tileAllocator;
   SetVector<LiveRange *> allocatedRanges;
-  for (auto &newRange : liveRanges) {
+  for (LiveRange *newRange : liveRanges) {
     // Free tiles from ranges that end before the new range starts.
     allocatedRanges.remove_if([&](LiveRange *allocatedRange) {
-      if (allocatedRange->end() <= newRange.start()) {
+      if (allocatedRange->end() <= newRange->start()) {
         tileAllocator.releaseTileId(allocatedRange->getTileType(),
                                     *allocatedRange->tileId);
         return true;
@@ -419,7 +390,7 @@ void allocateLiveRanges(MutableArrayRef<LiveRange> liveRanges) {
       return false;
     });
 
-    auto tileId = tileAllocator.allocateTileId(newRange.getTileType());
+    auto tileId = tileAllocator.allocateTileId(newRange->getTileType());
     if (failed(tileId)) {
       // No tile was free. Spill the largest live range. This normally
       // corresponds to a hoisted constant, which is free to 'spill' (as we can
@@ -432,8 +403,8 @@ void allocateLiveRanges(MutableArrayRef<LiveRange> liveRanges) {
       allocatedRanges.remove(longestActiveRange);
     }
 
-    newRange.tileId = *tileId;
-    allocatedRanges.insert(&newRange);
+    newRange->tileId = *tileId;
+    allocatedRanges.insert(newRange);
   }
 }
 
@@ -444,10 +415,10 @@ bool isTriviallyCloneableTileOp(arm_sme::ArmSMETileOpInterface tileOp) {
 
 LogicalResult assignTileIdsAndResolveTrivialConflicts(
     IRRewriter &rewriter, FunctionOpInterface function,
-    ArrayRef<LiveRange> allocatedLiveRanges) {
-  for (LiveRange const &liveRange : allocatedLiveRanges) {
-    auto tileIdAttr = rewriter.getI32IntegerAttr(*liveRange.tileId);
-    for (Value value : liveRange.values) {
+    ArrayRef<LiveRange *> allocatedLiveRanges) {
+  for (LiveRange const *liveRange : allocatedLiveRanges) {
+    auto tileIdAttr = rewriter.getI32IntegerAttr(*liveRange->tileId);
+    for (Value value : liveRange->values) {
       if (auto tileOp = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>()) {
         tileOp.setTileId(tileIdAttr);
         for (OpOperand &operand : tileOp->getOpOperands()) {
@@ -457,7 +428,7 @@ LogicalResult assignTileIdsAndResolveTrivialConflicts(
           // if means we could not merge the live ranges (as they overlapped),
           // so we need to emit some kind of move. We could emit a runtime move,
           // but for now we limit this to cloning trivial operations.
-          if (!liveRange.values.contains(operand.get())) {
+          if (!liveRange->values.contains(operand.get())) {
             auto operandTileOp =
                 operand.get().getDefiningOp<arm_sme::ArmSMETileOpInterface>();
             if (isTriviallyCloneableTileOp(operandTileOp)) {

@@ -14,10 +14,12 @@
 #include "mlir/Conversion/ArithToArmSME/ArithToArmSME.h"
 #include "mlir/Conversion/ArmSMEToLLVM/ArmSMEToLLVM.h"
 #include "mlir/Conversion/ArmSMEToSCF/ArmSMEToSCF.h"
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Conversion/VectorToArmSME/VectorToArmSME.h"
 #include "mlir/Conversion/VectorToSCF/VectorToSCF.h"
 #include "mlir/Dialect/ArmSME/Transforms/Passes.h"
 #include "mlir/Dialect/ArmSVE/Transforms/Passes.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
@@ -70,8 +72,11 @@ void buildTestLowerToArmSME(OpPassManager &pm,
       arm_sme::ArmStreamingMode::StreamingLocally, arm_sme::ArmZaMode::NewZA,
       /*onlyIfRequiredByOps=*/true));
 
+  // Convert SCF to CF (required for ArmSME tile allocation).
+  pm.addPass(createConvertSCFToCFPass());
+
   // Convert ArmSME to LLVM.
-  pm.addPass(createConvertArmSMEToLLVMPass());
+  pm.addNestedPass<func::FuncOp>(createConvertArmSMEToLLVMPass());
 
   // Sprinkle some cleanups.
   pm.addPass(createCanonicalizerPass());
