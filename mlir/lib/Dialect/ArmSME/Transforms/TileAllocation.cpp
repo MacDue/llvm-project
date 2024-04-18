@@ -176,17 +176,21 @@ private:
   unsigned nextInMemoryTileId = kInMemoryTileIdBase;
 };
 
-static DenseMap<Operation *, unsigned>
-generateOperationNumbering(FunctionOpInterface func) {
-  unsigned index = 0;
-  DenseMap<Operation *, unsigned> operationToIndexMap;
-  for (Block &block : func.getBlocks()) {
-    for (Operation &op : block.getOperations()) {
-      assert(op.getNumRegions() == 0 && "expected flat control flow");
-      operationToIndexMap.try_emplace(&op, index++);
+void insertCopies(IRRewriter &rewriter, FunctionOpInterface function) {
+  auto insertCopy = [&](Location loc, OpOperand &operand) {
+    auto copy = rewriter.create<arm_sme::CopyTileOp>(loc, operand.get());
+    operand.assign(copy);
+  };
+  for (Block &block : function.getBlocks()) {
+    Operation *terminator = block.getTerminator();
+    if (!isa<cf::BranchOp, cf::CondBranchOp>(terminator))
+      continue;
+    rewriter.setInsertionPoint(terminator);
+    for (OpOperand &operand : terminator->getOpOperands()) {
+      if (isValidSMETileVectorType(operand.get().getType()))
+        insertCopy(terminator->getLoc(), operand);
     }
   }
-  return operationToIndexMap;
 }
 
 struct LiveRange {
@@ -225,53 +229,229 @@ struct LiveRange {
     ranges->insert(start, end, /*dummy*/ 0xFF);
   }
 
+  bool operator<(LiveRange const &other) { return start() < other.start(); }
+
   std::unique_ptr<RangeSet> ranges;
   SetVector<Value> values;
   std::optional<unsigned> tileId;
 };
 
-static void insertCopies(Operation *func) {
-  IRRewriter rewriter(func->getContext());
-  func->walk([&](Block *block) {
-    for (auto arg : block->getArguments()) {
-      auto vectorType = dyn_cast<VectorType>(arg.getType());
-      if (!vectorType || !isValidSMETileVectorType(vectorType))
-        continue;
-      for (Block *pred : block->getPredecessors()) {
-        auto terminator = pred->getTerminator();
-        auto loc = terminator->getLoc();
-        rewriter.setInsertionPoint(terminator);
-        OpOperand *operand = nullptr;
-        if (auto br = dyn_cast<cf::BranchOp>(terminator)) {
-          operand = &br.getDestOperandsMutable()[arg.getArgNumber()];
-        } else if (auto condBr = dyn_cast<cf::CondBranchOp>(terminator)) {
-          if (condBr.getFalseDest() == block) {
-            operand = &condBr.getFalseDestOperandsMutable()[arg.getArgNumber()];
-          } else if (condBr.getTrueDest() == block) {
-            operand = &condBr.getTrueDestOperandsMutable()[arg.getArgNumber()];
-          } else {
-            llvm_unreachable("foo");
-          }
-        }
-        assert(operand);
-        auto copyIn = rewriter.create<arm_sme::CopyTileOp>(loc, operand->get());
-        operand->assign(copyIn);
-        // rewriter.setInsertionPointToStart(block);
-        // auto copyOut = rewriter.create<arm_sme::CopyTileOp>(loc, arg);
-        // rewriter.replaceUsesWithIf(arg, copyOut, [&](OpOperand &operand) {
-        //   return operand.getOwner() != copyOut;
-        // });
-      }
+DenseMap<Operation *, unsigned>
+generateOperationNumbering(FunctionOpInterface func) {
+  unsigned index = 0;
+  DenseMap<Operation *, unsigned> operationToIndexMap;
+  for (Block &block : func.getBlocks()) {
+    for (Operation &op : block.getOperations()) {
+      assert(op.getNumRegions() == 0 && "expected flat control flow");
+      operationToIndexMap.try_emplace(&op, index++);
     }
-  });
+  }
+  return operationToIndexMap;
 }
 
-static void deleteDeadArmSMEOps(Operation *func) {
-  IRRewriter rewriter(func->getContext());
+DenseMap<Value, LiveRange>
+gatherLiveRanges(LiveRange::Allocator &liveRangeAllocator, Liveness &liveness,
+                 FunctionOpInterface function) {
+  auto operationToIndexMap = generateOperationNumbering(function);
+  DenseMap<Value, LiveRange> liveRanges;
+  auto updateLiveRanges = [&](Value value, Operation *firstUseOrDef,
+                              LivenessBlockInfo const &livenessInfo) {
+    if (!arm_sme::isValidSMETileVectorType(value.getType()))
+      return;
+    auto it = liveRanges.try_emplace(value, liveRangeAllocator).first;
+    auto lastUseInBlock = livenessInfo.getEndOperation(value, firstUseOrDef);
+    unsigned start = operationToIndexMap[firstUseOrDef];
+    unsigned end = operationToIndexMap[lastUseInBlock];
+    if (start == end) {
+      ++end;
+    }
+    it->second.insert(value, start, end);
+  };
+
+  for (Block &block : function.getBlocks()) {
+    LivenessBlockInfo const *livenessInfo = liveness.getLiveness(&block);
+    if (block.isEntryBlock()) {
+      for (Value argument : block.getArguments())
+        updateLiveRanges(argument, &block.front(), *livenessInfo);
+    }
+
+    for (Value liveIn : livenessInfo->in()) {
+      updateLiveRanges(liveIn, &block.front(), *livenessInfo);
+    }
+
+    for (Operation &op : block)
+      for (Value result : op.getResults())
+        updateLiveRanges(result, &op, *livenessInfo);
+  }
+
+  return liveRanges;
+}
+
+class ValueUnionFind {
+public:
+  struct Comparator {
+    bool operator()(Value const &a, Value const &b) const {
+      return a.getImpl() < b.getImpl();
+    }
+  };
+  using EquivalenceClasses = llvm::EquivalenceClasses<Value, Comparator>;
+  using MemberIterator = EquivalenceClasses::member_iterator;
+  using MembersCallback = function_ref<void(MemberIterator, MemberIterator)>;
+
+  void insert(Value value) { equivalenceClasses.insert(value); }
+  void unionSets(Value a, Value b) { equivalenceClasses.unionSets(a, b); }
+
+  void forEachEquivalenceClass(MembersCallback callback) {
+    for (EquivalenceClasses::iterator it = equivalenceClasses.begin(),
+                                      end = equivalenceClasses.end();
+         it != end; ++it) {
+      if (!it->isLeader())
+        continue;
+      callback(equivalenceClasses.member_begin(it),
+               equivalenceClasses.member_end());
+    }
+  };
+
+private:
+  EquivalenceClasses equivalenceClasses;
+};
+
+SmallVector<LiveRange>
+coalesceLiveRanges(LiveRange::Allocator &liveRangeAllocator,
+                   DenseMap<Value, LiveRange> const &initialLiveRanges) {
+  ValueUnionFind valueMerges;
+  for (auto &[value, _] : initialLiveRanges) {
+    valueMerges.insert(value);
+  }
+
+  auto mergeValuesIfNonOverlapping = [&](Value a, Value b) {
+    LiveRange const &aLiveRange = initialLiveRanges.at(a);
+    LiveRange const &bLiveRange = initialLiveRanges.at(b);
+    if (!aLiveRange.overlaps(bLiveRange)) {
+      valueMerges.unionSets(a, b);
+    }
+  };
+
+  auto unifyDefinitionsWithOperands = [&](Value value) {
+    auto armSMEOp = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>();
+    if (!armSMEOp)
+      return;
+    for (auto operand : armSMEOp->getOperands()) {
+      if (arm_sme::isValidSMETileVectorType(operand.getType()))
+        mergeValuesIfNonOverlapping(value, operand);
+    }
+  };
+
+  auto unifyBlockArgumentsWithPredecessors = [&](Value value) {
+    auto blockArg = dyn_cast<BlockArgument>(value);
+    if (!blockArg)
+      return;
+    Block *block = blockArg.getOwner();
+    unsigned argNumber = blockArg.getArgNumber();
+    for (Block *pred : block->getPredecessors()) {
+      TypeSwitch<Operation *>(pred->getTerminator())
+          .Case<cf::BranchOp>([&](auto branch) {
+            Value precedingOperand = branch.getDestOperands()[argNumber];
+            mergeValuesIfNonOverlapping(value, precedingOperand);
+          })
+          .Case<cf::CondBranchOp>([&](auto condBranch) {
+            if (condBranch.getFalseDest() == block) {
+              Value precedingOperand =
+                  condBranch.getFalseDestOperands()[argNumber];
+              mergeValuesIfNonOverlapping(value, precedingOperand);
+            }
+            if (condBranch.getTrueDest() == block) {
+              Value precedingOperand =
+                  condBranch.getTrueDestOperands()[argNumber];
+              mergeValuesIfNonOverlapping(value, precedingOperand);
+            }
+          });
+    }
+  };
+
+  for (auto &[value, _] : initialLiveRanges) {
+    unifyDefinitionsWithOperands(value);
+    unifyBlockArgumentsWithPredecessors(value);
+  }
+
+  SmallVector<LiveRange> coalescedLiveRanges;
+  valueMerges.forEachEquivalenceClass([&](auto memberBegin, auto memberEnd) {
+    LiveRange coalescedLiveRange(liveRangeAllocator);
+    for (Value value : llvm::make_range(memberBegin, memberEnd)) {
+      coalescedLiveRange.unionWith(initialLiveRanges.at(value));
+    }
+    coalescedLiveRanges.emplace_back(std::move(coalescedLiveRange));
+  });
+
+  std::sort(coalescedLiveRanges.begin(), coalescedLiveRanges.end());
+  return coalescedLiveRanges;
+}
+
+void allocateLiveRanges(MutableArrayRef<LiveRange> liveRanges) {
+  TileAllocator tileAllocator;
+  SetVector<LiveRange *> allocatedRanges;
+  for (auto &newRange : liveRanges) {
+    allocatedRanges.remove_if([&](LiveRange *allocatedRange) {
+      if (allocatedRange->end() <= newRange.start()) {
+        tileAllocator.releaseTileId(allocatedRange->getTileType(),
+                                    *allocatedRange->tileId);
+        return true;
+      }
+      return false;
+    });
+
+    auto tileId = tileAllocator.allocateTileId(newRange.getTileType());
+    if (failed(tileId)) {
+      LiveRange *longestActiveRange = *std::max_element(
+          allocatedRanges.begin(), allocatedRanges.end(),
+          [](LiveRange *a, LiveRange *b) { return a->length() < b->length(); });
+      tileId = *longestActiveRange->tileId;
+      longestActiveRange->tileId = tileAllocator.allocateInMemoryTileId();
+      allocatedRanges.remove(longestActiveRange);
+    }
+
+    newRange.tileId = *tileId;
+    allocatedRanges.insert(&newRange);
+  }
+}
+
+void assignTileIdsAndFoldCopies(IRRewriter &rewriter,
+                                FunctionOpInterface function,
+                                ArrayRef<LiveRange> allocatedLiveRanges) {
+  auto tryFoldCopy = [&](LiveRange const &copyLiveness,
+                         arm_sme::CopyTileOp copyOp) {
+    Value copySourceTile = copyOp.getTile();
+    if (copyLiveness.values.contains(copyOp.getTile()))
+      return rewriter.replaceAllUsesWith(copyOp, copySourceTile);
+    if (auto zeroOp = copySourceTile.getDefiningOp<arm_sme::ZeroOp>()) {
+      rewriter.setInsertionPoint(copyOp);
+      auto clonedZeroOp = zeroOp.clone();
+      clonedZeroOp.setTileId(copyOp.getTileId());
+      rewriter.insert(clonedZeroOp);
+      rewriter.replaceAllUsesWith(copyOp, clonedZeroOp);
+    }
+  };
+  for (LiveRange const &liveRange : allocatedLiveRanges) {
+    auto tileIdAttr = rewriter.getI32IntegerAttr(*liveRange.tileId);
+    for (Value value : liveRange.values) {
+      if (auto armSmeOp = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>())
+        armSmeOp.setTileId(tileIdAttr);
+      for (Operation *user : value.getUsers()) {
+        if (auto armSmeOp = dyn_cast<arm_sme::ArmSMETileOpInterface>(user))
+          armSmeOp.setTileId(tileIdAttr);
+      }
+      if (auto copyOp = value.getDefiningOp<arm_sme::CopyTileOp>())
+        tryFoldCopy(liveRange, copyOp);
+    }
+  }
+}
+
+void eraseTriviallyDeadArmSMEOps(IRRewriter &rewriter,
+                                 FunctionOpInterface function) {
   bool stillOpsToCheck = true;
   while (stillOpsToCheck) {
     stillOpsToCheck = false;
-    func->walk([&](Operation *op) {
+    function->walk([&](Operation *op) {
       auto armSMEOp = dyn_cast<arm_sme::ArmSMETileOpInterface>(op);
       if (armSMEOp && armSMEOp.use_empty() &&
           !mlir::hasEffect<MemoryEffects::Write>(op)) {
@@ -286,202 +466,34 @@ struct TileAllocationPass
     : public arm_sme::impl::TileAllocationBase<TileAllocationPass> {
   void runOnOperation() override {
     FunctionOpInterface function = getOperation();
-    insertCopies(function);
-    auto operationToIndexMap = generateOperationNumbering(function);
-
     LiveRange::Allocator liveRangeAllocator;
-    DenseMap<Value, LiveRange> liveRanges;
-    auto updateLiveRanges = [&](Value value, Operation *firstUseOrDef,
-                                LivenessBlockInfo const &livenessInfo) {
-      auto vType = dyn_cast<VectorType>(value.getType());
-      if (!vType || !arm_sme::isValidSMETileVectorType(vType))
-        return;
-      auto it = liveRanges.try_emplace(value, liveRangeAllocator).first;
-      auto lastUseInBlock = livenessInfo.getEndOperation(value, firstUseOrDef);
-      unsigned start = operationToIndexMap[firstUseOrDef];
-      unsigned end = operationToIndexMap[lastUseInBlock];
-      if (start == end) {
-        ++end;
-      }
-      it->second.insert(value, start, end);
-    };
-
-    auto &liveness = getAnalysis<Liveness>();
-    for (Block &block : function.getBlocks()) {
-      LivenessBlockInfo const *livenessInfo = liveness.getLiveness(&block);
-      if (block.isEntryBlock()) {
-        for (Value argument : block.getArguments())
-          updateLiveRanges(argument, &block.front(), *livenessInfo);
-      }
-
-      for (Value liveIn : livenessInfo->in()) {
-        updateLiveRanges(liveIn, &block.front(), *livenessInfo);
-      }
-
-      for (Operation &op : block)
-        for (Value result : op.getResults())
-          updateLiveRanges(result, &op, *livenessInfo);
-    }
-
-    llvm::EquivalenceClasses<void *> valueMerges;
-    for (auto &[value, _] : liveRanges) {
-      valueMerges.insert(value.getAsOpaquePointer());
-    }
-
-    auto tryMergeRanges = [&](Value a, Value b) {
-      if (!liveRanges.at(a).overlaps(liveRanges.at(b))) {
-        valueMerges.unionSets(a.getAsOpaquePointer(), b.getAsOpaquePointer());
-      }
-    };
-
-    for (auto &[value, range] : liveRanges) {
-      if (auto op = value.getDefiningOp<arm_sme::ArmSMETileOpInterface>()) {
-        for (auto arg : op->getOperands()) {
-          auto vType = dyn_cast<VectorType>(arg.getType());
-          if (vType && arm_sme::isValidSMETileVectorType(vType)) {
-            tryMergeRanges(value, arg);
-          }
-        }
-      }
-      if (auto blockArg = dyn_cast<BlockArgument>(value)) {
-        Block *block = blockArg.getOwner();
-
-        for (Block *pred : block->getPredecessors()) {
-          auto branch = pred->getTerminator();
-          if (auto br = dyn_cast<cf::BranchOp>(branch)) {
-            Value operand =
-                *(br.getDestOperands().begin() + blockArg.getArgNumber());
-            tryMergeRanges(value, operand);
-          } else if (auto condBr = dyn_cast<cf::CondBranchOp>(branch)) {
-            if (condBr.getFalseDest() == block) {
-              Value operand = *(condBr.getFalseDestOperands().begin() +
-                                blockArg.getArgNumber());
-              tryMergeRanges(value, operand);
-            }
-            if (condBr.getTrueDest() == block) {
-              Value operand = *(condBr.getTrueDestOperands().begin() +
-                                blockArg.getArgNumber());
-              tryMergeRanges(value, operand);
-            }
-          }
-        }
-      }
-    }
-
-    std::vector<LiveRange> coalescedLiveRanges;
-    for (llvm::EquivalenceClasses<void *>::iterator I = valueMerges.begin(),
-                                                    E = valueMerges.end();
-         I != E; ++I) {
-      if (!I->isLeader())
-        continue; // Ignore non-leader sets.
-      LiveRange mergedRange(liveRangeAllocator);
-      for (llvm::EquivalenceClasses<void *>::member_iterator MI =
-               valueMerges.member_begin(I);
-           MI != valueMerges.member_end(); ++MI) {
-        Value value = Value::getFromOpaquePointer(*MI);
-        mergedRange.unionWith(liveRanges.at(value));
-      }
-      coalescedLiveRanges.emplace_back(std::move(mergedRange));
-    }
-
-    std::sort(
-        coalescedLiveRanges.begin(), coalescedLiveRanges.end(),
-        [&](LiveRange &a, LiveRange &b) { return a.start() < b.start(); });
-
-    TileAllocator tileAllocator;
-    SetVector<LiveRange *> allocatedRanges;
-    for (auto &newRange : coalescedLiveRanges) {
-      allocatedRanges.remove_if([&](LiveRange *allocatedRange) {
-        if (allocatedRange->end() <= newRange.start()) {
-          tileAllocator.releaseTileId(allocatedRange->getTileType(),
-                                      *allocatedRange->tileId);
-          return true;
-        }
-        return false;
-      });
-
-      auto tileId = tileAllocator.allocateTileId(newRange.getTileType());
-      if (failed(tileId)) {
-        LiveRange *longestActiveRange =
-            *std::max_element(allocatedRanges.begin(), allocatedRanges.end(),
-                              [](LiveRange *a, LiveRange *b) {
-                                return a->length() < b->length();
-                              });
-        tileId = *longestActiveRange->tileId;
-        longestActiveRange->tileId = tileAllocator.allocateInMemoryTileId();
-        allocatedRanges.remove(longestActiveRange);
-      }
-
-      newRange.tileId = *tileId;
-      allocatedRanges.insert(&newRange);
-    }
-
     IRRewriter rewriter(&getContext());
-    for (auto &liveRange : coalescedLiveRanges) {
-      auto tileIdAttr = IntegerAttr::get(IntegerType::get(&getContext(), 32),
-                                         *liveRange.tileId);
-      for (auto value : liveRange.values) {
-        if (auto armSmeOp =
-                value.getDefiningOp<arm_sme::ArmSMETileOpInterface>())
-          armSmeOp.setTileId(tileIdAttr);
-        for (auto *user : value.getUsers()) {
-          if (auto armSmeOp = dyn_cast<arm_sme::ArmSMETileOpInterface>(user))
-            armSmeOp.setTileId(tileIdAttr);
-        }
-        if (auto copy = value.getDefiningOp<arm_sme::CopyTileOp>()) {
-          rewriter.setInsertionPoint(copy);
-          if (liveRange.values.contains(copy.getTile())) {
-            rewriter.replaceAllUsesWith(copy, copy.getTile());
-          } else if (auto zeroOp =
-                         copy.getTile().getDefiningOp<arm_sme::ZeroOp>()) {
-            auto newZero = zeroOp.clone();
-            newZero.setTileId(tileIdAttr);
-            rewriter.insert(newZero);
-            rewriter.replaceAllUsesWith(copy, newZero);
-          }
-        }
-      }
-    }
 
-    llvm::unique_function<void(Operation *, int)> walk2 = [&](Operation *op,
-                                                              int level) {
-      auto idxHere = operationToIndexMap[op];
-      for (auto &range : coalescedLiveRanges) {
-        if (range.isLive(idxHere)) {
-          if (!range.isLive(idxHere - 1))
-            llvm::dbgs() << "S";
-          else if (!range.isLive(idxHere + 1))
-            llvm::dbgs() << "E";
-          else
-            llvm::dbgs() << "|";
-        } else {
-          llvm::dbgs() << " ";
-        }
-      }
-      llvm::dbgs() << " ";
-      for (int i = 0; i < level; i++)
-        llvm::dbgs() << ' ';
-      llvm::dbgs() << op->getName();
-      llvm::dbgs() << " | index = " << operationToIndexMap[op] << '\n';
-      for (auto [regionIdx, region] : llvm::enumerate(op->getRegions())) {
-        for (int i = 0; i < level; i++)
-          llvm::dbgs() << ' ';
-        llvm::dbgs() << "START NESTED REGION\n";
-        for (auto [blockIdx, block] : llvm::enumerate(region.getBlocks())) {
-          for (int i = 0; i < level; i++)
-            llvm::dbgs() << ' ';
-          llvm::dbgs() << "^bb" << blockIdx++ << ":\n";
-          for (Operation &nested : block)
-            walk2(&nested, level + 2);
-        }
-        for (int i = 0; i < level; i++)
-          llvm::dbgs() << ' ';
-        llvm::dbgs() << "END NESTED REGION\n";
-      }
-    };
-    walk2(getOperation(), 0);
+    // 1. Insert copy operations at branch operations (i.e. the predecessors to
+    // block arguments).
+    insertCopies(rewriter, function);
 
-    deleteDeadArmSMEOps(getOperation());
+    // 2. Gather live ranges for each ArmSME tile within the function.
+    auto &liveness = getAnalysis<Liveness>();
+    auto initialLiveRanges =
+        gatherLiveRanges(liveRangeAllocator, liveness, function);
+
+    // 3. Coalesce (non-overlapping) live ranges where it would be beneficial
+    // for tile allocation. E.g. Unify the result of an operation with it's
+    // operands.
+    auto coalescedLiveRanges =
+        coalesceLiveRanges(liveRangeAllocator, initialLiveRanges);
+
+    // 4. Allocate tile IDs to live ranges.
+    allocateLiveRanges(coalescedLiveRanges);
+
+    // 5. Assign the tile IDs back to the ArmSME operations (and fold way
+    // redundant copies).
+    assignTileIdsAndFoldCopies(rewriter, function, coalescedLiveRanges);
+
+    /// 6. Erase trivially dead ArmSME operations (e.g. a ZeroOp with no
+    /// users).
+    eraseTriviallyDeadArmSMEOps(rewriter, function);
   }
 };
 } // namespace
