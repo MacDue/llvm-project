@@ -391,20 +391,6 @@ addArmSMEConversionPatterns(RewritePatternSet &patterns,
   (addArmSMEConversionPattern<Patterns>(patterns, typeConverter), ...);
 }
 
-struct GetTileConversion
-    : public ConvertArmSMEOpToLLVMPattern<arm_sme::GetTileOp,
-                                          RequiresSpillsAndFills::No> {
-  using ConvertArmSMEOpToLLVMPattern::ConvertArmSMEOpToLLVMPattern;
-
-  LogicalResult
-  matchAndRewrite(arm_sme::GetTileOp getTile, OpAdaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    rewriter.replaceOpWithNewOp<arm_sme::MaterializeSSATileOp>(
-        getTile, getTile.getTileType());
-    return success();
-  }
-};
-
 /// Lower 'arm_sme.zero' to SME intrinsics.
 ///
 ///  BEFORE:
@@ -489,8 +475,7 @@ struct ZeroOpConversion : public ConvertArmSMEOpToLLVMPattern<arm_sme::ZeroOp> {
         loc, rewriter.getI32IntegerAttr(zeroMask));
 
     // Create a placeholder op to preserve dataflow.
-    rewriter.replaceOpWithNewOp<arm_sme::MaterializeSSATileOp>(
-        zero, zero.getVectorType());
+    rewriter.replaceOpWithNewOp<arm_sme::GetTileOp>(zero, zero.getVectorType());
 
     return success();
   }
@@ -884,29 +869,29 @@ struct ConvertArmSMEToLLVMPass
 void mlir::configureArmSMEToLLVMConversionLegality(ConversionTarget &target) {
   target.addIllegalDialect<arm_sme::ArmSMEDialect>();
   target.addLegalOp<
-      arm_sme::MaterializeSSATileOp, arm_sme::aarch64_sme_zero,
-      arm_sme::aarch64_sme_str, arm_sme::aarch64_sme_ld1b_horiz,
-      arm_sme::aarch64_sme_ld1h_horiz, arm_sme::aarch64_sme_ld1w_horiz,
-      arm_sme::aarch64_sme_ld1d_horiz, arm_sme::aarch64_sme_ld1q_horiz,
-      arm_sme::aarch64_sme_st1b_horiz, arm_sme::aarch64_sme_st1h_horiz,
-      arm_sme::aarch64_sme_st1w_horiz, arm_sme::aarch64_sme_st1d_horiz,
-      arm_sme::aarch64_sme_st1q_horiz, arm_sme::aarch64_sme_ld1b_vert,
-      arm_sme::aarch64_sme_ld1h_vert, arm_sme::aarch64_sme_ld1w_vert,
-      arm_sme::aarch64_sme_ld1d_vert, arm_sme::aarch64_sme_ld1q_vert,
-      arm_sme::aarch64_sme_st1b_vert, arm_sme::aarch64_sme_st1h_vert,
-      arm_sme::aarch64_sme_st1w_vert, arm_sme::aarch64_sme_st1d_vert,
-      arm_sme::aarch64_sme_st1q_vert, arm_sme::aarch64_sme_read_horiz,
-      arm_sme::aarch64_sme_read_vert, arm_sme::aarch64_sme_write_horiz,
-      arm_sme::aarch64_sme_write_vert, arm_sme::aarch64_sme_mopa,
-      arm_sme::aarch64_sme_mopa_wide, arm_sme::aarch64_sme_mops_wide,
-      arm_sme::aarch64_sme_smopa_wide, arm_sme::aarch64_sme_smops_wide,
-      arm_sme::aarch64_sme_umopa_wide, arm_sme::aarch64_sme_umops_wide,
-      arm_sme::aarch64_sme_smopa_za32, arm_sme::aarch64_sme_smops_za32,
-      arm_sme::aarch64_sme_umopa_za32, arm_sme::aarch64_sme_umops_za32,
-      arm_sme::aarch64_sme_sumopa_wide, arm_sme::aarch64_sme_sumops_wide,
-      arm_sme::aarch64_sme_usmopa_wide, arm_sme::aarch64_sme_usmops_wide,
-      arm_sme::aarch64_sme_cntsb, arm_sme::aarch64_sme_cntsh,
-      arm_sme::aarch64_sme_cntsw, arm_sme::aarch64_sme_cntsd>();
+      arm_sme::GetTileOp, arm_sme::aarch64_sme_zero, arm_sme::aarch64_sme_str,
+      arm_sme::aarch64_sme_ld1b_horiz, arm_sme::aarch64_sme_ld1h_horiz,
+      arm_sme::aarch64_sme_ld1w_horiz, arm_sme::aarch64_sme_ld1d_horiz,
+      arm_sme::aarch64_sme_ld1q_horiz, arm_sme::aarch64_sme_st1b_horiz,
+      arm_sme::aarch64_sme_st1h_horiz, arm_sme::aarch64_sme_st1w_horiz,
+      arm_sme::aarch64_sme_st1d_horiz, arm_sme::aarch64_sme_st1q_horiz,
+      arm_sme::aarch64_sme_ld1b_vert, arm_sme::aarch64_sme_ld1h_vert,
+      arm_sme::aarch64_sme_ld1w_vert, arm_sme::aarch64_sme_ld1d_vert,
+      arm_sme::aarch64_sme_ld1q_vert, arm_sme::aarch64_sme_st1b_vert,
+      arm_sme::aarch64_sme_st1h_vert, arm_sme::aarch64_sme_st1w_vert,
+      arm_sme::aarch64_sme_st1d_vert, arm_sme::aarch64_sme_st1q_vert,
+      arm_sme::aarch64_sme_read_horiz, arm_sme::aarch64_sme_read_vert,
+      arm_sme::aarch64_sme_write_horiz, arm_sme::aarch64_sme_write_vert,
+      arm_sme::aarch64_sme_mopa, arm_sme::aarch64_sme_mopa_wide,
+      arm_sme::aarch64_sme_mops_wide, arm_sme::aarch64_sme_smopa_wide,
+      arm_sme::aarch64_sme_smops_wide, arm_sme::aarch64_sme_umopa_wide,
+      arm_sme::aarch64_sme_umops_wide, arm_sme::aarch64_sme_smopa_za32,
+      arm_sme::aarch64_sme_smops_za32, arm_sme::aarch64_sme_umopa_za32,
+      arm_sme::aarch64_sme_umops_za32, arm_sme::aarch64_sme_sumopa_wide,
+      arm_sme::aarch64_sme_sumops_wide, arm_sme::aarch64_sme_usmopa_wide,
+      arm_sme::aarch64_sme_usmops_wide, arm_sme::aarch64_sme_cntsb,
+      arm_sme::aarch64_sme_cntsh, arm_sme::aarch64_sme_cntsw,
+      arm_sme::aarch64_sme_cntsd>();
   target.addLegalDialect<arith::ArithDialect,
                          /* The following are used to lower tile spills/fills */
                          vector::VectorDialect, scf::SCFDialect,
@@ -956,7 +941,7 @@ void mlir::populateArmSMEToLLVMConversionPatterns(LLVMTypeConverter &converter,
                                        arm_sme::aarch64_sme_usmopa_wide>,
       OuterProductWideningOpConversion<arm_sme::UsMops4WayOp,
                                        arm_sme::aarch64_sme_usmops_wide>,
-      ZeroOpConversion, GetTileConversion>(patterns, converter);
+      ZeroOpConversion>(patterns, converter);
 }
 
 std::unique_ptr<Pass> mlir::createConvertArmSMEToLLVMPass() {

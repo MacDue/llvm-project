@@ -241,7 +241,7 @@ def ArmSME_TypeSizeAttr : EnumAttr<ArmSME_Dialect, TypeSize,
 class ArmSME_Op<string mnemonic, list<Trait> traits = []> :
   Op<ArmSME_Dialect, mnemonic, traits> {}
 
-def GetTileOp : ArmSME_Op<"get_tile", [ArmSMETileOpInterface]> {
+def GetTileOp : ArmSME_Op<"get_tile", [ArmSMETileOpInterface, ConstantLike, Pure]> {
   let summary = "Returns a SME virtual tile";
   let description = [{
     Allocates a new SME "virtual tile" within a function. The contents of the
@@ -280,6 +280,7 @@ def GetTileOp : ArmSME_Op<"get_tile", [ArmSMETileOpInterface]> {
 }
 
 def CopyTileOp : ArmSME_Op<"copy_tile", [
+  Pure,
   ArmSMETileOpInterface,
   AllTypesMatch<["tile", "result"]>
 ]> {
@@ -293,25 +294,11 @@ def CopyTileOp : ArmSME_Op<"copy_tile", [
   }];
 }
 
-def MaterializeSSATileOp : ArmSME_Op<"materialize_ssa_tile", [Pure]> {
-  let summary = "SME tile placeholder";
-  let description = [{
-    A placeholder to preserve dataflow while lowering to SME intrinsics (which
-    do not take or return SME virtual tile values). This operation is intended
-    to be DCE'd once all ArmSME operations have been lowered.
-
-    This operation is not intended to be used outside of the ArmSME -> LLVM
-    conversion.
-  }];
-  let results = (outs SMETile:$tile);
-  let assemblyFormat = "attr-dict `:` type($tile)";
-}
-
 //
 // Tile reset.
 //
 
-def ZeroOp : ArmSME_Op<"zero", [ArmSMETileOpInterface]> {
+def ZeroOp : ArmSME_Op<"zero", [ArmSMETileOpInterface, ConstantLike, Pure]> {
   let summary = "Initialize the two-dimensional ZA array with 0s";
   let results = (outs SMETile:$res);
   let description = [{
@@ -535,7 +522,7 @@ def LoadTileSliceOp : ArmSME_Op<"load_tile_slice", [
     ```
   }];
   let arguments = (ins
-    Arg<AnyMemRef, "the reference to load from">:$base, SVEPredicate:$mask,
+    Arg<AnyMemRef, "the reference to load from", [MemRead]>:$base, SVEPredicate:$mask,
     SMETile:$tile, Variadic<Index>:$indices, Index:$tile_slice_index,
     ArmSME_TileSliceLayoutAttr:$layout
   );
@@ -620,7 +607,7 @@ def StoreTileSliceOp : ArmSME_Op<"store_tile_slice", [
 }
 
 def MoveVectorToTileSliceOp : ArmSME_Op<"move_vector_to_tile_slice", [
-    ArmSMETileOpInterface,
+    ArmSMETileOpInterface, Pure,
     AllTypesMatch<["tile", "result"]>,
     TypesMatchWith<
       "type of 'vector' matches type of 'tile' slice",
@@ -669,7 +656,7 @@ def MoveVectorToTileSliceOp : ArmSME_Op<"move_vector_to_tile_slice", [
 }
 
 def MoveTileSliceToVectorOp : ArmSME_Op<"move_tile_slice_to_vector", [
-    ArmSMETileOpInterface,
+    ArmSMETileOpInterface, Pure,
     TypesMatchWith<
       "type of 'result' matches type of 'tile' slice",
       "tile", "result",
@@ -726,6 +713,7 @@ class OuterProductResultTileTypeConstraint<string operand> :
 
 def OuterProductOp :
   ArmSME_Op<"outerproduct", [
+    Pure,
     ArmSMETileOpInterface,
     AttrSizedOperandSegments,
     AllTypesMatch<["lhs", "rhs"]>,
@@ -803,6 +791,7 @@ class OuterProductWideningBase<string mnemonic,
                                list<Type> allowedResultVectorTypes,
                                int numOuterProducts> :
   ArmSME_Op<mnemonic, [
+    Pure,
     ArmSMETileOpInterface,
     AttrSizedOperandSegments,
     AllTypesMatch<["lhs", "rhs"]>,
