@@ -47,12 +47,10 @@
 #include "mlir/Dialect/ArmSME/Transforms/Transforms.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/EquivalenceClasses.h"
 #include "llvm/ADT/IntervalMap.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include <algorithm>
-#include <vector>
 
 #define DEBUG_TYPE "allocate-arm-sme-tiles"
 
@@ -197,11 +195,15 @@ struct LiveRange {
   using RangeSet = llvm::IntervalMap<uint64_t, uint8_t, 16,
                                      llvm::IntervalMapHalfOpenInfo<unsigned>>;
   using Allocator = RangeSet::Allocator;
+  static constexpr uint8_t kValidLiveRange = 0xff;
+  static constexpr uint8_t kNullLiveRange = 0x00;
 
   LiveRange(Allocator &allocator)
       : ranges(std::make_unique<RangeSet>(allocator)) {}
 
-  bool isLive(unsigned pos) const { return ranges->lookup(pos, 0) != 0; }
+  bool isLive(unsigned pos) const {
+    return ranges->lookup(pos, kNullLiveRange) == kValidLiveRange;
+  }
 
   bool overlaps(LiveRange const &other) const {
     return llvm::IntervalMapOverlaps<RangeSet, RangeSet>(*ranges, *other.ranges)
@@ -210,7 +212,7 @@ struct LiveRange {
 
   void unionWith(LiveRange const &other) {
     for (auto it = other.ranges->begin(); it != other.ranges->end(); ++it) {
-      ranges->insert(it.start(), it.stop(), /*dummy*/ 0xFF);
+      ranges->insert(it.start(), it.stop(), kValidLiveRange);
     }
     values.set_union(other.values);
   }
@@ -220,16 +222,18 @@ struct LiveRange {
   unsigned end() const { return ranges->stop(); }
   unsigned length() const { return end() - start(); }
 
+  void insert(Value value, unsigned start, unsigned end) {
+    values.insert(value);
+    ranges->insert(start, end, kValidLiveRange);
+  }
+
+  bool operator<(LiveRange const &other) const {
+    return start() < other.start();
+  }
+
   ArmSMETileType getTileType() const {
     return *arm_sme::getSMETileType(cast<VectorType>(values[0].getType()));
   }
-
-  void insert(Value value, unsigned start, unsigned end) {
-    values.insert(value);
-    ranges->insert(start, end, /*dummy*/ 0xFF);
-  }
-
-  bool operator<(LiveRange const &other) { return start() < other.start(); }
 
   std::unique_ptr<RangeSet> ranges;
   SetVector<Value> values;
