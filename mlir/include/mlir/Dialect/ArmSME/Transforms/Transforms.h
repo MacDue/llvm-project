@@ -9,6 +9,8 @@
 #ifndef MLIR_DIALECT_ARMSME_TRANSFORMS_H
 #define MLIR_DIALECT_ARMSME_TRANSFORMS_H
 
+#include "mlir/Interfaces/FunctionInterfaces.h"
+
 namespace mlir {
 
 class LLVMConversionTarget;
@@ -16,7 +18,12 @@ class LLVMTypeConverter;
 class RewritePatternSet;
 
 namespace arm_sme {
+
 void populateOuterProductFusionPatterns(RewritePatternSet &patterns);
+
+LogicalResult allocateSMETiles(FunctionOpInterface function,
+                               bool dumpRanges = false);
+
 } // namespace arm_sme
 
 } // namespace mlir

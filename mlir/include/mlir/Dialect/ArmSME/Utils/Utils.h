@@ -18,6 +18,7 @@
 #include "mlir/Dialect/ArmSME/IR/ArmSMEEnums.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include <optional>
 
 namespace mlir {
@@ -42,6 +43,11 @@ bool isValidSMETileElementType(Type type);
 /// otherwise.
 bool isValidSMETileVectorType(VectorType vType);
 
+inline bool isValidSMETileVectorType(Type type) {
+  auto vType = dyn_cast<VectorType>(type);
+  return vType && isValidSMETileVectorType(vType);
+}
+
 /// Returns the type of SME tile this vector type corresponds to, or none if the
 /// vector type does not fit within an SME tile.
 std::optional<ArmSMETileType> getSMETileType(VectorType);
@@ -62,6 +68,9 @@ bool isMultipleOfSMETileVectorType(VectorType vType);
 
 /// Creates a vector type for the SME tile of `elementType`.
 VectorType getSMETileTypeForElement(Type elementType);
+
+void eraseTriviallyDeadTileOps(IRRewriter &rewriter,
+                               FunctionOpInterface function);
 
 } // namespace mlir::arm_sme
 
