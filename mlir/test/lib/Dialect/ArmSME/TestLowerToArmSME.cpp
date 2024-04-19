@@ -75,6 +75,10 @@ void buildTestLowerToArmSME(OpPassManager &pm,
   // Convert SCF to CF (required for ArmSME tile allocation).
   pm.addPass(createConvertSCFToCFPass());
 
+  // Sprinkle some cleanups.
+  pm.addPass(createCanonicalizerPass());
+  pm.addPass(createCSEPass());
+
   // Convert ArmSME to LLVM.
   pm.addNestedPass<func::FuncOp>(createConvertArmSMEToLLVMPass());
 
