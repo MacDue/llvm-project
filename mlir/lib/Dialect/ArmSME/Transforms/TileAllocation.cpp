@@ -263,6 +263,7 @@ struct LiveRange {
   std::unique_ptr<RangeSet> ranges;
   SetVector<Value> values;
   std::optional<unsigned> tileId;
+  LiveRange *spilledFor = nullptr;
 };
 
 /// Number operations within a function to allow computing live ranges.
@@ -427,6 +428,7 @@ void allocateTilesToLiveRanges(ArrayRef<LiveRange *> liveRanges) {
     auto spillActiveRange = [&](LiveRange *range) {
       unsigned tileId = *range->tileId;
       range->tileId = memoryTileId;
+      range->spilledFor = newRange;
       allocatedRanges.remove(range);
       return tileId;
     };
@@ -482,7 +484,8 @@ void allocateTilesToLiveRanges(ArrayRef<LiveRange *> liveRanges) {
 /// Assign tile IDs back to IR and attempt to resolve trivial tile ID conflicts.
 LogicalResult assignTileIdsAndResolveTrivialConflicts(
     IRRewriter &rewriter, FunctionOpInterface function,
-    ArrayRef<LiveRange *> allocatedLiveRanges) {
+    ArrayRef<LiveRange *> allocatedLiveRanges,
+    DenseMap<Operation *, unsigned> const &operationToIndexMap) {
   for (LiveRange const *liveRange : allocatedLiveRanges) {
     auto tileIdAttr = rewriter.getI32IntegerAttr(*liveRange->tileId);
     auto isAllocatedToSameTile = [&](Value value) {
@@ -492,11 +495,35 @@ LogicalResult assignTileIdsAndResolveTrivialConflicts(
       return liveRange->values.contains(value);
     };
     for (Value value : liveRange->values) {
-      for (Operation *user : value.getUsers()) {
+      SmallVector<Operation *> users(value.getUsers().begin(),
+                                     value.getUsers().end());
+      for (Operation *user : users) {
         if (auto tileOp = dyn_cast<ArmSMETileOpInterface>(user)) {
+          if (hasTileResult(tileOp))
+            continue;
           // Ensure ArmSME ops that don't produce a value still get a tile ID.
-          if (!hasTileResult(tileOp))
-            tileOp.setTileId(tileIdAttr);
+          tileOp.setTileId(tileIdAttr);
+          OpOperand *tileOperand = getTileOpOperand(tileOp);
+          auto operandTileOp =
+              tileOperand->get().getDefiningOp<ArmSMETileOpInterface>();
+
+          if (tileOp.isInMemoryTile() &&
+              isTriviallyCloneableTileOp(operandTileOp)) {
+            auto *spilledFor = liveRange->spilledFor;
+            while (spilledFor->spilledFor)
+              spilledFor = spilledFor->spilledFor;
+            auto index = operationToIndexMap.at(tileOp);
+            if (spilledFor->ranges->lookup(index, 0) == 0) {
+              auto originalTileId =
+                  rewriter.getI32IntegerAttr(*spilledFor->tileId);
+              rewriter.setInsertionPoint(tileOp);
+              auto clonedOp = operandTileOp.clone();
+              rewriter.insert(clonedOp);
+              tileOperand->assign(clonedOp->getResult(0));
+              clonedOp.setTileId(originalTileId);
+              tileOp.setTileId(originalTileId);
+            }
+          }
         }
       }
       auto copyOp = value.getDefiningOp<CopyTileOp>();
@@ -626,8 +653,8 @@ LogicalResult mlir::arm_sme::allocateSMETiles(FunctionOpInterface function,
   allocateTilesToLiveRanges(coalescedLiveRanges);
 
   // 5. Assign the tile IDs back to the ArmSME operations.
-  if (failed(assignTileIdsAndResolveTrivialConflicts(rewriter, function,
-                                                     coalescedLiveRanges))) {
+  if (failed(assignTileIdsAndResolveTrivialConflicts(
+          rewriter, function, coalescedLiveRanges, operationToIndexMap))) {
     return failure();
   }
 
