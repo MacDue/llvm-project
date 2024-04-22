@@ -164,12 +164,45 @@ private:
   unsigned nextInMemoryTileId = kInMemoryTileIdBase;
 };
 
-/// Inserts tile copies `cf.br` and `cf.cond_br` operations.
+// Add new intermediate blocks for the true and false destinations of a
+// `cf.cond_br`. This prevents spurious liveness overlaps due to copies at
+// branches.
+void splitCondBranches(IRRewriter &rewriter, FunctionOpInterface function) {
+  SmallVector<cf::CondBranchOp> worklist;
+  function.walk([&](cf::CondBranchOp condBranch) {
+    if (llvm::any_of(condBranch->getOperands(), [&](Value value) {
+          return isValidSMETileVectorType(value.getType());
+        })) {
+      worklist.push_back(condBranch);
+    }
+  });
+
+  auto cloneBlockArgs = [&](Block *newBlock, Block *oldBlock, Location loc) {
+    SmallVector<Location> argLocs(oldBlock->getArguments().size(), loc);
+    newBlock->addArguments(oldBlock->getArgumentTypes(), argLocs);
+    rewriter.setInsertionPointToEnd(newBlock);
+    rewriter.create<cf::BranchOp>(loc, oldBlock, newBlock->getArguments());
+  };
+
+  for (auto condBranch : worklist) {
+    auto loc = condBranch.getLoc();
+    Block *block = condBranch->getBlock();
+    auto newTrueBranch = rewriter.splitBlock(block, block->end());
+    auto newFalseBranch = rewriter.splitBlock(block, block->end());
+    cloneBlockArgs(newTrueBranch, condBranch.getTrueDest(), loc);
+    cloneBlockArgs(newFalseBranch, condBranch.getFalseDest(), loc);
+    condBranch.setSuccessor(newTrueBranch, 0);
+    condBranch.setSuccessor(newFalseBranch, 1);
+  }
+}
+
+/// Inserts tile copies `cf.br` operations.
 void insertCopiesAtBranches(IRRewriter &rewriter,
                             FunctionOpInterface function) {
+  splitCondBranches(rewriter, function);
   for (Block &block : function.getBlocks()) {
     Operation *terminator = block.getTerminator();
-    if (!isa<cf::BranchOp, cf::CondBranchOp>(terminator))
+    if (!isa<cf::BranchOp>(terminator))
       continue;
     rewriter.setInsertionPoint(terminator);
     for (OpOperand &operand : terminator->getOpOperands()) {
