@@ -19,6 +19,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/OneToNFuncConversions.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
 #include "mlir/Dialect/Utils/IndexingUtils.h"
 #include "mlir/Transforms/OneToNTypeConversion.h"
@@ -353,6 +354,58 @@ struct LegalizeTransferWriteOpsByDecomposition
     auto inputSMETiles = adaptor.getVector();
 
     Value destTensorOrMemref = writeOp.getSource();
+
+    if (!transposed) {
+      VectorType predicateType = VectorType::get(smeTileType.getDimSize(0),
+                                                 rewriter.getI1Type(), true);
+      auto vscale = rewriter.create<vector::VectorScaleOp>(loc);
+      auto lowerBound = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+      auto upperBound = rewriter.create<arith::MulIOp>(
+          loc, vscale,
+          rewriter.create<arith::ConstantIndexOp>(loc,
+                                                  smeTileType.getDimSize(0)));
+      auto step = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+      auto forLoop = rewriter.create<scf::ForOp>(
+          loc, lowerBound, upperBound, step,
+          writeOp.hasPureTensorSemantics() ? ValueRange{destTensorOrMemref}
+                                           : ValueRange{});
+      rewriter.setInsertionPointToStart(forLoop.getBody());
+      auto inductionVar = forLoop.getInductionVar();
+      for (auto [index, smeTile] : llvm::enumerate(
+               decomposeToSMETiles(rewriter, vectorType, smeTileType))) {
+        Value tile = inputSMETiles[index];
+        auto slice =
+            rewriter.create<vector::ExtractOp>(loc, tile, inductionVar);
+        auto tileRow = rewriter.create<arith::MulIOp>(
+            loc, vscale,
+            rewriter.create<arith::ConstantIndexOp>(loc, smeTile.row));
+        auto tileCol = rewriter.create<arith::MulIOp>(
+            loc, vscale,
+            rewriter.create<arith::ConstantIndexOp>(loc, smeTile.col));
+        auto zaSliceIndex =
+            rewriter.create<arith::AddIOp>(loc, tileRow, inductionVar);
+        auto memoryRow = rewriter.create<arith::AddIOp>(
+            loc, zaSliceIndex, writeOp.getIndices()[0]);
+        auto memoryCol = rewriter.create<arith::AddIOp>(
+            loc, tileCol, writeOp.getIndices()[1]);
+        Value sliceMask = nullptr;
+        if (mask) {
+          auto rowMask = rewriter.create<vector::ExtractOp>(
+              loc, mask, OpFoldResult(zaSliceIndex));
+          sliceMask = rewriter.create<vector::ScalableExtractOp>(
+              loc, predicateType, rowMask, smeTile.col);
+        }
+        rewriter.create<vector::TransferWriteOp>(
+            loc, slice, destTensorOrMemref, ValueRange{memoryRow, memoryCol},
+            AffineMapAttr::get(writeOp.getPermutationMap().dropResult(0)),
+            sliceMask,
+            rewriter.getBoolArrayAttr(
+                ArrayRef<bool>(writeOp.getInBoundsValues()).drop_front()));
+      }
+      rewriter.eraseOp(writeOp);
+      return success();
+    }
+
     for (auto [index, smeTile] : llvm::enumerate(decomposeToSMETiles(
              rewriter, vectorType, smeTileType, transposed))) {
       auto smeMask = extractSMEMask(rewriter, loc, mask, smeTile);

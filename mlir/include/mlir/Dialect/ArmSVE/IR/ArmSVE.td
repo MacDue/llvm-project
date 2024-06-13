@@ -442,6 +442,23 @@ def ZipX4Op  : ArmSVE_Op<"zip.x4", [
   }];
 }
 
+def PselOp  : ArmSVE_Op<"psel", [
+  Pure,
+  AllTypesMatch<["p1", "result"]>,
+]> {
+  let arguments = (ins SVEPredicate:$p1, SVEPredicate:$p2, Index:$index);
+  let results = (outs SVEPredicate:$result);
+
+  let builders = [
+    OpBuilder<(ins "Value":$p1, "Value":$p2, "Value":$index), [{
+      build($_builder, $_state, p1.getType(), p1, p2, index);
+  }]>];
+
+  let assemblyFormat = [{
+    $p1 `,` $p2 `[` $index `]` attr-dict `:` type($p1) `,` type($p2)
+  }];
+}
+
 def ScalableMaskedAddIOp : ScalableMaskedIOp<"masked.addi", "addition",
                                              [Commutative]>;
 
@@ -551,5 +568,20 @@ def ZipX4IntrOp : ArmSVE_IntrOp<"zip.x4",
                    Arg<AnyScalableVector, "v2">:$v2,
                    Arg<AnyScalableVector, "v3">:$v3,
                    Arg<AnyScalableVector, "v3">:$v4)>;
+
+// Note: This intrinsic SME or SVE2.
+def PselIntrOp : ArmSVE_IntrOp<"psel",
+  /*traits=*/[Pure, TypeIs<"res", SVBool>],
+  /*overloadedOperands=*/[1]>,
+  Arguments<(ins Arg<SVBool, "p1">:$p1,
+                 Arg<SVEPredicate, "p1">:$p2,
+                 Arg<I32, "index">:$index)>;
+
+def WhileLTIntrOp :
+  ArmSVE_IntrOp<"whilelt",
+    [TypeIs<"res", SVEPredicate>, Pure],
+    /*overloadedOperands=*/[0],
+    /*overloadedResults=*/[0]>,
+  Arguments<(ins I64:$base, I64:$n)>;
 
 #endif // ARMSVE_OPS

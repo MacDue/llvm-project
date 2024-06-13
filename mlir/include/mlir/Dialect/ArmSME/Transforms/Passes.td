@@ -202,7 +202,7 @@ def VectorLegalization
     "func::FuncDialect",
     "arm_sme::ArmSMEDialect",
     "vector::VectorDialect",
-    "arith::ArithDialect"
+    "arith::ArithDialect",
   ];
 }
 

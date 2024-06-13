@@ -140,6 +140,51 @@ using ConvertFromSvboolOpLowering =
 using ZipX2OpLowering = OneToOneConvertToLLVMPattern<ZipX2Op, ZipX2IntrOp>;
 using ZipX4OpLowering = OneToOneConvertToLLVMPattern<ZipX4Op, ZipX4IntrOp>;
 
+struct PselOpLowering : public ConvertOpToLLVMPattern<PselOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(PselOp pselOp, PselOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto svboolType = VectorType::get(16, rewriter.getI1Type(), true);
+    auto loc = pselOp.getLoc();
+    auto svboolP1 = rewriter.create<ConvertToSvboolIntrOp>(loc, svboolType,
+                                                           adaptor.getP1());
+    auto indexI32 = rewriter.create<arith::IndexCastOp>(
+        loc, rewriter.getI32Type(), pselOp.getIndex());
+    auto pselIntr = rewriter.create<PselIntrOp>(loc, svboolType, svboolP1,
+                                                pselOp.getP2(), indexI32);
+    rewriter.replaceOpWithNewOp<ConvertFromSvboolIntrOp>(
+        pselOp, adaptor.getP1().getType(), pselIntr);
+    return success();
+  }
+};
+
+struct PredicateCreateMaskOpLowering
+    : public ConvertOpToLLVMPattern<vector::CreateMaskOp> {
+  using ConvertOpToLLVMPattern::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(vector::CreateMaskOp createMaskOp,
+                  vector::CreateMaskOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto maskType = createMaskOp.getVectorType();
+    if (maskType.getRank() != 1 || !maskType.isScalable())
+      return failure();
+
+    auto maskBaseSize = maskType.getDimSize(0);
+    if (maskBaseSize > 16 || !llvm::isPowerOf2_32(uint32_t(maskBaseSize)))
+      return failure();
+
+    auto loc = createMaskOp.getLoc();
+    auto zero = rewriter.create<LLVM::ZeroOp>(
+        loc, typeConverter->convertType(rewriter.getI64Type()));
+    rewriter.replaceOpWithNewOp<WhileLTIntrOp>(createMaskOp, maskType, zero,
+                                               adaptor.getOperands()[0]);
+    return success();
+  }
+};
+
 } // namespace
 
 /// Populate the given list with patterns that convert from ArmSVE to LLVM.
@@ -168,7 +213,11 @@ void mlir::populateArmSVELegalizeForLLVMExportPatterns(
                ConvertToSvboolOpLowering,
                ConvertFromSvboolOpLowering,
                ZipX2OpLowering,
-               ZipX4OpLowering>(converter);
+               ZipX4OpLowering,
+               PselOpLowering>(converter);
+  // Add predicate conversion with a high benefit as it produces much nicer code
+  // than the generic lowering.
+  patterns.add<PredicateCreateMaskOpLowering>(converter, /*benifit=*/4096);
   // clang-format on
 }
 
@@ -191,7 +240,9 @@ void mlir::configureArmSVELegalizeForExportTarget(
                     ConvertToSvboolIntrOp,
                     ConvertFromSvboolIntrOp,
                     ZipX2IntrOp,
-                    ZipX4IntrOp>();
+                    ZipX4IntrOp,
+                    PselIntrOp,
+                    WhileLTIntrOp>();
   target.addIllegalOp<SdotOp,
                       SmmlaOp,
                       UdotOp,

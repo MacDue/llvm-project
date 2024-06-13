@@ -10,6 +10,7 @@
 
 #include "mlir/Dialect/ArmSME/IR/ArmSME.h"
 #include "mlir/Dialect/ArmSME/Utils/Utils.h"
+#include "mlir/Dialect/ArmSVE/IR/ArmSVEDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/Support/Casting.h"
@@ -150,6 +151,45 @@ struct TransferWriteToArmSMELowering
     rewriter.replaceOpWithNewOp<arm_sme::TileStoreOp>(
         writeOp, writeOp.getVector(), writeOp.getSource(), writeOp.getIndices(),
         writeOp.getMask(), layout);
+    return success();
+  }
+};
+
+struct TransferWriteSliceToArmSMELowering
+    : public OpRewritePattern<vector::TransferWriteOp> {
+  using OpRewritePattern<vector::TransferWriteOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::TransferWriteOp writeOp,
+                                PatternRewriter &rewriter) const final {
+    if (!llvm::isa<MemRefType>(writeOp.getSource().getType()))
+      return failure();
+
+    auto moveTileSlice =
+        writeOp.getVector().getDefiningOp<arm_sme::MoveTileSliceToVectorOp>();
+    if (!moveTileSlice)
+      return failure();
+
+    if (writeOp.hasOutOfBoundsDim())
+      return rewriter.notifyMatchFailure(writeOp,
+                                         "not inbounds transfer write");
+
+    AffineMap map = writeOp.getPermutationMap();
+    if (!map.isMinorIdentity())
+      return rewriter.notifyMatchFailure(writeOp,
+                                         "unsupported permutation map");
+
+    auto mask = writeOp.getMask();
+    if (!writeOp.getMask()) {
+      auto maskType = writeOp.getVectorType().clone(rewriter.getI1Type());
+      mask = rewriter.create<vector::ConstantMaskOp>(
+          writeOp.getLoc(), maskType,
+          rewriter.getI64ArrayAttr(maskType.getDimSize(0)));
+    }
+
+    rewriter.replaceOpWithNewOp<arm_sme::StoreTileSliceOp>(
+        writeOp, moveTileSlice.getTile(), moveTileSlice.getTileSliceIndex(),
+        mask, writeOp.getSource(), writeOp.getIndices(),
+        moveTileSlice.getLayout());
     return success();
   }
 };
@@ -549,6 +589,57 @@ struct VectorExtractToArmSMELowering
   }
 };
 
+struct VectorExtractFromCreateMaskToPselLowering
+    : public OpRewritePattern<vector::ExtractOp> {
+  using OpRewritePattern<vector::ExtractOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::ExtractOp extractOp,
+                                PatternRewriter &rewriter) const override {
+    if (!extractOp.hasDynamicPosition())
+      return failure();
+
+    auto createMask =
+        extractOp.getVector().getDefiningOp<vector::CreateMaskOp>();
+    if (!createMask)
+      return failure();
+
+    auto resultType = extractOp.getResult().getType();
+    auto resultVectorType = dyn_cast<VectorType>(resultType);
+    if (!resultVectorType)
+      return failure();
+
+    auto maskType = createMask.getVectorType();
+    if (maskType.getRank() != 2 || !maskType.allDimsScalable())
+      return failure();
+
+    auto isSVEPredicateSize = [](int64_t size) {
+      return size > 0 && size <= 16 && llvm::isPowerOf2_32(uint32_t(size));
+    };
+
+    auto rowsBaseSize = maskType.getDimSize(0);
+    auto colsBaseSize = maskType.getDimSize(1);
+
+    if (!isSVEPredicateSize(rowsBaseSize) || !isSVEPredicateSize(colsBaseSize))
+      return failure();
+
+    auto position = extractOp.getMixedPosition();
+    assert(position.size() == 1);
+
+    VectorType rowMaskType = VectorType::Builder(maskType).dropDim(1);
+    VectorType colMaskType = VectorType::Builder(maskType).dropDim(0);
+
+    auto loc = extractOp.getLoc();
+    auto rowMask = rewriter.create<vector::CreateMaskOp>(
+        loc, rowMaskType, createMask.getOperand(0));
+    auto colMask = rewriter.create<vector::CreateMaskOp>(
+        loc, colMaskType, createMask.getOperand(1));
+
+    rewriter.replaceOpWithNewOp<arm_sve::PselOp>(extractOp, colMask, rowMask,
+                                                 cast<Value>(position[0]));
+    return success();
+  }
+};
+
 /// Lower `vector.insert` using `arm_sme.move_vector_to_tile_slice` and
 /// `arm_sme.move_tile_slice_to_vector`.
 ///
@@ -670,10 +761,12 @@ struct VectorPrintToArmSMELowering : public OpRewritePattern<vector::PrintOp> {
 
 void mlir::populateVectorToArmSMEPatterns(RewritePatternSet &patterns,
                                           MLIRContext &ctx) {
-  patterns.add<BroadcastOpToArmSMELowering, SplatOpToArmSMELowering,
-               TransferReadToArmSMELowering, TransferWriteToArmSMELowering,
-               TransposeOpToArmSMELowering, VectorLoadToArmSMELowering,
-               VectorStoreToArmSMELowering, VectorOuterProductToArmSMELowering,
-               VectorExtractToArmSMELowering, VectorInsertToArmSMELowering,
-               VectorPrintToArmSMELowering>(&ctx);
+  patterns
+      .add<BroadcastOpToArmSMELowering, SplatOpToArmSMELowering,
+           TransferReadToArmSMELowering, TransferWriteToArmSMELowering,
+           TransferWriteSliceToArmSMELowering, TransposeOpToArmSMELowering,
+           VectorLoadToArmSMELowering, VectorStoreToArmSMELowering,
+           VectorOuterProductToArmSMELowering, VectorExtractToArmSMELowering,
+           VectorInsertToArmSMELowering, VectorPrintToArmSMELowering,
+           VectorExtractFromCreateMaskToPselLowering>(&ctx);
 }
