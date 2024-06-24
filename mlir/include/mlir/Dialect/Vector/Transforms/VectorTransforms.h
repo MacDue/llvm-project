@@ -11,6 +11,7 @@
 
 #include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
 #include "mlir/Dialect/Vector/Utils/VectorUtils.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 
 namespace mlir {
 class MLIRContext;
@@ -114,6 +115,8 @@ FailureOr<Value>
 castAwayContractionLeadingOneDim(vector::ContractionOp contractOp,
                                  MaskingOpInterface maskingOp,
                                  RewriterBase &rewriter);
+
+void elimateVectorMasks(IRRewriter &rewriter, FunctionOpInterface func);
 
 } // namespace vector
 } // namespace mlir
