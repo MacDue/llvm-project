@@ -4218,6 +4218,14 @@ OpFoldResult TransferReadOp::fold(FoldAdaptor) {
     return getResult();
   if (succeeded(tensor::foldTensorCast(*this)))
     return getResult();
+  DenseElementsAttr splatAttr;
+  if (getMask() &&
+      matchPattern(getMask(), m_Constant<DenseElementsAttr>(&splatAttr)) &&
+      splatAttr.isSplat() && splatAttr.getSplatValue<BoolAttr>().getValue()) {
+    getMaskMutable().clear();
+    return getResult();
+  }
+
   return OpFoldResult();
 }
 
@@ -4592,6 +4600,15 @@ LogicalResult TransferWriteOp::fold(FoldAdaptor adaptor,
     return success();
   if (succeeded(foldTransferFullMask(*this)))
     return success();
+  DenseElementsAttr splatAttr;
+  if (getMask() &&
+      matchPattern(getMask(), m_Constant<DenseElementsAttr>(&splatAttr)) &&
+      splatAttr.isSplat() && splatAttr.getSplatValue<BoolAttr>().getValue()) {
+    getMaskMutable().clear();
+    llvm::dbgs() << "here??\n";
+    return success();
+  }
+
   return memref::foldMemRefCast(*this);
 }
 
