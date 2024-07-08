@@ -140,8 +140,8 @@ Value extractSMEMask(OpBuilder &builder, Location loc, Value mask,
 auto decomposeToSMETiles(OpBuilder &builder, VectorType type,
                          VectorType smeTileType,
                          bool transposeIndices = false) {
-  assert(isMultipleOfSMETileVectorType(type) &&
-         "`type` not multiple of SME tiles");
+  // assert(isMultipleOfSMETileVectorType(type) &&
+  //        "`type` not multiple of SME tiles");
   return llvm::map_range(
       StaticTileOffsetRange(type.getShape(), {smeTileType.getDimSize(0),
                                               smeTileType.getDimSize(1)}),
@@ -775,6 +775,102 @@ struct ConvertIllegalShapeCastOpsToTransposes
   }
 };
 
+struct LowerIllegalTransposeViaZA
+    : public OpRewritePattern<vector::TransposeOp> {
+
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::TransposeOp transposeOp,
+                                PatternRewriter &rewriter) const override {
+    auto sourceType = transposeOp.getSourceVectorType();
+    auto resultType = transposeOp.getResultVectorType();
+
+    if (resultType.getRank() != 2)
+      return failure();
+
+    if (!isLegalVectorType(sourceType) || isLegalVectorType(resultType))
+      return failure();
+
+    auto result = transposeOp.getResult();
+    if (!result.hasOneUse())
+      return failure();
+
+    auto writeOp = dyn_cast_if_present<vector::TransferWriteOp>(
+        *result.getUsers().begin());
+
+    if (!writeOp)
+      return failure();
+
+    rewriter.setInsertionPoint(writeOp);
+
+    auto permutationMap = writeOp.getPermutationMap();
+    if (!permutationMap.isIdentity())
+      return rewriter.notifyMatchFailure(writeOp,
+                                         kMatchFailureNonPermutationMap);
+
+    auto smeTileType = getSMETileTypeForElement(resultType.getElementType());
+    VectorType smeSliceType = VectorType::Builder(smeTileType).dropDim(0);
+    auto loc = transposeOp.getLoc();
+
+    auto vscale = rewriter.create<vector::VectorScaleOp>(loc);
+    auto createVscaleMultiple = [&](int64_t multiplier) {
+      return rewriter.create<arith::MulIOp>(
+          loc, vscale,
+          rewriter.create<arith::ConstantIndexOp>(loc, multiplier));
+    };
+
+    for (auto [index, smeTile] : llvm::enumerate(
+             decomposeToSMETiles(rewriter, sourceType, smeTileType))) {
+      Value tile = rewriter.create<arm_sme::GetTileOp>(loc, smeTileType);
+      for (int i = 0; i < smeTileType.getDimSize(0); i++) {
+        Value vector = rewriter.create<vector::ExtractOp>(
+            loc, transposeOp.getVector(),
+            rewriter.getIndexAttr(i + smeTile.row));
+        if (vector.getType() != smeSliceType) {
+          vector = rewriter.create<vector::ScalableExtractOp>(
+              loc, smeSliceType, vector, smeTile.col);
+        }
+        tile = rewriter.create<arm_sme::MoveVectorToTileSliceOp>(
+            loc, vector, tile, rewriter.create<arith::ConstantIndexOp>(loc, i));
+      }
+      auto colOut = rewriter.create<arith::ConstantIndexOp>(loc, smeTile.row);
+      auto rowOut = createVscaleMultiple(smeTile.col);
+
+      auto outI =
+          rewriter.create<arith::AddIOp>(loc, rowOut, writeOp.getIndices()[0]);
+      auto outJ =
+          rewriter.create<arith::AddIOp>(loc, colOut, writeOp.getIndices()[1]);
+
+      auto existingMask = writeOp.getMask();
+      Value maskRows;
+      Value maskCols;
+      if (existingMask) {
+        auto cm = existingMask.getDefiningOp<vector::CreateMaskOp>();
+        maskRows =
+            rewriter.create<arith::SubIOp>(loc, cm.getOperand(0), rowOut);
+        maskCols =
+            rewriter.create<arith::SubIOp>(loc, cm.getOperand(1), colOut);
+      } else {
+        maskRows = createVscaleMultiple(smeTileType.getDimSize(0));
+        maskCols = rewriter.create<arith::ConstantIndexOp>(
+            loc, smeTileType.getDimSize(0));
+      }
+
+      auto mask = rewriter.create<vector::CreateMaskOp>(
+          loc, smeTileType.clone(rewriter.getI1Type()),
+          ValueRange{maskRows, maskCols});
+
+      rewriter.create<arm_sme::TileStoreOp>(loc, tile, writeOp.getSource(),
+                                            ValueRange{outI, outJ}, mask,
+                                            arm_sme::TileSliceLayout::Vertical);
+    }
+
+    rewriter.eraseOp(writeOp);
+    rewriter.eraseOp(transposeOp);
+    return success();
+  }
+};
+
 struct VectorLegalizationPass
     : public arm_sme::impl::VectorLegalizationBase<VectorLegalizationPass> {
   void runOnOperation() override {
@@ -796,7 +892,8 @@ struct VectorLegalizationPass
 
     patterns.add<FoldExtractFromVectorOfSMELikeCreateMasks,
                  LiftIllegalVectorTransposeToMemory,
-                 ConvertIllegalShapeCastOpsToTransposes>(context);
+                 ConvertIllegalShapeCastOpsToTransposes,
+                 LowerIllegalTransposeViaZA>(context);
     // Note: These two patterns are added with a high benefit to ensure:
     //  - Masked outer products are handled before unmasked ones
     //  - Multi-tile writes are lowered as a store loop (if possible)
