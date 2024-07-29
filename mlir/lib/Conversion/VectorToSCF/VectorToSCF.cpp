@@ -24,6 +24,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/Vector/Transforms/LoweringPatterns.h"
 #include "mlir/Dialect/Vector/Transforms/VectorTransforms.h"
+#include "mlir/Dialect/Vector/Utils/VectorUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Pass/Pass.h"
@@ -987,6 +988,111 @@ struct TransferOpConversion : public VectorToSCFPattern<OpTy> {
   }
 };
 
+static FailureOr<SmallVector<OpFoldResult>> getMaskDims(Value mask,
+                                                        IndexType indexType) {
+  if (!mask)
+    return SmallVector<OpFoldResult>{};
+  if (auto createMaskOp = mask.getDefiningOp<vector::CreateMaskOp>()) {
+    return llvm::map_to_vector(createMaskOp.getOperands(),
+                               [](Value value) { return OpFoldResult(value); });
+  }
+  if (auto constantMask = mask.getDefiningOp<vector::ConstantMaskOp>()) {
+    return llvm::map_to_vector(
+        constantMask.getMaskDimSizes(), [&](int64_t value) {
+          return OpFoldResult(IntegerAttr::get(indexType, value));
+        });
+  }
+  return failure();
+}
+
+struct ScalableTransposeTransferWriteConversion
+    : VectorToSCFPattern<vector::TransferWriteOp> {
+  using VectorToSCFPattern::VectorToSCFPattern;
+
+  LogicalResult matchAndRewrite(TransferWriteOp writeOp,
+                                PatternRewriter &rewriter) const override {
+    auto vector = writeOp.getVector();
+    auto vectorType = vector.getType();
+
+    // TODO: Support tensors.
+    if (!writeOp.hasPureBufferSemantics())
+      return failure();
+
+    if (vectorType.getRank() != 2)
+      return failure();
+
+    auto scalableFlags = vectorType.getScalableDims();
+    if (!scalableFlags[0] || scalableFlags[1])
+      return failure();
+
+    auto transposeOp = vector.getDefiningOp<vector::TransposeOp>();
+    if (!transposeOp || transposeOp.getPermutation() != ArrayRef<int64_t>{1, 0})
+      return failure();
+
+    // Non-identity permutations should be handled by LowerVectorTransfer.
+    auto permutationMap = writeOp.getPermutationMap();
+    if (!permutationMap.isIdentity())
+      return failure();
+
+    if (!writeOp.isDimInBounds(0))
+      return failure();
+
+    auto maskDims = getMaskDims(writeOp.getMask(), rewriter.getIndexType());
+    if (failed(maskDims))
+      return failure();
+
+    auto loc = writeOp.getLoc();
+    auto createVscaleMultiple =
+        vector::makeVscaleConstantBuilder(rewriter, loc);
+
+    int64_t fixedDimSize = vectorType.getDimSize(1);
+    auto fixedDimOffsets = llvm::seq(fixedDimSize);
+
+    auto transposeSource = transposeOp.getVector();
+    SmallVector<Value> sourceSlices =
+        llvm::map_to_vector(fixedDimOffsets, [&](int64_t idx) -> Value {
+          return rewriter.create<vector::ExtractOp>(loc, transposeSource, idx);
+        });
+
+    // Loop bounds and step.
+    auto lb = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    auto ub =
+        maskDims->empty()
+            ? Value(createVscaleMultiple(vectorType.getDimSize(0)))
+            : vector::getAsValues(rewriter, loc, maskDims->front()).front();
+    auto step = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+
+    VectorType sliceType = VectorType::Builder(vectorType).dropDim(0);
+    Value sliceMask = nullptr;
+    if (!maskDims->empty()) {
+      sliceMask = rewriter.create<vector::CreateMaskOp>(
+          loc, sliceType.clone(rewriter.getI1Type()),
+          ArrayRef<OpFoldResult>(*maskDims).drop_front());
+    }
+
+    auto result = rewriter.create<scf::ForOp>(
+        loc, lb, ub, step, std::nullopt,
+        [&](OpBuilder &b, Location loc, Value iv, ValueRange) {
+          SmallVector<Value> trElements =
+              llvm::map_to_vector(fixedDimOffsets, [&](int64_t idx) -> Value {
+                return b.create<vector::ExtractOp>(loc, sourceSlices[idx], iv);
+              });
+          auto slice =
+              b.create<vector::FromElementsOp>(loc, sliceType, trElements);
+          auto indices = writeOp.getIndices();
+          auto writeOffset = b.create<arith::AddIOp>(loc, indices.front(), iv);
+          b.create<vector::TransferWriteOp>(
+              loc, slice, writeOp.getSource(),
+              ValueRange{writeOffset, indices.back()},
+              ArrayRef<bool>(writeOp.getInBoundsValues()).drop_front());
+          b.create<scf::YieldOp>(loc);
+        });
+
+    rewriter.replaceOp(writeOp, result);
+    return success();
+  }
+};
+
 } // namespace lowering_n_d
 
 namespace lowering_n_d_unrolled {
@@ -1503,6 +1609,8 @@ void mlir::populateVectorToSCFConversionPatterns(
                  lowering_n_d::TransferOpConversion<TransferWriteOp>>(
         patterns.getContext(), options);
   }
+  patterns.add<lowering_n_d::ScalableTransposeTransferWriteConversion>(
+      patterns.getContext(), options);
 
   if (options.targetRank == 1) {
     patterns.add<lowering_1_d::TransferOp1dConversion<TransferReadOp>,
