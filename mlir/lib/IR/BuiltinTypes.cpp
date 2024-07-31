@@ -228,6 +228,24 @@ LogicalResult OpaqueType::verify(function_ref<InFlightDiagnostic()> emitError,
 // VectorType
 //===----------------------------------------------------------------------===//
 
+#if MLIR_ENABLE_EXPENSIVE_SCALABILITY_CHECKS
+
+ArrayRef<int64_t> VectorType::getShape() const {
+  auto& checkMap = getScalabilityCheckMap();
+  auto shape = get_shape();
+  if (!shape.empty())
+    checkMap.try_emplace(*this, ScalabilityCheckStatus::VectorShapeRequestedWithoutScalableDims);
+  return shape;
+}
+
+ArrayRef<bool> VectorType::getScalableDims() const {
+  auto& checkMap = getScalabilityCheckMap();
+  checkMap.insert_or_assign(*this, ScalabilityCheckStatus::ScalableDimsLikelyChecked);
+  return get_scalableDims();
+}
+
+#endif
+
 LogicalResult VectorType::verify(function_ref<InFlightDiagnostic()> emitError,
                                  ArrayRef<int64_t> shape, Type elementType,
                                  ArrayRef<bool> scalableDims) {

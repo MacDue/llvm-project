@@ -12,6 +12,7 @@
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/Support/ADTExtras.h"
+#include "mlir/Config/mlir-config.h"
 
 namespace llvm {
 class BitVector;
@@ -305,6 +306,18 @@ private:
 //===----------------------------------------------------------------------===//
 // VectorType
 //===----------------------------------------------------------------------===//
+
+#if !MLIR_ENABLE_EXPENSIVE_SCALABILITY_CHECKS
+
+ArrayRef<int64_t> VectorType::getShape() const {
+  return get_shape();
+}
+
+ArrayRef<bool> VectorType::getScalableDims() const {
+  return get_scalableDims();
+}
+
+#endif
 
 /// This is a builder type that keeps local references to arguments. Arguments
 /// that are passed into the builder must outlive the builder.

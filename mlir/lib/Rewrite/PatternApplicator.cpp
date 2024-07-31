@@ -14,6 +14,7 @@
 #include "mlir/Rewrite/PatternApplicator.h"
 #include "ByteCode.h"
 #include "llvm/Support/Debug.h"
+#include "mlir/Config/mlir-config.h"
 
 #define DEBUG_TYPE "pattern-application"
 
@@ -207,9 +208,31 @@ LogicalResult PatternApplicator::matchAndRewrite(
             LLVM_DEBUG(llvm::dbgs() << "Trying to match \""
                                     << bestPattern->getDebugName() << "\"\n");
 
+#if MLIR_ENABLE_EXPENSIVE_SCALABILITY_CHECKS
+            auto& scalabilityCheckMap = VectorType::getScalabilityCheckMap();
+            scalabilityCheckMap.clear();
+#endif
             const auto *pattern =
                 static_cast<const RewritePattern *>(bestPattern);
             result = pattern->matchAndRewrite(op, rewriter);
+
+#if MLIR_ENABLE_EXPENSIVE_SCALABILITY_CHECKS
+            if (succeeded(result)) {
+              bool fail = false;
+              for (auto [vectorType, status] : scalabilityCheckMap) {
+                if (status == VectorType::ScalabilityCheckStatus::ScalableDimsLikelyChecked) {
+                  fail = false;
+                  break;
+                }
+                if (status == VectorType::ScalabilityCheckStatus::VectorShapeRequestedWithoutScalableDims) {
+                  fail = true;
+                }
+              }
+              if (fail) {
+                llvm::errs() << "<<EXPENSIVE SCALABILITY CHECKS FAILED>> Pattern: " << pattern->getDebugName() << " (vector shape/dims requested without checking scalability)\n";
+              }
+            }
+#endif
 
             LLVM_DEBUG(llvm::dbgs()
                        << "\"" << bestPattern->getDebugName() << "\" result "

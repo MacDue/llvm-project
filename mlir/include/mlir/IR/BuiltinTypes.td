@@ -1126,9 +1126,9 @@ def Builtin_Vector : Builtin_Type<"Vector", "vector",
     ```
   }];
   let parameters = (ins
-    ArrayRefParameter<"int64_t">:$shape,
+    ArrayRefParameter<"int64_t">:$_shape,
     "Type":$elementType,
-    ArrayRefParameter<"bool">:$scalableDims
+    ArrayRefParameter<"bool">:$_scalableDims
   );
   let builders = [
     TypeBuilderWithInferredContext<(ins
@@ -1185,6 +1185,25 @@ def Builtin_Vector : Builtin_Type<"Vector", "vector",
     /// provided shape is `std::nullopt`, the current shape of the type is used.
     VectorType cloneWith(std::optional<ArrayRef<int64_t>> shape,
                          Type elementType) const;
+
+    ArrayRef<int64_t> getShape() const;
+
+    ArrayRef<bool> getScalableDims() const;
+
+    #if MLIR_ENABLE_EXPENSIVE_SCALABILITY_CHECKS
+
+    enum class ScalabilityCheckStatus {
+      VectorShapeNotRequested,
+      VectorShapeRequestedWithoutScalableDims,
+      ScalableDimsLikelyChecked
+    };
+
+    static DenseMap<VectorType, ScalabilityCheckStatus>& getScalabilityCheckMap() {
+      thread_local DenseMap<VectorType, ScalabilityCheckStatus> map;
+      return map;
+    }
+
+    #endif
   }];
   let skipDefaultBuilders = 1;
   let genVerifyDecl = 1;
