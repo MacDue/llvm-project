@@ -5,26 +5,26 @@
 //       CHECK-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
 //       CHECK:   %[[VTR0:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]]], %{{.*}} : memref<4x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}} {offsets = [0, 0], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}}[0:1][0:1] : vector<2x2xf32> into vector<4x4xf32>
 //  CHECK-NEXT:   %[[VTR1:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C2]]], %{{.*}} : memref<4x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]] {offsets = [0, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]][0:1][2:1] : vector<2x2xf32> into vector<4x4xf32>
 //  CHECK-NEXT:   %[[VTR2:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]]], %{{.*}} : memref<4x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]] {offsets = [2, 0], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]][2:1][0:1] : vector<2x2xf32> into vector<4x4xf32>
 //  CHECK-NEXT:   %[[VTR3:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C2]]], %{{.*}} : memref<4x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]] {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]][2:1][2:1] : vector<2x2xf32> into vector<4x4xf32>
 //  CHECK-NEXT:   return %[[VEC3]] : vector<4x4xf32>
 
 // ORDER-LABEL: func @transfer_read_unroll
 //       ORDER-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       ORDER-DAG:   %[[C0:.*]] = arith.constant 0 : index
 //       ORDER:   %[[VTR0:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]]], %{{.*}} : memref<4x4xf32>, vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}} {offsets = [0, 0], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  ORDER-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}}[0:1][0:1] : vector<2x2xf32> into vector<4x4xf32>
 //  ORDER-NEXT:   %[[VTR1:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]]], %{{.*}} : memref<4x4xf32>, vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]] {offsets = [2, 0], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  ORDER-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]][2:1][0:1] : vector<2x2xf32> into vector<4x4xf32>
 //  ORDER-NEXT:   %[[VTR2:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C2]]], %{{.*}} : memref<4x4xf32>, vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]] {offsets = [0, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  ORDER-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]][0:1][2:1] : vector<2x2xf32> into vector<4x4xf32>
 //  ORDER-NEXT:   %[[VTR3:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C2]]], %{{.*}} : memref<4x4xf32>, vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]] {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  ORDER-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]][2:1][2:1] : vector<2x2xf32> into vector<4x4xf32>
 //  ORDER-NEXT:   return %[[VEC3]] : vector<4x4xf32>
 
 func.func @transfer_read_unroll(%arg0 : memref<4x4xf32>) -> vector<4x4xf32> {
@@ -37,26 +37,26 @@ func.func @transfer_read_unroll(%arg0 : memref<4x4xf32>) -> vector<4x4xf32> {
 // CHECK-LABEL: func @transfer_write_unroll
 //       CHECK-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
-//       CHECK:   %[[S0:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [0, 0], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//       CHECK:   %[[S0:.*]] = vector.extract_strided_slice %{{.*}}[0:2:1][0:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   vector.transfer_write %[[S0]], {{.*}}[%[[C0]], %[[C0]]] {{.*}} : vector<2x2xf32>, memref<4x4xf32>
-//  CHECK-NEXT:   %[[S1:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [0, 2], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[S1:.*]] = vector.extract_strided_slice %{{.*}}[0:2:1][2:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   vector.transfer_write %[[S1]], {{.*}}[%[[C0]], %[[C2]]] {{.*}} : vector<2x2xf32>, memref<4x4xf32>
-//  CHECK-NEXT:   %[[S2:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [2, 0], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[S2:.*]] = vector.extract_strided_slice %{{.*}}[2:2:1][0:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   vector.transfer_write %[[S2]], {{.*}}[%[[C2]], %[[C0]]] {{.*}} : vector<2x2xf32>, memref<4x4xf32>
-//  CHECK-NEXT:   %[[S3:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [2, 2], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[S3:.*]] = vector.extract_strided_slice %{{.*}}[2:2:1][2:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   vector.transfer_write %[[S3]], {{.*}}[%[[C2]], %[[C2]]] {{.*}} : vector<2x2xf32>, memref<4x4xf32>
 //  CHECK-NEXT:   return
 
 // ORDER-LABEL: func @transfer_write_unroll
 //       ORDER-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       ORDER-DAG:   %[[C0:.*]] = arith.constant 0 : index
-//       ORDER:   %[[S0:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [0, 0], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//       ORDER:   %[[S0:.*]] = vector.extract_strided_slice %{{.*}}[0:2:1][0:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  ORDER-NEXT:   vector.transfer_write %[[S0]], {{.*}}[%[[C0]], %[[C0]]] {{.*}} : vector<2x2xf32>, memref<4x4xf32>
-//  ORDER-NEXT:   %[[S1:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [2, 0], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//  ORDER-NEXT:   %[[S1:.*]] = vector.extract_strided_slice %{{.*}}[2:2:1][0:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  ORDER-NEXT:   vector.transfer_write %[[S1]], {{.*}}[%[[C2]], %[[C0]]] {{.*}} : vector<2x2xf32>, memref<4x4xf32>
-//  ORDER-NEXT:   %[[S2:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [0, 2], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//  ORDER-NEXT:   %[[S2:.*]] = vector.extract_strided_slice %{{.*}}[0:2:1][2:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  ORDER-NEXT:   vector.transfer_write %[[S2]], {{.*}}[%[[C0]], %[[C2]]] {{.*}} : vector<2x2xf32>, memref<4x4xf32>
-//  ORDER-NEXT:   %[[S3:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [2, 2], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//  ORDER-NEXT:   %[[S3:.*]] = vector.extract_strided_slice %{{.*}}[2:2:1][2:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  ORDER-NEXT:   vector.transfer_write %[[S3]], {{.*}}[%[[C2]], %[[C2]]] {{.*}} : vector<2x2xf32>, memref<4x4xf32>
 //  ORDER-NEXT:   return
 
@@ -91,13 +91,13 @@ func.func @transfer_readwrite_unroll(%arg0 : memref<4x4xf32>) {
 //       CHECK-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
 //       CHECK:   %[[VTR0:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]]], %{{.*}} : tensor<4x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}} {offsets = [0, 0], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}}[0:1][0:1] : vector<2x2xf32> into vector<4x4xf32>
 //  CHECK-NEXT:   %[[VTR1:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C2]]], %{{.*}} : tensor<4x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]] {offsets = [0, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]][0:1][2:1] : vector<2x2xf32> into vector<4x4xf32>
 //  CHECK-NEXT:   %[[VTR2:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]]], %{{.*}} : tensor<4x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]] {offsets = [2, 0], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]][2:1][0:1] : vector<2x2xf32> into vector<4x4xf32>
 //  CHECK-NEXT:   %[[VTR3:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C2]]], %{{.*}} : tensor<4x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]] {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]][2:1][2:1] : vector<2x2xf32> into vector<4x4xf32>
 //  CHECK-NEXT:   return %[[VEC3]] : vector<4x4xf32>
 
 func.func @transfer_read_unroll_tensor(%arg0 : tensor<4x4xf32>) -> vector<4x4xf32> {
@@ -110,13 +110,13 @@ func.func @transfer_read_unroll_tensor(%arg0 : tensor<4x4xf32>) -> vector<4x4xf3
 // CHECK-LABEL: func @transfer_write_unroll_tensor
 //       CHECK-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
-//       CHECK:   %[[S0:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [0, 0], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//       CHECK:   %[[S0:.*]] = vector.extract_strided_slice %{{.*}}[0:2:1][0:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   %[[VTW0:.*]] = vector.transfer_write %[[S0]], {{.*}}[%[[C0]], %[[C0]]] {{.*}} : vector<2x2xf32>, tensor<4x4xf32>
-//  CHECK-NEXT:   %[[S1:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [0, 2], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[S1:.*]] = vector.extract_strided_slice %{{.*}}[0:2:1][2:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   %[[VTW1:.*]] = vector.transfer_write %[[S1]], %[[VTW0]][%[[C0]], %[[C2]]] {{.*}} : vector<2x2xf32>, tensor<4x4xf32>
-//  CHECK-NEXT:   %[[S2:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [2, 0], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[S2:.*]] = vector.extract_strided_slice %{{.*}}[2:2:1][0:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   %[[VTW2:.*]] = vector.transfer_write %[[S2]], %[[VTW1]][%[[C2]], %[[C0]]] {{.*}} : vector<2x2xf32>, tensor<4x4xf32>
-//  CHECK-NEXT:   %[[S3:.*]] = vector.extract_strided_slice %{{.*}} {offsets = [2, 2], sizes = [2, 2], strides = [1, 1]} : vector<4x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[S3:.*]] = vector.extract_strided_slice %{{.*}}[2:2:1][2:2:1] : vector<4x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   %[[VTW3:.*]] = vector.transfer_write %[[S3]], %[[VTW2]][%[[C2]], %[[C2]]] {{.*}} : vector<2x2xf32>, tensor<4x4xf32>
 //  CHECK-NEXT:   return %[[VTW3]] : tensor<4x4xf32>
 
@@ -157,17 +157,17 @@ func.func @transfer_readwrite_unroll_tensor(%arg0 : tensor<4x4xf32>, %arg1 : ten
 //       CHECK-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
 //       CHECK:   %[[VTR0:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}} {offsets = [0, 0], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}}[0:1][0:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   %[[VTR1:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]] {offsets = [0, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]][0:1][2:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   %[[VTR2:.*]] = vector.transfer_read {{.*}}[%[[C4]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]] {offsets = [0, 4], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]][0:1][4:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   %[[VTR3:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C2]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]] {offsets = [2, 0], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]][2:1][0:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   %[[VTR4:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C2]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VTR4]], %[[VEC3]] {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VTR4]], %[[VEC3]][2:1][2:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   %[[VTR5:.*]] = vector.transfer_read {{.*}}[%[[C4]], %[[C2]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VTR5]], %[[VEC4]] {offsets = [2, 4], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VTR5]], %[[VEC4]][2:1][4:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   return %[[VEC5]] : vector<4x6xf32>
 #map0 = affine_map<(d0, d1) -> (d1, d0)>
 func.func @transfer_read_unroll_permutation(%arg0 : memref<6x4xf32>) -> vector<4x6xf32> {
@@ -183,17 +183,17 @@ func.func @transfer_read_unroll_permutation(%arg0 : memref<6x4xf32>) -> vector<4
 //       CHECK-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
 //       CHECK:   %[[VTR0:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}} {offsets = [0, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}}[0:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   %[[VTR1:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C2]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]] {offsets = [0, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]][0:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   %[[VTR2:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]] {offsets = [2, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]][2:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   %[[VTR3:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C2]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]] {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]][2:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   %[[VTR4:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VTR4]], %[[VEC3]] {offsets = [4, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VTR4]], %[[VEC3]][4:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   %[[VTR5:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C2]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VTR5]], %[[VEC4]] {offsets = [4, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VTR5]], %[[VEC4]][4:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   return %[[VEC5]] : vector<6x4xf32>
 #map0 = affine_map<(d0, d1) -> (0, d1)>
 func.func @transfer_read_unroll_broadcast(%arg0 : memref<6x4xf32>) -> vector<6x4xf32> {
@@ -210,17 +210,17 @@ func.func @transfer_read_unroll_broadcast(%arg0 : memref<6x4xf32>) -> vector<6x4
 //       CHECK-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
 //       CHECK:   %[[VTR0:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}} {offsets = [0, 0], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}}[0:1][0:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   %[[VTR1:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]] {offsets = [0, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]][0:1][2:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   %[[VTR2:.*]] = vector.transfer_read {{.*}}[%[[C4]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]] {offsets = [0, 4], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]][0:1][4:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   %[[VTR3:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]] {offsets = [2, 0], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]][2:1][0:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   %[[VTR4:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VTR4]], %[[VEC3]] {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VTR4]], %[[VEC3]][2:1][2:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   %[[VTR5:.*]] = vector.transfer_read {{.*}}[%[[C4]], %[[C0]]], %{{.*}} : memref<6x4xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VTR5]], %[[VEC4]] {offsets = [2, 4], strides = [1, 1]} : vector<2x2xf32> into vector<4x6xf32>
+//  CHECK-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VTR5]], %[[VEC4]][2:1][4:1] : vector<2x2xf32> into vector<4x6xf32>
 //  CHECK-NEXT:   return %[[VEC5]] : vector<4x6xf32>
 #map0 = affine_map<(d0, d1) -> (0, d0)>
 func.func @transfer_read_unroll_broadcast_permuation(%arg0 : memref<6x4xf32>) -> vector<4x6xf32> {
@@ -237,17 +237,17 @@ func.func @transfer_read_unroll_broadcast_permuation(%arg0 : memref<6x4xf32>) ->
 //       CHECK-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
 //       CHECK:   %[[VTR0:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]], %[[C0]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}} {offsets = [0, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}}[0:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   %[[VTR1:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]], %[[C0]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]] {offsets = [0, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]][0:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   %[[VTR2:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]], %[[C2]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]] {offsets = [2, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]][2:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   %[[VTR3:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]], %[[C2]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]] {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]][2:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   %[[VTR4:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]], %[[C4]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VTR4]], %[[VEC3]] {offsets = [4, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VTR4]], %[[VEC3]][4:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   %[[VTR5:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]], %[[C4]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VTR5]], %[[VEC4]] {offsets = [4, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VTR5]], %[[VEC4]][4:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   return %[[VEC5]] : vector<6x4xf32>
 
 // ORDER-LABEL: func @transfer_read_unroll_different_rank
@@ -255,17 +255,17 @@ func.func @transfer_read_unroll_broadcast_permuation(%arg0 : memref<6x4xf32>) ->
 //       ORDER-DAG:   %[[C2:.*]] = arith.constant 2 : index
 //       ORDER-DAG:   %[[C0:.*]] = arith.constant 0 : index
 //       ORDER:   %[[VTR0:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]], %[[C0]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}} {offsets = [0, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VTR0]], %{{.*}}[0:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
 //  ORDER-NEXT:   %[[VTR1:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]], %[[C2]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]] {offsets = [2, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VTR1]], %[[VEC0]][2:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
 //  ORDER-NEXT:   %[[VTR2:.*]] = vector.transfer_read {{.*}}[%[[C0]], %[[C0]], %[[C4]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]] {offsets = [4, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VTR2]], %[[VEC1]][4:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
 //  ORDER-NEXT:   %[[VTR3:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]], %[[C0]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]] {offsets = [0, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VTR3]], %[[VEC2]][0:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  ORDER-NEXT:   %[[VTR4:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]], %[[C2]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VTR4]], %[[VEC3]] {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VTR4]], %[[VEC3]][2:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  ORDER-NEXT:   %[[VTR5:.*]] = vector.transfer_read {{.*}}[%[[C2]], %[[C0]], %[[C4]]], %{{.*}} : memref<?x?x?xf32>, vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VTR5]], %[[VEC4]] {offsets = [4, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VTR5]], %[[VEC4]][4:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  ORDER-NEXT:   return %[[VEC5]] : vector<6x4xf32>
 
 #map0 = affine_map<(d0, d1, d2) -> (d2, d0)>
@@ -284,36 +284,36 @@ func.func @transfer_read_unroll_different_rank(%arg0 : memref<?x?x?xf32>) -> vec
 //  CHECK-SAME:           %[[ARG2:.*]]: vector<6x4xi1>
 //  CHECK-SAME:           %[[ARG3:.*]]: vector<6x4xf32>
 //  CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
-//       CHECK:   %[[IDX0:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [0, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  CHECK-NEXT:   %[[MASK0:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [0, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  CHECK-NEXT:   %[[PASS0:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [0, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//       CHECK:   %[[IDX0:.*]] = vector.extract_strided_slice %[[ARG1]][0:2:1][0:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  CHECK-NEXT:   %[[MASK0:.*]] = vector.extract_strided_slice %[[ARG2]][0:2:1][0:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  CHECK-NEXT:   %[[PASS0:.*]] = vector.extract_strided_slice %[[ARG3]][0:2:1][0:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   %[[VGT0:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX0]]], %[[MASK0]], %[[PASS0]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VGT0]], %{{.*}} {offsets = [0, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
-//  CHECK-NEXT:   %[[IDX1:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [0, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  CHECK-NEXT:   %[[MASK1:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [0, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  CHECK-NEXT:   %[[PASS1:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [0, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VGT0]], %{{.*}}[0:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[IDX1:.*]] = vector.extract_strided_slice %[[ARG1]][0:2:1][2:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  CHECK-NEXT:   %[[MASK1:.*]] = vector.extract_strided_slice %[[ARG2]][0:2:1][2:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  CHECK-NEXT:   %[[PASS1:.*]] = vector.extract_strided_slice %[[ARG3]][0:2:1][2:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   %[[VGT1:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX1]]], %[[MASK1]], %[[PASS1]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VGT1]], %[[VEC0]] {offsets = [0, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
-//  CHECK-NEXT:   %[[IDX2:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [2, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  CHECK-NEXT:   %[[MASK2:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [2, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  CHECK-NEXT:   %[[PASS2:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [2, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VGT1]], %[[VEC0]][0:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[IDX2:.*]] = vector.extract_strided_slice %[[ARG1]][2:2:1][0:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  CHECK-NEXT:   %[[MASK2:.*]] = vector.extract_strided_slice %[[ARG2]][2:2:1][0:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  CHECK-NEXT:   %[[PASS2:.*]] = vector.extract_strided_slice %[[ARG3]][2:2:1][0:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   %[[VGT2:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX2]]], %[[MASK2]], %[[PASS2]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VGT2]], %[[VEC1]] {offsets = [2, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
-//  CHECK-NEXT:   %[[IDX3:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [2, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  CHECK-NEXT:   %[[MASK3:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [2, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  CHECK-NEXT:   %[[PASS3:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [2, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VGT2]], %[[VEC1]][2:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[IDX3:.*]] = vector.extract_strided_slice %[[ARG1]][2:2:1][2:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  CHECK-NEXT:   %[[MASK3:.*]] = vector.extract_strided_slice %[[ARG2]][2:2:1][2:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  CHECK-NEXT:   %[[PASS3:.*]] = vector.extract_strided_slice %[[ARG3]][2:2:1][2:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   %[[VGT3:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX3]]], %[[MASK3]], %[[PASS3]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VGT3]], %[[VEC2]] {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
-//  CHECK-NEXT:   %[[IDX4:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [4, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  CHECK-NEXT:   %[[MASK4:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [4, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  CHECK-NEXT:   %[[PASS4:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [4, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VGT3]], %[[VEC2]][2:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[IDX4:.*]] = vector.extract_strided_slice %[[ARG1]][4:2:1][0:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  CHECK-NEXT:   %[[MASK4:.*]] = vector.extract_strided_slice %[[ARG2]][4:2:1][0:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  CHECK-NEXT:   %[[PASS4:.*]] = vector.extract_strided_slice %[[ARG3]][4:2:1][0:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   %[[VGT4:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX4]]], %[[MASK4]], %[[PASS4]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VGT4]], %[[VEC3]] {offsets = [4, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
-//  CHECK-NEXT:   %[[IDX5:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [4, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  CHECK-NEXT:   %[[MASK5:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [4, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  CHECK-NEXT:   %[[PASS5:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [4, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//  CHECK-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VGT4]], %[[VEC3]][4:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[IDX5:.*]] = vector.extract_strided_slice %[[ARG1]][4:2:1][2:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  CHECK-NEXT:   %[[MASK5:.*]] = vector.extract_strided_slice %[[ARG2]][4:2:1][2:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  CHECK-NEXT:   %[[PASS5:.*]] = vector.extract_strided_slice %[[ARG3]][4:2:1][2:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  CHECK-NEXT:   %[[VGT5:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX5]]], %[[MASK5]], %[[PASS5]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  CHECK-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VGT5]], %[[VEC4]] {offsets = [4, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  CHECK-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VGT5]], %[[VEC4]][4:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  CHECK-NEXT:   return %[[VEC5]] : vector<6x4xf32>
 
 // ORDER-LABEL: func @vector_gather_unroll
@@ -322,36 +322,36 @@ func.func @transfer_read_unroll_different_rank(%arg0 : memref<?x?x?xf32>) -> vec
 //  ORDER-SAME:           %[[ARG2:.*]]: vector<6x4xi1>
 //  ORDER-SAME:           %[[ARG3:.*]]: vector<6x4xf32>
 //  ORDER-DAG:   %[[C0:.*]] = arith.constant 0 : index
-//       ORDER:   %[[IDX0:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [0, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  ORDER-NEXT:   %[[MASK0:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [0, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  ORDER-NEXT:   %[[PASS0:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [0, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//       ORDER:   %[[IDX0:.*]] = vector.extract_strided_slice %[[ARG1]][0:2:1][0:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  ORDER-NEXT:   %[[MASK0:.*]] = vector.extract_strided_slice %[[ARG2]][0:2:1][0:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  ORDER-NEXT:   %[[PASS0:.*]] = vector.extract_strided_slice %[[ARG3]][0:2:1][0:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  ORDER-NEXT:   %[[VGT0:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX0]]], %[[MASK0]], %[[PASS0]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VGT0]], %{{.*}} {offsets = [0, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
-//  ORDER-NEXT:   %[[IDX1:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [2, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  ORDER-NEXT:   %[[MASK1:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [2, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  ORDER-NEXT:   %[[PASS1:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [2, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//  ORDER-NEXT:   %[[VEC0:.*]] = vector.insert_strided_slice %[[VGT0]], %{{.*}}[0:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[IDX1:.*]] = vector.extract_strided_slice %[[ARG1]][2:2:1][0:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  ORDER-NEXT:   %[[MASK1:.*]] = vector.extract_strided_slice %[[ARG2]][2:2:1][0:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  ORDER-NEXT:   %[[PASS1:.*]] = vector.extract_strided_slice %[[ARG3]][2:2:1][0:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  ORDER-NEXT:   %[[VGT1:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX1]]], %[[MASK1]], %[[PASS1]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VGT1]], %[[VEC0]] {offsets = [2, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
-//  ORDER-NEXT:   %[[IDX2:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [4, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  ORDER-NEXT:   %[[MASK2:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [4, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  ORDER-NEXT:   %[[PASS2:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [4, 0], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//  ORDER-NEXT:   %[[VEC1:.*]] = vector.insert_strided_slice %[[VGT1]], %[[VEC0]][2:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[IDX2:.*]] = vector.extract_strided_slice %[[ARG1]][4:2:1][0:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  ORDER-NEXT:   %[[MASK2:.*]] = vector.extract_strided_slice %[[ARG2]][4:2:1][0:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  ORDER-NEXT:   %[[PASS2:.*]] = vector.extract_strided_slice %[[ARG3]][4:2:1][0:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  ORDER-NEXT:   %[[VGT2:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX2]]], %[[MASK2]], %[[PASS2]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VGT2]], %[[VEC1]] {offsets = [4, 0], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
-//  ORDER-NEXT:   %[[IDX3:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [0, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  ORDER-NEXT:   %[[MASK3:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [0, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  ORDER-NEXT:   %[[PASS3:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [0, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//  ORDER-NEXT:   %[[VEC2:.*]] = vector.insert_strided_slice %[[VGT2]], %[[VEC1]][4:1][0:1] : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[IDX3:.*]] = vector.extract_strided_slice %[[ARG1]][0:2:1][2:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  ORDER-NEXT:   %[[MASK3:.*]] = vector.extract_strided_slice %[[ARG2]][0:2:1][2:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  ORDER-NEXT:   %[[PASS3:.*]] = vector.extract_strided_slice %[[ARG3]][0:2:1][2:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  ORDER-NEXT:   %[[VGT3:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX3]]], %[[MASK3]], %[[PASS3]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VGT3]], %[[VEC2]] {offsets = [0, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
-//  ORDER-NEXT:   %[[IDX4:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [2, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  ORDER-NEXT:   %[[MASK4:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [2, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  ORDER-NEXT:   %[[PASS4:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [2, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//  ORDER-NEXT:   %[[VEC3:.*]] = vector.insert_strided_slice %[[VGT3]], %[[VEC2]][0:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[IDX4:.*]] = vector.extract_strided_slice %[[ARG1]][2:2:1][2:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  ORDER-NEXT:   %[[MASK4:.*]] = vector.extract_strided_slice %[[ARG2]][2:2:1][2:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  ORDER-NEXT:   %[[PASS4:.*]] = vector.extract_strided_slice %[[ARG3]][2:2:1][2:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  ORDER-NEXT:   %[[VGT4:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX4]]], %[[MASK4]], %[[PASS4]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VGT4]], %[[VEC3]] {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
-//  ORDER-NEXT:   %[[IDX5:.*]] = vector.extract_strided_slice %[[ARG1]] {offsets = [4, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xindex> to vector<2x2xindex>
-//  ORDER-NEXT:   %[[MASK5:.*]] = vector.extract_strided_slice %[[ARG2]] {offsets = [4, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xi1> to vector<2x2xi1>
-//  ORDER-NEXT:   %[[PASS5:.*]] = vector.extract_strided_slice %[[ARG3]] {offsets = [4, 2], sizes = [2, 2], strides = [1, 1]} : vector<6x4xf32> to vector<2x2xf32>
+//  ORDER-NEXT:   %[[VEC4:.*]] = vector.insert_strided_slice %[[VGT4]], %[[VEC3]][2:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[IDX5:.*]] = vector.extract_strided_slice %[[ARG1]][4:2:1][2:2:1] : vector<6x4xindex> to vector<2x2xindex>
+//  ORDER-NEXT:   %[[MASK5:.*]] = vector.extract_strided_slice %[[ARG2]][4:2:1][2:2:1] : vector<6x4xi1> to vector<2x2xi1>
+//  ORDER-NEXT:   %[[PASS5:.*]] = vector.extract_strided_slice %[[ARG3]][4:2:1][2:2:1] : vector<6x4xf32> to vector<2x2xf32>
 //  ORDER-NEXT:   %[[VGT5:.*]] = vector.gather {{.*}}[%[[C0]], %[[C0]], %[[C0]]] [%[[IDX5]]], %[[MASK5]], %[[PASS5]] : memref<?x?x?xf32>, vector<2x2xindex>, vector<2x2xi1>, vector<2x2xf32> into vector<2x2xf32>
-//  ORDER-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VGT5]], %[[VEC4]] {offsets = [4, 2], strides = [1, 1]} : vector<2x2xf32> into vector<6x4xf32>
+//  ORDER-NEXT:   %[[VEC5:.*]] = vector.insert_strided_slice %[[VGT5]], %[[VEC4]][4:1][2:1] : vector<2x2xf32> into vector<6x4xf32>
 //  ORDER-NEXT:   return %[[VEC5]] : vector<6x4xf32>
 
 func.func @vector_gather_unroll(%arg0 : memref<?x?x?xf32>,

@@ -254,8 +254,8 @@ func.func @cast_away_contraction_does_not_transpose_leading_unit_dims(%lhs: vect
 // CHECK-LABEL: func @cast_away_extract_strided_slice_leading_one_dims
 func.func @cast_away_extract_strided_slice_leading_one_dims(%arg0: vector<1x8x8xf16>) -> vector<1x1x8xf16> {
   // CHECK:     %[[SRC:.+]] = vector.extract %{{.*}}[0] : vector<8x8xf16> from vector<1x8x8xf16>
-  // CHECK: %[[EXTRACT:.+]] = vector.extract_strided_slice %[[SRC]] {offsets = [4], sizes = [1], strides = [1]} : vector<8x8xf16> to vector<1x8xf16>
-  %0 = vector.extract_strided_slice %arg0 {offsets = [0, 4], sizes = [1, 1], strides = [1, 1]} : vector<1x8x8xf16> to vector<1x1x8xf16>
+  // CHECK: %[[EXTRACT:.+]] = vector.extract_strided_slice %[[SRC]][4:1:1] : vector<8x8xf16> to vector<1x8xf16>
+  %0 = vector.extract_strided_slice %arg0[0:1:1][4:1:1] : vector<1x8x8xf16> to vector<1x1x8xf16>
   // CHECK:     %[[RET:.+]] = vector.broadcast %[[EXTRACT]] : vector<1x8xf16> to vector<1x1x8xf16>
   // CHECK: return %[[RET]]
   return %0: vector<1x1x8xf16>
@@ -264,8 +264,8 @@ func.func @cast_away_extract_strided_slice_leading_one_dims(%arg0: vector<1x8x8x
 // CHECK-LABEL: func @cast_away_extract_strided_slice_leading_one_dims_scalable
 func.func @cast_away_extract_strided_slice_leading_one_dims_scalable(%arg0: vector<1x8x[8]xf16>) -> vector<1x1x[8]xf16> {
   // CHECK:     %[[SRC:.+]] = vector.extract %{{.*}}[0] : vector<8x[8]xf16> from vector<1x8x[8]xf16>
-  // CHECK: %[[EXTRACT:.+]] = vector.extract_strided_slice %[[SRC]] {offsets = [4], sizes = [1], strides = [1]} : vector<8x[8]xf16> to vector<1x[8]xf16>
-  %0 = vector.extract_strided_slice %arg0 {offsets = [0, 4], sizes = [1, 1], strides = [1, 1]} : vector<1x8x[8]xf16> to vector<1x1x[8]xf16>
+  // CHECK: %[[EXTRACT:.+]] = vector.extract_strided_slice %[[SRC]][4:1:1] : vector<8x[8]xf16> to vector<1x[8]xf16>
+  %0 = vector.extract_strided_slice %arg0[0:1:1][4:1:1] : vector<1x8x[8]xf16> to vector<1x1x[8]xf16>
   // CHECK:     %[[RET:.+]] = vector.broadcast %[[EXTRACT]] : vector<1x[8]xf16> to vector<1x1x[8]xf16>
   // CHECK: return %[[RET]]
   return %0: vector<1x1x[8]xf16>
@@ -275,8 +275,8 @@ func.func @cast_away_extract_strided_slice_leading_one_dims_scalable(%arg0: vect
 func.func @cast_away_insert_strided_slice_leading_one_dims(%arg0: vector<1x8xf16>, %arg1: vector<1x8x8xf16>) -> vector<1x8x8xf16> {
   // CHECK:    %[[SRC:.+]] = vector.extract %{{.*}}[0] : vector<8xf16> from vector<1x8xf16>
   // CHECK:    %[[DST:.+]] = vector.extract %{{.*}}[0] : vector<8x8xf16> from vector<1x8x8xf16>
-  // CHECK: %[[INSERT:.+]] = vector.insert_strided_slice %[[SRC]], %[[DST]] {offsets = [0, 0], strides = [1]} : vector<8xf16> into vector<8x8xf16>
-  %0 = vector.insert_strided_slice %arg0, %arg1 {offsets = [0, 0, 0], strides = [1, 1]} : vector<1x8xf16> into vector<1x8x8xf16>
+  // CHECK: %[[INSERT:.+]] = vector.insert_strided_slice %[[SRC]], %[[DST]][0][0:1] : vector<8xf16> into vector<8x8xf16>
+  %0 = vector.insert_strided_slice %arg0, %arg1[0][0:1][0:1] : vector<1x8xf16> into vector<1x8x8xf16>
   // CHECK:    %[[RET:.+]] = vector.broadcast %[[INSERT]] : vector<8x8xf16> to vector<1x8x8xf16>
   // CHECK: return %[[RET]]
   return %0: vector<1x8x8xf16>
@@ -286,8 +286,8 @@ func.func @cast_away_insert_strided_slice_leading_one_dims(%arg0: vector<1x8xf16
 func.func @cast_away_insert_strided_slice_leading_one_dims_scalable(%arg0: vector<1x[8]xf16>, %arg1: vector<1x8x[8]xf16>) -> vector<1x8x[8]xf16> {
   // CHECK:    %[[SRC:.+]] = vector.extract %{{.*}}[0] : vector<[8]xf16> from vector<1x[8]xf16>
   // CHECK:    %[[DST:.+]] = vector.extract %{{.*}}[0] : vector<8x[8]xf16> from vector<1x8x[8]xf16>
-  // CHECK: %[[INSERT:.+]] = vector.insert_strided_slice %[[SRC]], %[[DST]] {offsets = [0, 0], strides = [1]} : vector<[8]xf16> into vector<8x[8]xf16>
-  %0 = vector.insert_strided_slice %arg0, %arg1 {offsets = [0, 0, 0], strides = [1, 1]} : vector<1x[8]xf16> into vector<1x8x[8]xf16>
+  // CHECK: %[[INSERT:.+]] = vector.insert_strided_slice %[[SRC]], %[[DST]][0][0:1] : vector<[8]xf16> into vector<8x[8]xf16>
+  %0 = vector.insert_strided_slice %arg0, %arg1[0][0:1][0:1] : vector<1x[8]xf16> into vector<1x8x[8]xf16>
   // CHECK:    %[[RET:.+]] = vector.broadcast %[[INSERT]] : vector<8x[8]xf16> to vector<1x8x[8]xf16>
   // CHECK: return %[[RET]]
   return %0: vector<1x8x[8]xf16>
@@ -298,7 +298,7 @@ func.func @cast_away_insert_strided_slice_leading_one_dims_scalable(%arg0: vecto
 func.func @cast_away_insert_strided_slice_leading_one_dims_one_element(%arg0: vector<1x1xf16>, %arg1: vector<1x1x1xf16>) -> vector<1x1x1xf16> {
   // CHECK: %[[EXT:.+]] = vector.extract %{{.*}}[0] : vector<1xf16> from vector<1x1xf16>
   // CHECK: %[[B:.+]] = vector.broadcast %[[EXT]] : vector<1xf16> to vector<1x1x1xf16>
-  %0 = vector.insert_strided_slice %arg0, %arg1 {offsets = [0, 0, 0], strides = [1, 1]} : vector<1x1xf16> into vector<1x1x1xf16>
+  %0 = vector.insert_strided_slice %arg0, %arg1[0][0:1][0:1] : vector<1x1xf16> into vector<1x1x1xf16>
   // CHECK: return %[[B]]
   return %0: vector<1x1x1xf16>
 }
@@ -308,7 +308,7 @@ func.func @cast_away_insert_strided_slice_leading_one_dims_one_element(%arg0: ve
 func.func @cast_away_insert_strided_slice_leading_one_dims_one_element_scalable(%arg0: vector<1x[1]xf16>, %arg1: vector<1x1x[1]xf16>) -> vector<1x1x[1]xf16> {
   // CHECK: %[[EXT:.+]] = vector.extract %{{.*}}[0] : vector<[1]xf16> from vector<1x[1]xf16>
   // CHECK: %[[B:.+]] = vector.broadcast %[[EXT]] : vector<[1]xf16> to vector<1x1x[1]xf16>
-  %0 = vector.insert_strided_slice %arg0, %arg1 {offsets = [0, 0, 0], strides = [1, 1]} : vector<1x[1]xf16> into vector<1x1x[1]xf16>
+  %0 = vector.insert_strided_slice %arg0, %arg1[0][0:1][0:1] : vector<1x[1]xf16> into vector<1x1x[1]xf16>
   // CHECK: return %[[B]]
   return %0: vector<1x1x[1]xf16>
 }

@@ -27,26 +27,26 @@ func.func @shape_casts(%a: vector<2x2xf32>) -> (vector<4xf32>, vector<2x2xf32>) 
   // CHECK: %[[ex0:.*]] = vector.extract %{{.*}}[0] : vector<2xf32> from vector<2x2xf32>
   //
   // CHECK: %[[in0:.*]] = vector.insert_strided_slice %[[ex0]], %[[cst]]
-  // CHECK-SAME: {offsets = [0], strides = [1]} : vector<2xf32> into vector<4xf32>
+  // CHECK-SAME:[0:1] : vector<2xf32> into vector<4xf32>
   //
   // CHECK: %[[ex1:.*]] = vector.extract %{{.*}}[1] : vector<2xf32> from vector<2x2xf32>
   //
   // CHECK: %[[in2:.*]] = vector.insert_strided_slice %[[ex1]], %[[in0]]
-  // CHECK-SAME: {offsets = [2], strides = [1]} : vector<2xf32> into vector<4xf32>
+  // CHECK-SAME:[2:1] : vector<2xf32> into vector<4xf32>
   //
   %0 = vector.shape_cast %a : vector<2x2xf32> to vector<4xf32>
   // CHECK: %[[add:.*]] = arith.addf %[[in2]], %[[in2]] : vector<4xf32>
   %r0 = arith.addf %0, %0: vector<4xf32>
   //
   // CHECK: %[[ss0:.*]] = vector.extract_strided_slice %[[add]]
-  // CHECK-SAME: {offsets = [0], sizes = [2], strides = [1]} :
+  // CHECK-SAME:[0:2:1] :
   // CHECK-SAME: vector<4xf32> to vector<2xf32>
   //
   // CHECK: %[[res0:.*]] = vector.insert %[[ss0]], %[[cst22]] [0] :
   // CHECK-SAME: vector<2xf32> into vector<2x2xf32>
   //
   // CHECK: %[[s2:.*]] = vector.extract_strided_slice %[[add]]
-  // CHECK-SAME: {offsets = [2], sizes = [2], strides = [1]} :
+  // CHECK-SAME:[2:2:1] :
   // CHECK-SAME: vector<4xf32> to vector<2xf32>
   //
   // CHECK: %[[res1:.*]] = vector.insert %[[s2]], %[[res0]] [1] :

@@ -1107,7 +1107,7 @@ func.func @vector_print_string() {
 // -----
 
 func.func @extract_strided_slice1(%arg0: vector<4xf32>) -> vector<2xf32> {
-  %0 = vector.extract_strided_slice %arg0 {offsets = [2], sizes = [2], strides = [1]} : vector<4xf32> to vector<2xf32>
+  %0 = vector.extract_strided_slice %arg0[2:2:1] : vector<4xf32> to vector<2xf32>
   return %0 : vector<2xf32>
 }
 // CHECK-LABEL: @extract_strided_slice1(
@@ -1118,7 +1118,7 @@ func.func @extract_strided_slice1(%arg0: vector<4xf32>) -> vector<2xf32> {
 // -----
 
 func.func @extract_strided_index_slice1(%arg0: vector<4xindex>) -> vector<2xindex> {
-  %0 = vector.extract_strided_slice %arg0 {offsets = [2], sizes = [2], strides = [1]} : vector<4xindex> to vector<2xindex>
+  %0 = vector.extract_strided_slice %arg0[2:2:1] : vector<4xindex> to vector<2xindex>
   return %0 : vector<2xindex>
 }
 // CHECK-LABEL: @extract_strided_index_slice1(
@@ -1131,7 +1131,7 @@ func.func @extract_strided_index_slice1(%arg0: vector<4xindex>) -> vector<2xinde
 // -----
 
 func.func @extract_strided_slice2(%arg0: vector<4x8xf32>) -> vector<2x8xf32> {
-  %0 = vector.extract_strided_slice %arg0 {offsets = [2], sizes = [2], strides = [1]} : vector<4x8xf32> to vector<2x8xf32>
+  %0 = vector.extract_strided_slice %arg0[2:2:1] : vector<4x8xf32> to vector<2x8xf32>
   return %0 : vector<2x8xf32>
 }
 // CHECK-LABEL: @extract_strided_slice2(
@@ -1148,7 +1148,7 @@ func.func @extract_strided_slice2(%arg0: vector<4x8xf32>) -> vector<2x8xf32> {
 // -----
 
 func.func @extract_strided_slice3(%arg0: vector<4x8xf32>) -> vector<2x2xf32> {
-  %0 = vector.extract_strided_slice %arg0 {offsets = [2, 2], sizes = [2, 2], strides = [1, 1]} : vector<4x8xf32> to vector<2x2xf32>
+  %0 = vector.extract_strided_slice %arg0[2:2:1][2:2:1] : vector<4x8xf32> to vector<2x2xf32>
   return %0 : vector<2x2xf32>
 }
 // CHECK-LABEL: @extract_strided_slice3(
@@ -1168,7 +1168,7 @@ func.func @extract_strided_slice3(%arg0: vector<4x8xf32>) -> vector<2x2xf32> {
 // -----
 
 func.func @extract_strided_slice_scalable(%arg0 : vector<1x4x[4]xi32>) -> vector<1x1x[4]xi32> {
-  %0 = vector.extract_strided_slice %arg0 {offsets = [0, 3, 0], sizes = [1, 1, 4], strides = [1, 1, 1]} : vector<1x4x[4]xi32> to vector<1x1x[4]xi32>
+  %0 = vector.extract_strided_slice %arg0[0:1:1][3:1:1][0:4:1] : vector<1x4x[4]xi32> to vector<1x1x[4]xi32>
   return %0 : vector<1x1x[4]xi32>
 }
 
@@ -1190,7 +1190,7 @@ func.func @extract_strided_slice_scalable(%arg0 : vector<1x4x[4]xi32>) -> vector
 // -----
 
 func.func @insert_strided_slice1(%b: vector<4x4xf32>, %c: vector<4x4x4xf32>) -> vector<4x4x4xf32> {
-  %0 = vector.insert_strided_slice %b, %c {offsets = [2, 0, 0], strides = [1, 1]} : vector<4x4xf32> into vector<4x4x4xf32>
+  %0 = vector.insert_strided_slice %b, %c[2][0:1][0:1] : vector<4x4xf32> into vector<4x4x4xf32>
   return %0 : vector<4x4x4xf32>
 }
 // CHECK-LABEL: @insert_strided_slice1
@@ -1200,7 +1200,7 @@ func.func @insert_strided_slice1(%b: vector<4x4xf32>, %c: vector<4x4x4xf32>) -> 
 // -----
 
 func.func @insert_strided_index_slice1(%b: vector<4x4xindex>, %c: vector<4x4x4xindex>) -> vector<4x4x4xindex> {
-  %0 = vector.insert_strided_slice %b, %c {offsets = [2, 0, 0], strides = [1, 1]} : vector<4x4xindex> into vector<4x4x4xindex>
+  %0 = vector.insert_strided_slice %b, %c[2][0:1][0:1] : vector<4x4xindex> into vector<4x4x4xindex>
   return %0 : vector<4x4x4xindex>
 }
 // CHECK-LABEL: @insert_strided_index_slice1(
@@ -1210,7 +1210,7 @@ func.func @insert_strided_index_slice1(%b: vector<4x4xindex>, %c: vector<4x4x4xi
 // -----
 
 func.func @insert_strided_slice2(%a: vector<2x2xf32>, %b: vector<4x4xf32>) -> vector<4x4xf32> {
-  %0 = vector.insert_strided_slice %a, %b {offsets = [2, 2], strides = [1, 1]} : vector<2x2xf32> into vector<4x4xf32>
+  %0 = vector.insert_strided_slice %a, %b[2:1][2:1] : vector<2x2xf32> into vector<4x4xf32>
   return %0 : vector<4x4xf32>
 }
 
@@ -1235,7 +1235,7 @@ func.func @insert_strided_slice2(%a: vector<2x2xf32>, %b: vector<4x4xf32>) -> ve
 // -----
 
 func.func @insert_strided_slice3(%arg0: vector<2x4xf32>, %arg1: vector<16x4x8xf32>) -> vector<16x4x8xf32> {
-  %0 = vector.insert_strided_slice %arg0, %arg1 {offsets = [0, 0, 2], strides = [1, 1]}:
+  %0 = vector.insert_strided_slice %arg0, %arg1[0][0:1][2:1]:
         vector<2x4xf32> into vector<16x4x8xf32>
   return %0 : vector<16x4x8xf32>
 }
@@ -1255,7 +1255,7 @@ func.func @insert_strided_slice3(%arg0: vector<2x4xf32>, %arg1: vector<16x4x8xf3
 // -----
 
 func.func @insert_strided_slice_scalable(%arg0 : vector<1x1x[4]xi32>, %arg1: vector<1x4x[4]xi32>) -> vector<1x4x[4]xi32> {
-  %0 = vector.insert_strided_slice %arg0, %arg1 {offsets = [0, 3, 0], strides = [1, 1, 1]} : vector<1x1x[4]xi32> into vector<1x4x[4]xi32>
+  %0 = vector.insert_strided_slice %arg0, %arg1[0:1][3:1][0:1] : vector<1x1x[4]xi32> into vector<1x4x[4]xi32>
   return %0 : vector<1x4x[4]xi32>
 }
 // CHECK-LABEL:   func.func @insert_strided_slice_scalable(

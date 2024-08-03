@@ -24,16 +24,16 @@ func.func @conv1d_nwc_4x2x8_memref(%input: memref<4x6x3xf32>, %filter: memref<1x
 //  CHECK-DAG:  %[[V_OUTPUT_R:.+]] = vector.transfer_read %[[OUTPUT]][%[[C0]], %[[C0]], %[[C0]]], %[[F0]]
 
 //      CHECK:   %[[V_INPUT_0:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][0:1:1][0:3:1] : vector<4x4x3xf32> to vector<4x1x3xf32>
 //      CHECK:   %[[V_INPUT_1:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][3:1:1][0:3:1] : vector<4x4x3xf32> to vector<4x1x3xf32>
 
 //      CHECK:    %[[V_FILTER:.+]] = vector.extract %[[V_FILTER_R]][0] : vector<3x8xf32> from vector<1x3x8xf32>
 
 //      CHECK:  %[[V_OUTPUT_0:.+]] = vector.extract_strided_slice %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 1, 8], strides = [1, 1, 1]} : vector<4x2x8xf32> to vector<4x1x8xf32>
+// CHECK-SAME:    [0:4:1][0:1:1][0:8:1] : vector<4x2x8xf32> to vector<4x1x8xf32>
 //      CHECK:  %[[V_OUTPUT_1:.+]] = vector.extract_strided_slice %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 1, 0], sizes = [4, 1, 8], strides = [1, 1, 1]} : vector<4x2x8xf32> to vector<4x1x8xf32>
+// CHECK-SAME:    [0:4:1][1:1:1][0:8:1] : vector<4x2x8xf32> to vector<4x1x8xf32>
 
 /// w == 0, kw == 0
 //      CHECK:   %[[CONTRACT_0:.+]] = vector.contract {
@@ -51,10 +51,10 @@ func.func @conv1d_nwc_4x2x8_memref(%input: memref<4x6x3xf32>, %filter: memref<1x
 
 /// w == 0, kw == 0
 //      CHECK:   %[[RES_0:.+]] = vector.insert_strided_slice %[[CONTRACT_0]], %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x8xf32> into vector<4x2x8xf32>
+// CHECK-SAME:    [0:1][0:1][0:1] : vector<4x1x8xf32> into vector<4x2x8xf32>
 /// w == 1, kw == 0
 //      CHECK:   %[[RES_1:.+]] = vector.insert_strided_slice %[[CONTRACT_1]], %[[RES_0]]
-// CHECK-SAME:     {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x8xf32> into vector<4x2x8xf32>
+// CHECK-SAME:    [0:1][1:1][0:1] : vector<4x1x8xf32> into vector<4x2x8xf32>
 
 // Write the result back in one shot.
 //      CHECK:   vector.transfer_write %[[RES_1]], %[[OUTPUT]][%[[C0]], %[[C0]], %[[C0]]]
@@ -88,16 +88,16 @@ func.func @conv1d_nwc_4x2x8_i8i8i32_memref(%input: memref<4x6x3xi8>, %filter: me
 //  CHECK-DAG:  %[[V_OUTPUT_R:.+]] = vector.transfer_read %[[OUTPUT]][%[[C0]], %[[C0]], %[[C0]]], %[[C0_I32]]
 
 //      CHECK:   %[[V_INPUT_0:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xi8> to vector<4x1x3xi8>
+// CHECK-SAME:    [0:4:1][0:1:1][0:3:1] : vector<4x4x3xi8> to vector<4x1x3xi8>
 //      CHECK:   %[[V_INPUT_1:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xi8> to vector<4x1x3xi8>
+// CHECK-SAME:    [0:4:1][3:1:1][0:3:1] : vector<4x4x3xi8> to vector<4x1x3xi8>
 
 //      CHECK:    %[[V_FILTER:.+]] = vector.extract %[[V_FILTER_R]][0] : vector<3x8xi8> from vector<1x3x8xi8>
 
 //      CHECK:  %[[V_OUTPUT_0:.+]] = vector.extract_strided_slice %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 1, 8], strides = [1, 1, 1]} : vector<4x2x8xi32> to vector<4x1x8xi32>
+// CHECK-SAME:    [0:4:1][0:1:1][0:8:1] : vector<4x2x8xi32> to vector<4x1x8xi32>
 //      CHECK:  %[[V_OUTPUT_1:.+]] = vector.extract_strided_slice %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 1, 0], sizes = [4, 1, 8], strides = [1, 1, 1]} : vector<4x2x8xi32> to vector<4x1x8xi32>
+// CHECK-SAME:    [0:4:1][1:1:1][0:8:1] : vector<4x2x8xi32> to vector<4x1x8xi32>
 
 /// w == 0, kw == 0
 //      CHECK:   %[[EXT_LHS_0:.+]] = arith.extsi %[[V_INPUT_0]] : vector<4x1x3xi8> to vector<4x1x3xi32>
@@ -119,10 +119,10 @@ func.func @conv1d_nwc_4x2x8_i8i8i32_memref(%input: memref<4x6x3xi8>, %filter: me
 
 /// w == 0, kw == 0
 //      CHECK:   %[[RES_0:.+]] = vector.insert_strided_slice %[[CONTRACT_0]], %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x8xi32> into vector<4x2x8xi32>
+// CHECK-SAME:    [0:1][0:1][0:1] : vector<4x1x8xi32> into vector<4x2x8xi32>
 /// w == 1, kw == 0
 //      CHECK:   %[[RES_1:.+]] = vector.insert_strided_slice %[[CONTRACT_1]], %[[RES_0]]
-// CHECK-SAME:     {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x8xi32> into vector<4x2x8xi32>
+// CHECK-SAME:    [0:1][1:1][0:1] : vector<4x1x8xi32> into vector<4x2x8xi32>
 
 // Write the result back in one shot.
 //      CHECK:   vector.transfer_write %[[RES_1]], %[[OUTPUT]][%[[C0]], %[[C0]], %[[C0]]]
@@ -153,21 +153,21 @@ func.func @conv1d_nwc_4x2x8_memref(%input: memref<4x6x3xf32>, %filter: memref<2x
 //  CHECK-DAG:   %[[V_OUTPUT_R:.+]] = vector.transfer_read %[[OUTPUT]][%[[C0]], %[[C0]], %[[C0]]], %[[F0]]
 
 //      CHECK:   %[[V_INPUT_0:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][0:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
 //      CHECK:   %[[V_INPUT_1:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][3:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
 //      CHECK:   %[[V_INPUT_2:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 2, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][2:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
 //      CHECK:   %[[V_INPUT_3:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 5, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][5:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
 
 //      CHECK:  %[[V_FILTER_0:.+]] = vector.extract %[[V_FILTER_R]][0] : vector<3x8xf32> from vector<2x3x8xf32>
 //      CHECK:  %[[V_FILTER_1:.+]] = vector.extract %[[V_FILTER_R]][1] : vector<3x8xf32> from vector<2x3x8xf32>
 
 //      CHECK:  %[[V_OUTPUT_0:.+]] = vector.extract_strided_slice %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 1, 8], strides = [1, 1, 1]} : vector<4x2x8xf32> to vector<4x1x8xf32>
+// CHECK-SAME:    [0:4:1][0:1:1][0:8:1] : vector<4x2x8xf32> to vector<4x1x8xf32>
 //      CHECK:  %[[V_OUTPUT_1:.+]] = vector.extract_strided_slice %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 1, 0], sizes = [4, 1, 8], strides = [1, 1, 1]} : vector<4x2x8xf32> to vector<4x1x8xf32>
+// CHECK-SAME:    [0:4:1][1:1:1][0:8:1] : vector<4x2x8xf32> to vector<4x1x8xf32>
 
 /// w == 0, kw == 0
 //      CHECK:   %[[CONTRACT_0:.+]] = vector.contract {
@@ -196,10 +196,10 @@ func.func @conv1d_nwc_4x2x8_memref(%input: memref<4x6x3xf32>, %filter: memref<2x
 
 /// w == 0, kw == 0
 //      CHECK:   %[[RES_0:.+]] = vector.insert_strided_slice %[[CONTRACT_2]], %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x8xf32> into vector<4x2x8xf32>
+// CHECK-SAME:    [0:1][0:1][0:1] : vector<4x1x8xf32> into vector<4x2x8xf32>
 /// w == 1, kw == 0
 //      CHECK:   %[[RES_1:.+]] = vector.insert_strided_slice %[[CONTRACT_3]], %[[RES_0]]
-// CHECK-SAME:     {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x8xf32> into vector<4x2x8xf32>
+// CHECK-SAME:    [0:1][1:1][0:1] : vector<4x1x8xf32> into vector<4x2x8xf32>
 
 // Write the result back in one shot.
 //      CHECK:   vector.transfer_write %[[RES_1]], %[[OUTPUT]][%[[C0]], %[[C0]], %[[C0]]]
@@ -230,9 +230,9 @@ func.func @conv1d_nwc_4x2x8_memref(%input: memref<4x6x3xf32>, %filter: memref<2x
 //  CHECK-DAG:  %[[V_OUTPUT_R:.+]] = vector.transfer_read %[[OUTPUT]][%[[C0]], %[[C0]], %[[C0]]], %[[F0]]
 
 //      CHECK:   %[[V_INPUT_0:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 2, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x2x3xf32>
+// CHECK-SAME:    [0:4:1][0:2:1][0:3:1] : vector<4x4x3xf32> to vector<4x2x3xf32>
 //      CHECK:   %[[V_INPUT_1:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 2, 0], sizes = [4, 2, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x2x3xf32>
+// CHECK-SAME:    [0:4:1][2:2:1][0:3:1] : vector<4x4x3xf32> to vector<4x2x3xf32>
 
 //      CHECK:  %[[V_FILTER_0:.+]] = vector.extract %[[V_FILTER_R]][0] : vector<3x8xf32> from vector<2x3x8xf32>
 //      CHECK:  %[[V_FILTER_1:.+]] = vector.extract %[[V_FILTER_R]][1] : vector<3x8xf32> from vector<2x3x8xf32>
@@ -284,16 +284,16 @@ func.func @conv1d_ncw_4x8x2_memref(%input: memref<4x3x6xf32>, %filter: memref<8x
 //  CHECK-DAG:  %[[V_OUTPUT_R:.+]] = vector.transpose %[[V_NWC_OUTPUT_R]], [0, 2, 1]
 
 //      CHECK:   %[[V_INPUT_0:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][0:1:1][0:3:1] : vector<4x4x3xf32> to vector<4x1x3xf32>
 //      CHECK:   %[[V_INPUT_1:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][3:1:1][0:3:1] : vector<4x4x3xf32> to vector<4x1x3xf32>
 
 //      CHECK:    %[[V_FILTER:.+]] = vector.extract %[[V_FILTER_R]][0] : vector<3x8xf32> from vector<1x3x8xf32>
 
 //      CHECK:  %[[V_OUTPUT_0:.+]] = vector.extract_strided_slice %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 1, 8], strides = [1, 1, 1]} : vector<4x2x8xf32> to vector<4x1x8xf32>
+// CHECK-SAME:    [0:4:1][0:1:1][0:8:1] : vector<4x2x8xf32> to vector<4x1x8xf32>
 //      CHECK:  %[[V_OUTPUT_1:.+]] = vector.extract_strided_slice %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 1, 0], sizes = [4, 1, 8], strides = [1, 1, 1]} : vector<4x2x8xf32> to vector<4x1x8xf32>
+// CHECK-SAME:    [0:4:1][1:1:1][0:8:1] : vector<4x2x8xf32> to vector<4x1x8xf32>
 
 /// w == 0, kw == 0
 //      CHECK:   %[[CONTRACT_0:.+]] = vector.contract {
@@ -311,10 +311,10 @@ func.func @conv1d_ncw_4x8x2_memref(%input: memref<4x3x6xf32>, %filter: memref<8x
 
 /// w == 0, kw == 0
 //      CHECK:   %[[RES_0:.+]] = vector.insert_strided_slice %[[CONTRACT_0]], %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x8xf32> into vector<4x2x8xf32>
+// CHECK-SAME:    [0:1][0:1][0:1] : vector<4x1x8xf32> into vector<4x2x8xf32>
 /// w == 1, kw == 0
 //      CHECK:   %[[RES_1:.+]] = vector.insert_strided_slice %[[CONTRACT_1]], %[[RES_0]]
-// CHECK-SAME:     {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x8xf32> into vector<4x2x8xf32>
+// CHECK-SAME:    [0:1][1:1][0:1] : vector<4x1x8xf32> into vector<4x2x8xf32>
 
 /// Transpose result to ncw format.
 //  CHECK:  %[[RES_2:.+]] = vector.transpose %[[RES_1]], [0, 2, 1]
@@ -353,21 +353,21 @@ func.func @conv1d_ncw_4x8x2_memref(%input: memref<4x3x6xf32>, %filter: memref<8x
 //  CHECK-DAG:  %[[V_OUTPUT_R:.+]] = vector.transpose %[[V_NWC_OUTPUT_R]], [0, 2, 1]
 
 //      CHECK:   %[[V_INPUT_0:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][0:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
 //      CHECK:   %[[V_INPUT_1:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][3:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
 //      CHECK:   %[[V_INPUT_2:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 2, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][2:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
 //      CHECK:   %[[V_INPUT_3:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 5, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK-SAME:    [0:4:1][5:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
 
 //      CHECK:  %[[V_FILTER_0:.+]] = vector.extract %[[V_FILTER_R]][0] : vector<3x8xf32> from vector<2x3x8xf32>
 //      CHECK:  %[[V_FILTER_1:.+]] = vector.extract %[[V_FILTER_R]][1] : vector<3x8xf32> from vector<2x3x8xf32>
 
 //      CHECK:  %[[V_OUTPUT_0:.+]] = vector.extract_strided_slice %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 1, 8], strides = [1, 1, 1]} : vector<4x2x8xf32> to vector<4x1x8xf32>
+// CHECK-SAME:    [0:4:1][0:1:1][0:8:1] : vector<4x2x8xf32> to vector<4x1x8xf32>
 //      CHECK:  %[[V_OUTPUT_1:.+]] = vector.extract_strided_slice %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 1, 0], sizes = [4, 1, 8], strides = [1, 1, 1]} : vector<4x2x8xf32> to vector<4x1x8xf32>
+// CHECK-SAME:    [0:4:1][1:1:1][0:8:1] : vector<4x2x8xf32> to vector<4x1x8xf32>
 
 /// w == 0, kw == 0
 //      CHECK:   %[[CONTRACT_0:.+]] = vector.contract {
@@ -396,10 +396,10 @@ func.func @conv1d_ncw_4x8x2_memref(%input: memref<4x3x6xf32>, %filter: memref<8x
 
 /// w == 0, kw == 0
 //      CHECK:   %[[RES_0:.+]] = vector.insert_strided_slice %[[CONTRACT_2]], %[[V_OUTPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x8xf32> into vector<4x2x8xf32>
+// CHECK-SAME:    [0:1][0:1][0:1] : vector<4x1x8xf32> into vector<4x2x8xf32>
 /// w == 1, kw == 0
 //      CHECK:   %[[RES_1:.+]] = vector.insert_strided_slice %[[CONTRACT_3]], %[[RES_0]]
-// CHECK-SAME:     {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x8xf32> into vector<4x2x8xf32>
+// CHECK-SAME:    [0:1][1:1][0:1] : vector<4x1x8xf32> into vector<4x2x8xf32>
 
 /// Transpose result to ncw format.
 //  CHECK:  %[[RES_2:.+]] = vector.transpose %[[RES_1]], [0, 2, 1]
@@ -438,9 +438,9 @@ func.func @conv1d_ncw_4x8x2_memref(%input: memref<4x3x6xf32>, %filter: memref<8x
 //  CHECK-DAG:  %[[V_OUTPUT_R:.+]] = vector.transpose %[[V_NWC_OUTPUT_R]], [0, 2, 1]
 
 //      CHECK:   %[[V_INPUT_0:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [4, 2, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x2x3xf32>
+// CHECK-SAME:    [0:4:1][0:2:1][0:3:1] : vector<4x4x3xf32> to vector<4x2x3xf32>
 //      CHECK:   %[[V_INPUT_1:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 2, 0], sizes = [4, 2, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x2x3xf32>
+// CHECK-SAME:    [0:4:1][2:2:1][0:3:1] : vector<4x4x3xf32> to vector<4x2x3xf32>
 
 //      CHECK:  %[[V_FILTER_0:.+]] = vector.extract %[[V_FILTER_R]][0] : vector<3x8xf32> from vector<2x3x8xf32>
 //      CHECK:  %[[V_FILTER_1:.+]] = vector.extract %[[V_FILTER_R]][1] : vector<3x8xf32> from vector<2x3x8xf32>
@@ -485,13 +485,13 @@ func.func @conv1d_8_tensor(%input: tensor<11xf32>, %filter: tensor<4xf32>, %outp
 //  CHECK-DAG:  %[[V_OUTPUT_R:.+]] = vector.transfer_read %[[OUTPUT]][%[[C0]]], %[[F0]]
 
 //      CHECK:   %[[V_INPUT_0:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0], sizes = [8], strides = [1]} : vector<11xf32> to vector<8xf32>
+// CHECK-SAME:    [0:8:1] : vector<11xf32> to vector<8xf32>
 //      CHECK:   %[[V_INPUT_1:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [1], sizes = [8], strides = [1]} : vector<11xf32> to vector<8xf32>
+// CHECK-SAME:    [1:8:1] : vector<11xf32> to vector<8xf32>
 //      CHECK:   %[[V_INPUT_2:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [2], sizes = [8], strides = [1]} : vector<11xf32> to vector<8xf32>
+// CHECK-SAME:    [2:8:1] : vector<11xf32> to vector<8xf32>
 //      CHECK:   %[[V_INPUT_3:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [3], sizes = [8], strides = [1]} : vector<11xf32> to vector<8xf32>
+// CHECK-SAME:    [3:8:1] : vector<11xf32> to vector<8xf32>
 
 //      CHECK:  %[[V_FILTER_0:.+]] = vector.extract %[[V_FILTER_R]][0] : f32 from vector<4xf32>
 //      CHECK:  %[[V_FILTER_1:.+]] = vector.extract %[[V_FILTER_R]][1] : f32 from vector<4xf32>
@@ -540,9 +540,9 @@ func.func @depthwise_conv1d_nwc_wc_3x5x4xf32_memref(%input: memref<3x5x4xf32>, %
 //      CHECK:  %[[V_OUTPUT_R:.+]] = vector.transfer_read %[[OUTPUT]][%[[C0]], %[[C0]], %[[C0]]]
 
 //      CHECK:   %[[V_INPUT_0:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [3, 2, 4], strides = [1, 1, 1]} : vector<3x4x4xf32> to vector<3x2x4xf32>
+// CHECK-SAME:    [0:3:1][0:2:1][0:4:1] : vector<3x4x4xf32> to vector<3x2x4xf32>
 //      CHECK:   %[[V_INPUT_1:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 2, 0], sizes = [3, 2, 4], strides = [1, 1, 1]} : vector<3x4x4xf32> to vector<3x2x4xf32>
+// CHECK-SAME:    [0:3:1][2:2:1][0:4:1] : vector<3x4x4xf32> to vector<3x2x4xf32>
 
 //      CHECK:  %[[V_FILTER_0:.+]] = vector.extract %[[V_FILTER_R]][0] : vector<4xf32> from vector<2x4xf32>
 //      CHECK:  %[[V_FILTER_1:.+]] = vector.extract %[[V_FILTER_R]][1] : vector<4xf32> from vector<2x4xf32>
@@ -580,9 +580,9 @@ func.func @depthwise_conv1d_nwc_wc_3x5x4xi8_memref(%input: memref<3x5x4xi8>, %fi
 //      CHECK:  %[[V_OUTPUT_R:.+]] = vector.transfer_read %[[OUTPUT]][%[[C0]], %[[C0]], %[[C0]]]
 
 //      CHECK:   %[[V_INPUT_0:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 0, 0], sizes = [3, 2, 4], strides = [1, 1, 1]} : vector<3x4x4xi8> to vector<3x2x4xi8>
+// CHECK-SAME:    [0:3:1][0:2:1][0:4:1] : vector<3x4x4xi8> to vector<3x2x4xi8>
 //      CHECK:   %[[V_INPUT_1:.+]] = vector.extract_strided_slice %[[V_INPUT_R]]
-// CHECK-SAME:     {offsets = [0, 2, 0], sizes = [3, 2, 4], strides = [1, 1, 1]} : vector<3x4x4xi8> to vector<3x2x4xi8>
+// CHECK-SAME:    [0:3:1][2:2:1][0:4:1] : vector<3x4x4xi8> to vector<3x2x4xi8>
 
 //      CHECK:  %[[V_FILTER_0:.+]] = vector.extract %[[V_FILTER_R]][0] : vector<4xi8> from vector<2x4xi8>
 //      CHECK:  %[[V_FILTER_1:.+]] = vector.extract %[[V_FILTER_R]][1] : vector<4xi8> from vector<2x4xi8>
@@ -670,14 +670,14 @@ func.func @pooling_nwc_sum_memref_1_2_1_3(%input: memref<4x4x3xf32>, %filter: me
 // CHECK-DAG: %[[Vcst:.+]] = arith.constant 0.000000e+00 : f32
 // CHECK: %[[V0:.+]] = vector.transfer_read %[[INPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x4x3xf32>, vector<4x4x3xf32>
 // CHECK: %[[V1:.+]] = vector.transfer_read %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x2x3xf32>, vector<4x2x3xf32>
-// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V1]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V1]] {offsets = [0, 1, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][0:1:1][0:3:1] : vector<4x4x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][3:1:1][0:3:1] : vector<4x4x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V1]][0:4:1][0:1:1][0:3:1] : vector<4x2x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V1]][0:4:1][1:1:1][0:3:1] : vector<4x2x3xf32> to vector<4x1x3xf32>
 // CHECK: %[[V6:.+]] = arith.addf %[[V2]], %[[V4]] : vector<4x1x3xf32>
 // CHECK: %[[V7:.+]] = arith.addf %[[V3]], %[[V5]] : vector<4x1x3xf32>
-// CHECK: %[[V8:.+]] = vector.insert_strided_slice %[[V6]], %[[V1]] {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x3xf32> into vector<4x2x3xf32>
-// CHECK: %[[V9:.+]] = vector.insert_strided_slice %[[V7]], %[[V8]] {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x3xf32> into vector<4x2x3xf32>
+// CHECK: %[[V8:.+]] = vector.insert_strided_slice %[[V6]], %[[V1]][0:1][0:1][0:1] : vector<4x1x3xf32> into vector<4x2x3xf32>
+// CHECK: %[[V9:.+]] = vector.insert_strided_slice %[[V7]], %[[V8]][0:1][1:1][0:1] : vector<4x1x3xf32> into vector<4x2x3xf32>
 // CHECK: vector.transfer_write %[[V9]], %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]] {in_bounds = [true, true, true]} : vector<4x2x3xf32>, memref<4x2x3xf32>
 
 // -----
@@ -696,14 +696,14 @@ func.func @pooling_nwc_max_memref_1_2_1_3(%input: memref<4x4x3xf32>, %filter: me
 // CHECK-DAG: %[[Vcst:.+]] = arith.constant 0.000000e+00 : f32
 // CHECK: %[[V0:.+]] = vector.transfer_read %[[INPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x4x3xf32>, vector<4x4x3xf32>
 // CHECK: %[[V1:.+]] = vector.transfer_read %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x2x3xf32>, vector<4x2x3xf32>
-// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V1]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V1]] {offsets = [0, 1, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][0:1:1][0:3:1] : vector<4x4x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][3:1:1][0:3:1] : vector<4x4x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V1]][0:4:1][0:1:1][0:3:1] : vector<4x2x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V1]][0:4:1][1:1:1][0:3:1] : vector<4x2x3xf32> to vector<4x1x3xf32>
 // CHECK: %[[V6:.+]] = arith.maximumf %[[V2]], %[[V4]] : vector<4x1x3xf32>
 // CHECK: %[[V7:.+]] = arith.maximumf %[[V3]], %[[V5]] : vector<4x1x3xf32>
-// CHECK: %[[V8:.+]] = vector.insert_strided_slice %[[V6]], %[[V1]] {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x3xf32> into vector<4x2x3xf32>
-// CHECK: %[[V9:.+]] = vector.insert_strided_slice %[[V7]], %[[V8]] {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x3xf32> into vector<4x2x3xf32>
+// CHECK: %[[V8:.+]] = vector.insert_strided_slice %[[V6]], %[[V1]][0:1][0:1][0:1] : vector<4x1x3xf32> into vector<4x2x3xf32>
+// CHECK: %[[V9:.+]] = vector.insert_strided_slice %[[V7]], %[[V8]][0:1][1:1][0:1] : vector<4x1x3xf32> into vector<4x2x3xf32>
 // CHECK: vector.transfer_write %[[V9]], %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]] {in_bounds = [true, true, true]} : vector<4x2x3xf32>, memref<4x2x3xf32>
 
 // -----
@@ -725,16 +725,16 @@ func.func @pooling_nwc_sum_i8i8i32_memref_1_2_1_3(%input: memref<4x4x3xi8>, %fil
 // CHECK-DAG: %[[Vc0_i32:.+]] = arith.constant 0 : i32
 // CHECK: %[[V0:.+]] = vector.transfer_read %[[INPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vc0_i8]] {in_bounds = [true, true, true]} : memref<4x4x3xi8>, vector<4x4x3xi8>
 // CHECK: %[[V1:.+]] = vector.transfer_read %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vc0_i32]] {in_bounds = [true, true, true]} : memref<4x2x3xi32>, vector<4x2x3xi32>
-// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xi8> to vector<4x1x3xi8>
-// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xi8> to vector<4x1x3xi8>
-// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V1]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xi32> to vector<4x1x3xi32>
-// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V1]] {offsets = [0, 1, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xi32> to vector<4x1x3xi32>
+// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][0:1:1][0:3:1] : vector<4x4x3xi8> to vector<4x1x3xi8>
+// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][3:1:1][0:3:1] : vector<4x4x3xi8> to vector<4x1x3xi8>
+// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V1]][0:4:1][0:1:1][0:3:1] : vector<4x2x3xi32> to vector<4x1x3xi32>
+// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V1]][0:4:1][1:1:1][0:3:1] : vector<4x2x3xi32> to vector<4x1x3xi32>
 // CHECK: %[[V6:.+]] = arith.extsi %[[V2]] : vector<4x1x3xi8> to vector<4x1x3xi32>
 // CHECK: %[[V7:.+]] = arith.addi %[[V6]], %[[V4]] : vector<4x1x3xi32>
 // CHECK: %[[V8:.+]] = arith.extsi %[[V3]] : vector<4x1x3xi8> to vector<4x1x3xi32>
 // CHECK: %[[V9:.+]] = arith.addi %[[V8]], %[[V5]] : vector<4x1x3xi32>
-// CHECK: %[[V10:.+]] = vector.insert_strided_slice %[[V7]], %[[V1]] {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x3xi32> into vector<4x2x3xi32>
-// CHECK: %[[V11:.+]] = vector.insert_strided_slice %[[V9]], %[[V10]] {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x3xi32> into vector<4x2x3xi32>
+// CHECK: %[[V10:.+]] = vector.insert_strided_slice %[[V7]], %[[V1]][0:1][0:1][0:1] : vector<4x1x3xi32> into vector<4x2x3xi32>
+// CHECK: %[[V11:.+]] = vector.insert_strided_slice %[[V9]], %[[V10]][0:1][1:1][0:1] : vector<4x1x3xi32> into vector<4x2x3xi32>
 // CHECK: vector.transfer_write %[[V11]], %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]] {in_bounds = [true, true, true]} : vector<4x2x3xi32>, memref<4x2x3xi32>
 // CHECK: return
 
@@ -757,16 +757,16 @@ func.func @pooling_nwc_max_i8i8i32_memref_1_2_1_3(%input: memref<4x4x3xi8>, %fil
 // CHECK-DAG: %[[Vc0_i32:.+]] = arith.constant 0 : i32
 // CHECK: %[[V0:.+]] = vector.transfer_read %[[INPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vc0_i8]] {in_bounds = [true, true, true]} : memref<4x4x3xi8>, vector<4x4x3xi8>
 // CHECK: %[[V1:.+]] = vector.transfer_read %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vc0_i32]] {in_bounds = [true, true, true]} : memref<4x2x3xi32>, vector<4x2x3xi32>
-// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xi8> to vector<4x1x3xi8>
-// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xi8> to vector<4x1x3xi8>
-// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V1]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xi32> to vector<4x1x3xi32>
-// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V1]] {offsets = [0, 1, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xi32> to vector<4x1x3xi32>
+// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][0:1:1][0:3:1] : vector<4x4x3xi8> to vector<4x1x3xi8>
+// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][3:1:1][0:3:1] : vector<4x4x3xi8> to vector<4x1x3xi8>
+// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V1]][0:4:1][0:1:1][0:3:1] : vector<4x2x3xi32> to vector<4x1x3xi32>
+// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V1]][0:4:1][1:1:1][0:3:1] : vector<4x2x3xi32> to vector<4x1x3xi32>
 // CHECK: %[[V6:.+]] = arith.extsi %[[V2]] : vector<4x1x3xi8> to vector<4x1x3xi32>
 // CHECK: %[[V7:.+]] = arith.maxsi %[[V6]], %[[V4]] : vector<4x1x3xi32>
 // CHECK: %[[V8:.+]] = arith.extsi %[[V3]] : vector<4x1x3xi8> to vector<4x1x3xi32>
 // CHECK: %[[V9:.+]] = arith.maxsi %[[V8]], %[[V5]] : vector<4x1x3xi32>
-// CHECK: %[[V10:.+]] = vector.insert_strided_slice %[[V7]], %[[V1]] {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x3xi32> into vector<4x2x3xi32>
-// CHECK: %[[V11:.+]] = vector.insert_strided_slice %[[V9]], %[[V10]] {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x3xi32> into vector<4x2x3xi32>
+// CHECK: %[[V10:.+]] = vector.insert_strided_slice %[[V7]], %[[V1]][0:1][0:1][0:1] : vector<4x1x3xi32> into vector<4x2x3xi32>
+// CHECK: %[[V11:.+]] = vector.insert_strided_slice %[[V9]], %[[V10]][0:1][1:1][0:1] : vector<4x1x3xi32> into vector<4x2x3xi32>
 // CHECK: vector.transfer_write %[[V11]], %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]] {in_bounds = [true, true, true]} : vector<4x2x3xi32>, memref<4x2x3xi32>
 // CHECK: return
 
@@ -786,18 +786,18 @@ func.func @pooling_nwc_sum_memref_2_2_2_3(%input: memref<4x6x3xf32>, %filter: me
 // CHECK-DAG: %[[Vcst:.+]] = arith.constant 0.000000e+00 : f32
 // CHECK: %[[V0:.+]] = vector.transfer_read %[[INPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x6x3xf32>, vector<4x6x3xf32>
 // CHECK: %[[V1:.+]] = vector.transfer_read %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x2x3xf32>, vector<4x2x3xf32>
-// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 2, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 5, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V6:.+]] = vector.extract_strided_slice %[[V1]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V7:.+]] = vector.extract_strided_slice %[[V1]] {offsets = [0, 1, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][0:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][3:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][2:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][5:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V6:.+]] = vector.extract_strided_slice %[[V1]][0:4:1][0:1:1][0:3:1] : vector<4x2x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V7:.+]] = vector.extract_strided_slice %[[V1]][0:4:1][1:1:1][0:3:1] : vector<4x2x3xf32> to vector<4x1x3xf32>
 // CHECK: %[[V8:.+]] = arith.addf %[[V2]], %[[V6]] : vector<4x1x3xf32>
 // CHECK: %[[V9:.+]] = arith.addf %[[V3]], %[[V7]] : vector<4x1x3xf32>
 // CHECK: %[[V10:.+]] = arith.addf %[[V4]], %[[V8]] : vector<4x1x3xf32>
 // CHECK: %[[V11:.+]] = arith.addf %[[V5]], %[[V9]] : vector<4x1x3xf32>
-// CHECK: %[[V12:.+]] = vector.insert_strided_slice %[[V10]], %[[V1]] {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x3xf32> into vector<4x2x3xf32>
-// CHECK: %[[V13:.+]] = vector.insert_strided_slice %[[V11]], %[[V12]] {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x3xf32> into vector<4x2x3xf32>
+// CHECK: %[[V12:.+]] = vector.insert_strided_slice %[[V10]], %[[V1]][0:1][0:1][0:1] : vector<4x1x3xf32> into vector<4x2x3xf32>
+// CHECK: %[[V13:.+]] = vector.insert_strided_slice %[[V11]], %[[V12]][0:1][1:1][0:1] : vector<4x1x3xf32> into vector<4x2x3xf32>
 // CHECK: vector.transfer_write %[[V13:.+]], %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]] {in_bounds = [true, true, true]} : vector<4x2x3xf32>, memref<4x2x3xf32>
 
 
@@ -819,14 +819,14 @@ func.func @pooling_ncw_sum_memref_1_2_1_3(%input: memref<4x3x4xf32>, %filter: me
 // CHECK: %[[V1:.+]] = vector.transfer_read %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x3x2xf32>, vector<4x3x2xf32>
 // CHECK: %[[V2:.+]] = vector.transpose %[[V0]], [0, 2, 1] : vector<4x3x4xf32> to vector<4x4x3xf32>
 // CHECK: %[[V3:.+]] = vector.transpose %[[V1]], [0, 2, 1] : vector<4x3x2xf32> to vector<4x2x3xf32>
-// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V2]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V2]] {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V6:.+]] = vector.extract_strided_slice %[[V3]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V7:.+]] = vector.extract_strided_slice %[[V3]] {offsets = [0, 1, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V2]][0:4:1][0:1:1][0:3:1] : vector<4x4x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V2]][0:4:1][3:1:1][0:3:1] : vector<4x4x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V6:.+]] = vector.extract_strided_slice %[[V3]][0:4:1][0:1:1][0:3:1] : vector<4x2x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V7:.+]] = vector.extract_strided_slice %[[V3]][0:4:1][1:1:1][0:3:1] : vector<4x2x3xf32> to vector<4x1x3xf32>
 // CHECK: %[[V8:.+]] = arith.addf %[[V4]], %[[V6]] : vector<4x1x3xf32>
 // CHECK: %[[V9:.+]] = arith.addf %[[V5]], %[[V7]] : vector<4x1x3xf32>
-// CHECK: %[[V10:.+]] = vector.insert_strided_slice %[[V8]], %[[V3]] {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x3xf32> into vector<4x2x3xf32>
-// CHECK: %[[V11:.+]] = vector.insert_strided_slice %[[V9]], %[[V10]] {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x3xf32> into vector<4x2x3xf32>
+// CHECK: %[[V10:.+]] = vector.insert_strided_slice %[[V8]], %[[V3]][0:1][0:1][0:1] : vector<4x1x3xf32> into vector<4x2x3xf32>
+// CHECK: %[[V11:.+]] = vector.insert_strided_slice %[[V9]], %[[V10]][0:1][1:1][0:1] : vector<4x1x3xf32> into vector<4x2x3xf32>
 // CHECK: %[[V12:.+]] = vector.transpose %[[V11]], [0, 2, 1] : vector<4x2x3xf32> to vector<4x3x2xf32>
 // CHECK: vector.transfer_write %[[V12:.+]], %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]] {in_bounds = [true, true, true]} : vector<4x3x2xf32>, memref<4x3x2xf32>
 
@@ -868,8 +868,8 @@ func.func @pooling_nwc_sum_memref_2_2_2_1(%input: memref<4x4x3xf32>, %filter: me
 // CHECK-DAG: %[[Vcst:.+]] = arith.constant 0.000000e+00 : f32
 // CHECK: %[[V0:.+]] = vector.transfer_read %[[INPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x4x3xf32>, vector<4x4x3xf32>
 // CHECK: %[[V1:.+]] = vector.transfer_read %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x2x3xf32>, vector<4x2x3xf32>
-// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 0, 0], sizes = [4, 2, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x2x3xf32>
-// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]] {offsets = [0, 2, 0], sizes = [4, 2, 3], strides = [1, 1, 1]} : vector<4x4x3xf32> to vector<4x2x3xf32>
+// CHECK: %[[V2:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][0:2:1][0:3:1] : vector<4x4x3xf32> to vector<4x2x3xf32>
+// CHECK: %[[V3:.+]] = vector.extract_strided_slice %[[V0]][0:4:1][2:2:1][0:3:1] : vector<4x4x3xf32> to vector<4x2x3xf32>
 // CHECK: %[[V4:.+]] = arith.addf %[[V2]], %[[V1]] : vector<4x2x3xf32>
 // CHECK: %[[V5:.+]] = arith.addf %[[V3]], %[[V4]] : vector<4x2x3xf32>
 // CHECK: vector.transfer_write %[[V5:.+]], %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]] {in_bounds = [true, true, true]} : vector<4x2x3xf32>, memref<4x2x3xf32>
@@ -893,18 +893,18 @@ func.func @pooling_ncw_sum_memref_2_2_2_3(%input: memref<4x3x6xf32>, %filter: me
 // CHECK: %[[V1:.+]] = vector.transfer_read %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x3x2xf32>, vector<4x3x2xf32>
 // CHECK: %[[V2:.+]] = vector.transpose %[[V0]], [0, 2, 1] : vector<4x3x6xf32> to vector<4x6x3xf32>
 // CHECK: %[[V3:.+]] = vector.transpose %[[V1]], [0, 2, 1] : vector<4x3x2xf32> to vector<4x2x3xf32>
-// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V2]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V2]] {offsets = [0, 3, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V6:.+]] = vector.extract_strided_slice %[[V2]] {offsets = [0, 2, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V7:.+]] = vector.extract_strided_slice %[[V2]] {offsets = [0, 5, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x6x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V8:.+]] = vector.extract_strided_slice %[[V3]] {offsets = [0, 0, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xf32> to vector<4x1x3xf32>
-// CHECK: %[[V9:.+]] = vector.extract_strided_slice %[[V3]] {offsets = [0, 1, 0], sizes = [4, 1, 3], strides = [1, 1, 1]} : vector<4x2x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V2]][0:4:1][0:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V2]][0:4:1][3:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V6:.+]] = vector.extract_strided_slice %[[V2]][0:4:1][2:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V7:.+]] = vector.extract_strided_slice %[[V2]][0:4:1][5:1:1][0:3:1] : vector<4x6x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V8:.+]] = vector.extract_strided_slice %[[V3]][0:4:1][0:1:1][0:3:1] : vector<4x2x3xf32> to vector<4x1x3xf32>
+// CHECK: %[[V9:.+]] = vector.extract_strided_slice %[[V3]][0:4:1][1:1:1][0:3:1] : vector<4x2x3xf32> to vector<4x1x3xf32>
 // CHECK: %[[V10:.+]] = arith.addf %[[V4]], %[[V8]] : vector<4x1x3xf32>
 // CHECK: %[[V11:.+]] = arith.addf %[[V5]], %[[V9]] : vector<4x1x3xf32>
 // CHECK: %[[V12:.+]] = arith.addf %[[V6]], %[[V10]] : vector<4x1x3xf32>
 // CHECK: %[[V13:.+]] = arith.addf %[[V7]], %[[V11]] : vector<4x1x3xf32>
-// CHECK: %[[V14:.+]] = vector.insert_strided_slice %[[V12]], %[[V3]] {offsets = [0, 0, 0], strides = [1, 1, 1]} : vector<4x1x3xf32> into vector<4x2x3xf32>
-// CHECK: %[[V15:.+]] = vector.insert_strided_slice %[[V13]], %[[V14]] {offsets = [0, 1, 0], strides = [1, 1, 1]} : vector<4x1x3xf32> into vector<4x2x3xf32>
+// CHECK: %[[V14:.+]] = vector.insert_strided_slice %[[V12]], %[[V3]][0:1][0:1][0:1] : vector<4x1x3xf32> into vector<4x2x3xf32>
+// CHECK: %[[V15:.+]] = vector.insert_strided_slice %[[V13]], %[[V14]][0:1][1:1][0:1] : vector<4x1x3xf32> into vector<4x2x3xf32>
 // CHECK: %[[V16:.+]] = vector.transpose %[[V15]], [0, 2, 1] : vector<4x2x3xf32> to vector<4x3x2xf32>
 // CHECK: vector.transfer_write %[[V16:.+]], %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]] {in_bounds = [true, true, true]} : vector<4x3x2xf32>, memref<4x3x2xf32>
 
@@ -926,8 +926,8 @@ func.func @pooling_ncw_sum_memref_2_3_2_1(%input: memref<4x2x5xf32>, %filter: me
 // CHECK: %[[V1:.+]] = vector.transfer_read %[[OUTPUT]][%[[Vc0]], %[[Vc0]], %[[Vc0]]], %[[Vcst]] {in_bounds = [true, true, true]} : memref<4x2x3xf32>, vector<4x2x3xf32>
 // CHECK: %[[V2:.+]] = vector.transpose %[[V0]], [0, 2, 1] : vector<4x2x5xf32> to vector<4x5x2xf32>
 // CHECK: %[[V3:.+]] = vector.transpose %[[V1]], [0, 2, 1] : vector<4x2x3xf32> to vector<4x3x2xf32>
-// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V2]] {offsets = [0, 0, 0], sizes = [4, 3, 2], strides = [1, 1, 1]} : vector<4x5x2xf32> to vector<4x3x2xf32>
-// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V2]] {offsets = [0, 2, 0], sizes = [4, 3, 2], strides = [1, 1, 1]} : vector<4x5x2xf32> to vector<4x3x2xf32>
+// CHECK: %[[V4:.+]] = vector.extract_strided_slice %[[V2]][0:4:1][0:3:1][0:2:1] : vector<4x5x2xf32> to vector<4x3x2xf32>
+// CHECK: %[[V5:.+]] = vector.extract_strided_slice %[[V2]][0:4:1][2:3:1][0:2:1] : vector<4x5x2xf32> to vector<4x3x2xf32>
 // CHECK: %[[V6:.+]] = arith.addf %[[V4]], %[[V3]] : vector<4x3x2xf32>
 // CHECK: %[[V7:.+]] = arith.addf %[[V5]], %[[V6]] : vector<4x3x2xf32>
 // CHECK: %[[V8:.+]] = vector.transpose %[[V7]], [0, 2, 1] : vector<4x3x2xf32> to vector<4x2x3xf32>
