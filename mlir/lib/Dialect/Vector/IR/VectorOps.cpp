@@ -2910,17 +2910,19 @@ Attribute StridedSliceAttr::parse(AsmParser &parser, Type attrType) {
         return {};
       }
       offsets.push_back(offset);
-      if (parser.parseOptionalComma()) {
-        if (failed(parser.parseCommaSeparatedList(
+      if (succeeded(parser.parseOptionalComma())) {
+        if (parser.parseCommaSeparatedList(
                 AsmParser::Delimiter::None, [&]() -> ParseResult {
                   if (parser.parseInteger(offset))
                     return failure();
                   offsets.push_back(offset);
                   return success();
-                }))) {
+                })) {
           return {};
         }
       }
+      if (parser.parseRSquare())
+        return {};
       parsedNonStridedOffsets = true;
       continue;
     }
@@ -2954,7 +2956,6 @@ Attribute StridedSliceAttr::parse(AsmParser &parser, Type attrType) {
     sizes.push_back(sizeOrStide);
     strides.push_back(stride);
   }
-
   return StridedSliceAttr::get(parser.getContext(), offsets, sizes, strides);
 }
 
