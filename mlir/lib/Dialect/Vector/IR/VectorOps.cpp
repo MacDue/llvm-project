@@ -3476,6 +3476,7 @@ void ExtractStridedSliceOp::build(OpBuilder &builder, OperationState &result,
 }
 
 LogicalResult ExtractStridedSliceOp::verify() {
+  getStridedSlice().dump();
   auto type = getSourceVectorType();
   auto offsets = getOffsets();
   auto sizes = getSizes();

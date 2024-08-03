@@ -89,6 +89,49 @@ def Vector_PrintPunctuation : EnumAttr<Vector_Dialect, PrintPunctuation, "punctu
 
 def Vector_StridedSliceAttr : Vector_Attr<"StridedSlice", "strided_slice">
 {
+  let summary = "strided vector slice";
+
+  let description = [{
+    An attribute that represents a strided slice of a vector.
+
+    *Syntax:*
+
+    ```
+    offset = integer-literal
+    stride = integer-literal
+    size = integer-literal
+    offset-list = offset (`,` offset)*
+
+    // Without sizes (used for insert_strided_slice)
+    strided-slice-without-sizes = offset-list? (`[` offset `:` stride `]`)+
+
+    // With sizes (used for extract_strided_slice)
+    strided-with-sizes = (`[` offset `:` size `:` stride `]`)+
+    ```
+
+    *Examples:*
+
+    Without sizes:
+
+    `[0:1][4:2]`
+
+    - The first dimension starts at offset 0 and is strided by 1
+    - The second dimension starts at offset 4 and is strided by 2
+
+    `[0, 1, 2][3:1][4:8]`
+
+    - The first three dimensions are indexed without striding (offsets 0, 1, 2)
+    - The fourth dimension starts at offset 3 and is strided by 1
+    - The fifth dimension starts at offset 4 and is strided by 8
+
+    With sizes (used for extract_strided_slice)
+
+    `[0:2:4][2:4:3]`
+
+    - The first dimension starts at offset 0, has size 2, and is strided by 4
+    - The second dimension starts at offset 2, has size 4, and is strided by 3
+  }];
+
   let parameters = (ins
     ArrayRefParameter<"int64_t">:$offsets,
     OptionalArrayRefParameter<"int64_t">:$sizes,
