@@ -63,7 +63,7 @@ public:
     auto srcType = op.getSourceVectorType();
     auto dstType = op.getDestVectorType();
 
-    if (op.getOffsets().getValue().empty())
+    if (op.getOffsets().empty())
       return failure();
 
     auto loc = op.getLoc();
@@ -77,20 +77,18 @@ public:
     // on it.
     Value extracted = rewriter.create<ExtractOp>(
         loc, op.getDest(),
-        getI64SubArray(op.getOffsets(), /*dropFront=*/0,
-                       /*dropBack=*/rankRest));
+        op.getOffsets().drop_back(rankRest));
 
     // A different pattern will kick in for InsertStridedSlice with matching
     // ranks.
     auto stridedSliceInnerOp = rewriter.create<InsertStridedSliceOp>(
         loc, op.getSource(), extracted,
-        getI64SubArray(op.getOffsets(), /*dropFront=*/rankDiff),
-        getI64SubArray(op.getStrides(), /*dropFront=*/0));
+        op.getOffsets().drop_front(rankDiff),
+        op.getStrides());
 
     rewriter.replaceOpWithNewOp<InsertOp>(
         op, stridedSliceInnerOp.getResult(), op.getDest(),
-        getI64SubArray(op.getOffsets(), /*dropFront=*/0,
-                       /*dropBack=*/rankRest));
+        op.getOffsets().drop_back(rankRest));
     return success();
   }
 };
@@ -119,7 +117,7 @@ public:
     auto srcType = op.getSourceVectorType();
     auto dstType = op.getDestVectorType();
 
-    if (op.getOffsets().getValue().empty())
+    if (op.getOffsets().empty())
       return failure();
 
     int64_t srcRank = srcType.getRank();
@@ -133,11 +131,9 @@ public:
       return success();
     }
 
-    int64_t offset =
-        cast<IntegerAttr>(op.getOffsets().getValue().front()).getInt();
+    int64_t offset = op.getOffsets().front();
     int64_t size = srcType.getShape().front();
-    int64_t stride =
-        cast<IntegerAttr>(op.getStrides().getValue().front()).getInt();
+    int64_t stride = op.getStrides().front();
 
     auto loc = op.getLoc();
     Value res = op.getDest();
@@ -182,8 +178,8 @@ public:
         // smaller rank.
         extractedSource = rewriter.create<InsertStridedSliceOp>(
             loc, extractedSource, extractedDest,
-            getI64SubArray(op.getOffsets(), /* dropFront=*/1),
-            getI64SubArray(op.getStrides(), /* dropFront=*/1));
+            op.getOffsets().drop_front(1),
+            op.getStrides().drop_front(1));
       }
       // 4. Insert the extractedSource into the res vector.
       res = insertOne(rewriter, loc, extractedSource, res, off);
@@ -205,18 +201,16 @@ public:
                                 PatternRewriter &rewriter) const override {
     auto dstType = op.getType();
 
-    assert(!op.getOffsets().getValue().empty() && "Unexpected empty offsets");
+    assert(!op.getOffsets().empty() && "Unexpected empty offsets");
 
-    int64_t offset =
-        cast<IntegerAttr>(op.getOffsets().getValue().front()).getInt();
-    int64_t size = cast<IntegerAttr>(op.getSizes().getValue().front()).getInt();
-    int64_t stride =
-        cast<IntegerAttr>(op.getStrides().getValue().front()).getInt();
+    int64_t offset = op.getOffsets().front();
+    int64_t size = op.getSizes().front();
+    int64_t stride = op.getStrides().front();
 
     assert(dstType.getElementType().isSignlessIntOrIndexOrFloat());
 
     // Single offset can be more efficiently shuffled.
-    if (op.getOffsets().getValue().size() != 1)
+    if (op.getOffsets().size() != 1)
       return failure();
 
     SmallVector<int64_t, 4> offsets;
@@ -248,14 +242,12 @@ public:
       return failure();
 
     // Only handle 1-D cases.
-    if (op.getOffsets().getValue().size() != 1)
+    if (op.getOffsets().size() != 1)
       return failure();
 
-    int64_t offset =
-        cast<IntegerAttr>(op.getOffsets().getValue().front()).getInt();
-    int64_t size = cast<IntegerAttr>(op.getSizes().getValue().front()).getInt();
-    int64_t stride =
-        cast<IntegerAttr>(op.getStrides().getValue().front()).getInt();
+    int64_t offset = op.getOffsets().front();
+    int64_t size = op.getSizes().front();
+    int64_t stride = op.getStrides().front();
 
     Location loc = op.getLoc();
     SmallVector<Value> elements;
@@ -294,13 +286,11 @@ public:
                                 PatternRewriter &rewriter) const override {
     auto dstType = op.getType();
 
-    assert(!op.getOffsets().getValue().empty() && "Unexpected empty offsets");
+    assert(!op.getOffsets().empty() && "Unexpected empty offsets");
 
-    int64_t offset =
-        cast<IntegerAttr>(op.getOffsets().getValue().front()).getInt();
-    int64_t size = cast<IntegerAttr>(op.getSizes().getValue().front()).getInt();
-    int64_t stride =
-        cast<IntegerAttr>(op.getStrides().getValue().front()).getInt();
+    int64_t offset = op.getOffsets().front();
+    int64_t size = op.getSizes().front();
+    int64_t stride = op.getStrides().front();
 
     auto loc = op.getLoc();
     auto elemType = dstType.getElementType();
@@ -308,7 +298,7 @@ public:
 
     // Single offset can be more efficiently shuffled. It's handled in
     // Convert1DExtractStridedSliceIntoShuffle.
-    if (op.getOffsets().getValue().size() == 1)
+    if (op.getOffsets().size() == 1)
       return failure();
 
     // Extract/insert on a lower ranked extract strided slice op.
@@ -319,9 +309,9 @@ public:
          off += stride, ++idx) {
       Value one = extractOne(rewriter, loc, op.getVector(), off);
       Value extracted = rewriter.create<ExtractStridedSliceOp>(
-          loc, one, getI64SubArray(op.getOffsets(), /* dropFront=*/1),
-          getI64SubArray(op.getSizes(), /* dropFront=*/1),
-          getI64SubArray(op.getStrides(), /* dropFront=*/1));
+          loc, one, op.getOffsets().drop_front(),
+          op.getSizes().drop_front(),
+          op.getStrides().drop_front());
       res = insertOne(rewriter, loc, extracted, res, idx);
     }
     rewriter.replaceOp(op, res);
