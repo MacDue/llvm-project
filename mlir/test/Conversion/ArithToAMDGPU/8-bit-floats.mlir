@@ -34,7 +34,7 @@ func.func @vector_ext_short(%v: vector<2xf8E5M2FNUZ>) -> vector<2xf64> {
 
 // CHECK-LABEL: func.func @vector_ext_long
 // CHECK-SAME: ([[V:%.+]]: vector<9xf8E4M3FNUZ>)
-// CHECK: [[V0:%.+]] = vector.extract_strided_slice [[V]] {offsets = [0], sizes = [4], strides = [1]}
+// CHECK: [[V0:%.+]] = vector.extract_strided_slice [[V]][0:4:1]
 // CHECK: [[F0:%.+]] = amdgpu.ext_packed_fp8 [[V0]][0]
 // CHECK: [[W0:%.+]] = vector.insert [[F0]]
 // CHECK: [[F1:%.+]] = amdgpu.ext_packed_fp8 [[V0]][1]
@@ -44,7 +44,7 @@ func.func @vector_ext_short(%v: vector<2xf8E5M2FNUZ>) -> vector<2xf64> {
 // CHECK: [[F3:%.+]] = amdgpu.ext_packed_fp8 [[V0]][3]
 // CHECK: [[W3:%.+]] = vector.insert [[F3]], [[W2]]
 
-// CHECK: [[V1:%.+]] = vector.extract_strided_slice [[V]] {offsets = [4], sizes = [4], strides = [1]} : vector<9xf8E4M3FNUZ> to vector<4xf8E4M3FNUZ>
+// CHECK: [[V1:%.+]] = vector.extract_strided_slice [[V]][4:4:1] : vector<9xf8E4M3FNUZ> to vector<4xf8E4M3FNUZ>
 // CHECK: [[F4:%.+]] = amdgpu.ext_packed_fp8 [[V1]][0]
 // CHECK: [[W4:%.+]] = vector.insert [[F4]], [[W3]]
 // CHECK: [[F5:%.+]] = amdgpu.ext_packed_fp8 [[V1]][1]
@@ -54,7 +54,7 @@ func.func @vector_ext_short(%v: vector<2xf8E5M2FNUZ>) -> vector<2xf64> {
 // CHECK: [[F7:%.+]] = amdgpu.ext_packed_fp8 [[V1]][3]
 // CHECK: [[W7:%.+]] = vector.insert [[F7]], [[W6]]
 
-// CHECK: [[V2:%.+]] = vector.extract_strided_slice [[V]] {offsets = [8], sizes = [1], strides = [1]} : vector<9xf8E4M3FNUZ> to vector<1xf8E4M3FNUZ>
+// CHECK: [[V2:%.+]] = vector.extract_strided_slice [[V]][8:1:1] : vector<9xf8E4M3FNUZ> to vector<1xf8E4M3FNUZ>
 // CHECK: [[F8:%.+]] = amdgpu.ext_packed_fp8 [[V2]][0]
 // CHECK: [[W8:%.+]] = vector.insert [[F8]], [[W7]]
 // CHECK: return [[W8]]
@@ -87,7 +87,7 @@ func.func @scalar_trunc(%v: f16) -> f8E5M2FNUZ {
 // CHECK: [[V1:%.+]] = vector.extract [[V]][1]
 // CHECK: [[F1:%.+]] = arith.truncf [[V1]] : f64 to f32
 // CHECK: [[W0:%.+]] = amdgpu.packed_trunc_2xfp8 [[F0]], [[F1]] into undef[word 0] : f32 to vector<4xf8E5M2FNUZ>
-// CHECK: [[W:%.+]] = vector.extract_strided_slice [[W0]] {offsets = [0], sizes = [2], strides = [1]} : vector<4xf8E5M2FNUZ> to vector<2xf8E5M2FNUZ>
+// CHECK: [[W:%.+]] = vector.extract_strided_slice [[W0]][0:2:1] : vector<4xf8E5M2FNUZ> to vector<2xf8E5M2FNUZ>
 // CHECK: return [[W]] : vector<2xf8E5M2FNUZ>
 func.func @vector_trunc_short(%v: vector<2xf64>) -> vector<2xf8E5M2FNUZ> {
   %w = arith.truncf %v : vector<2xf64> to vector<2xf8E5M2FNUZ>
@@ -101,15 +101,15 @@ func.func @vector_trunc_short(%v: vector<2xf64>) -> vector<2xf8E5M2FNUZ> {
 // CHECK: [[ZEROES:%.+]] = arith.constant dense<0.000000e+00> : vector<9xf8E4M3FNUZ>
 // CHECK: [[T0:%.+]] = amdgpu.packed_trunc_2xfp8 %{{.+}}, %{{.+}} into undef[word 0]
 // CHECK: [[T1:%.+]] = amdgpu.packed_trunc_2xfp8 %{{.+}}, %{{.+}} into [[T0]][word 1]
-// CHECK: [[W0:%.+]] = vector.insert_strided_slice [[T1]], [[ZEROES]] {offsets = [0], strides = [1]}
+// CHECK: [[W0:%.+]] = vector.insert_strided_slice [[T1]], [[ZEROES]][0:1]
 
 // CHECK: [[T2:%.+]] = amdgpu.packed_trunc_2xfp8 %{{.+}}, %{{.+}} into undef[word 0]
 // CHECK: [[T3:%.+]] = amdgpu.packed_trunc_2xfp8 %{{.+}}, %{{.+}} into [[T2]][word 1]
-// CHECK: [[W1:%.+]] = vector.insert_strided_slice [[T3]], [[W0]] {offsets = [4], strides = [1]}
+// CHECK: [[W1:%.+]] = vector.insert_strided_slice [[T3]], [[W0]][4:1]
 
 // CHECK: [[T4:%.+]] = amdgpu.packed_trunc_2xfp8 %{{.+}}, undef into undef[word 0]
-// CHECK: [[T4_SHORT:%.+]] = vector.extract_strided_slice [[T4]] {offsets = [0], sizes = [1], strides = [1]}
-// CHECK: [[W:%.+]] = vector.insert_strided_slice [[T4_SHORT]], [[W1]] {offsets = [8], strides = [1]}
+// CHECK: [[T4_SHORT:%.+]] = vector.extract_strided_slice [[T4]][0:1:1]
+// CHECK: [[W:%.+]] = vector.insert_strided_slice [[T4_SHORT]], [[W1]][8:1]
 // CHECK: return [[W]]
 func.func @vector_trunc_long(%v: vector<9xf32>) -> vector<9xf8E4M3FNUZ> {
   %w = arith.truncf %v : vector<9xf32> to vector<9xf8E4M3FNUZ>
@@ -123,15 +123,15 @@ func.func @vector_trunc_long(%v: vector<9xf32>) -> vector<9xf8E4M3FNUZ> {
 // CHECK: [[ZEROES:%.+]] = arith.constant dense<0.000000e+00> : vector<9xf8E4M3FNUZ>
 // CHECK: [[T0:%.+]] = amdgpu.packed_trunc_2xfp8 %{{.+}}, %{{.+}} into undef[word 0]
 // CHECK: [[T1:%.+]] = amdgpu.packed_trunc_2xfp8 %{{.+}}, %{{.+}} into [[T0]][word 1]
-// CHECK: [[W0:%.+]] = vector.insert_strided_slice [[T1]], [[ZEROES]] {offsets = [0], strides = [1]}
+// CHECK: [[W0:%.+]] = vector.insert_strided_slice [[T1]], [[ZEROES]][0:1]
 
 // CHECK: [[T2:%.+]] = amdgpu.packed_trunc_2xfp8 %{{.+}}, %{{.+}} into undef[word 0]
 // CHECK: [[T3:%.+]] = amdgpu.packed_trunc_2xfp8 %{{.+}}, %{{.+}} into [[T2]][word 1]
-// CHECK: [[W1:%.+]] = vector.insert_strided_slice [[T3]], [[W0]] {offsets = [4], strides = [1]}
+// CHECK: [[W1:%.+]] = vector.insert_strided_slice [[T3]], [[W0]][4:1]
 
 // CHECK: [[T4:%.+]] = amdgpu.packed_trunc_2xfp8 %{{.+}}, undef into undef[word 0]
-// CHECK: [[T4_SHORT:%.+]] = vector.extract_strided_slice [[T4]] {offsets = [0], sizes = [1], strides = [1]}
-// CHECK: [[W:%.+]] = vector.insert_strided_slice [[T4_SHORT]], [[W1]] {offsets = [8], strides = [1]}
+// CHECK: [[T4_SHORT:%.+]] = vector.extract_strided_slice [[T4]][0:1:1]
+// CHECK: [[W:%.+]] = vector.insert_strided_slice [[T4_SHORT]], [[W1]][8:1]
 // CHECK: [[RE:%.+]] = vector.shape_cast [[W]] : vector<9xf8E4M3FNUZ> to vector<1x9xf8E4M3FNUZ>
 // CHECK: return [[RE]]
 func.func @vector_trunc_long_2d(%v: vector<1x9xf32>) -> vector<1x9xf8E4M3FNUZ> {
@@ -144,7 +144,7 @@ func.func @vector_trunc_long_2d(%v: vector<1x9xf32>) -> vector<1x9xf8E4M3FNUZ> {
 // CHECK-LABEL: func.func @vector_ext_long_2d
 // CHECK-SAME: ([[V:%.+]]: vector<1x9xf8E4M3FNUZ>)
 // CHECK: [[CAST:%.+]] = vector.shape_cast [[V]] : vector<1x9xf8E4M3FNUZ> to vector<9xf8E4M3FNUZ>
-// CHECK: [[V0:%.+]] = vector.extract_strided_slice [[CAST]] {offsets = [0], sizes = [4], strides = [1]}
+// CHECK: [[V0:%.+]] = vector.extract_strided_slice [[CAST]][0:4:1]
 // CHECK: [[F0:%.+]] = amdgpu.ext_packed_fp8 [[V0]][0]
 // CHECK: [[W0:%.+]] = vector.insert [[F0]]
 // CHECK: [[F1:%.+]] = amdgpu.ext_packed_fp8 [[V0]][1]
@@ -154,7 +154,7 @@ func.func @vector_trunc_long_2d(%v: vector<1x9xf32>) -> vector<1x9xf8E4M3FNUZ> {
 // CHECK: [[F3:%.+]] = amdgpu.ext_packed_fp8 [[V0]][3]
 // CHECK: [[W3:%.+]] = vector.insert [[F3]], [[W2]]
 
-// CHECK: [[V1:%.+]] = vector.extract_strided_slice [[CAST]] {offsets = [4], sizes = [4], strides = [1]} : vector<9xf8E4M3FNUZ> to vector<4xf8E4M3FNUZ>
+// CHECK: [[V1:%.+]] = vector.extract_strided_slice [[CAST]][4:4:1] : vector<9xf8E4M3FNUZ> to vector<4xf8E4M3FNUZ>
 // CHECK: [[F4:%.+]] = amdgpu.ext_packed_fp8 [[V1]][0]
 // CHECK: [[W4:%.+]] = vector.insert [[F4]], [[W3]]
 // CHECK: [[F5:%.+]] = amdgpu.ext_packed_fp8 [[V1]][1]
@@ -164,7 +164,7 @@ func.func @vector_trunc_long_2d(%v: vector<1x9xf32>) -> vector<1x9xf8E4M3FNUZ> {
 // CHECK: [[F7:%.+]] = amdgpu.ext_packed_fp8 [[V1]][3]
 // CHECK: [[W7:%.+]] = vector.insert [[F7]], [[W6]]
 
-// CHECK: [[V2:%.+]] = vector.extract_strided_slice [[CAST]] {offsets = [8], sizes = [1], strides = [1]} : vector<9xf8E4M3FNUZ> to vector<1xf8E4M3FNUZ>
+// CHECK: [[V2:%.+]] = vector.extract_strided_slice [[CAST]][8:1:1] : vector<9xf8E4M3FNUZ> to vector<1xf8E4M3FNUZ>
 // CHECK: [[F8:%.+]] = amdgpu.ext_packed_fp8 [[V2]][0]
 // CHECK: [[W8:%.+]] = vector.insert [[F8]], [[W7]]
 // CHECK: [[CAST:%.+]] = vector.shape_cast [[W8]] : vector<9xf32> to vector<1x9xf32>

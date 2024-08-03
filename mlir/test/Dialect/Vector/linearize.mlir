@@ -170,20 +170,19 @@ func.func @test_extract_strided_slice_1(%arg0 : vector<4x8xf32>) -> vector<2x2xf
   // BW-128: %[[RES:.*]] = vector.shape_cast %[[SHUFFLE]] : vector<4xf32> to vector<2x2xf32>
   // BW-128: return %[[RES]] : vector<2x2xf32>
 
-  // BW-0: %[[RES:.*]] = vector.extract_strided_slice %[[ARG:.*]] {offsets = [0, 4], sizes = [2, 2], strides = [1, 1]} : vector<4x8xf32> to vector<2x2xf32>
+  // BW-0: %[[RES:.*]] = vector.extract_strided_slice %[[ARG:.*]][0:2:1][4:2:1] : vector<4x8xf32> to vector<2x2xf32>
   // BW-0: return %[[RES]] : vector<2x2xf32>
-  %0 = vector.extract_strided_slice %arg0 { sizes = [2, 2], strides = [1, 1], offsets = [0, 4]}
-     : vector<4x8xf32> to vector<2x2xf32>
+  %0 = vector.extract_strided_slice %arg0[0:2:1][4:2:1] : vector<4x8xf32> to vector<2x2xf32>
   return %0 : vector<2x2xf32>
 }
 
 // ALL-LABEL:   func.func @test_extract_strided_slice_1_scalable(
 // ALL-SAME:    %[[VAL_0:.*]]: vector<4x[8]xf32>) -> vector<2x[8]xf32> {
-func.func @test_extract_strided_slice_1_scalable(%arg0: vector<4x[8]xf32>) -> vector<2x[8]xf32> {  
+func.func @test_extract_strided_slice_1_scalable(%arg0: vector<4x[8]xf32>) -> vector<2x[8]xf32> {
   // ALL-NOT: vector.shuffle
   // ALL-NOT: vector.shape_cast
-  // ALL: %[[RES:.*]] = vector.extract_strided_slice %[[VAL_0]] {offsets = [1, 0], sizes = [2, 8], strides = [1, 1]} : vector<4x[8]xf32> to vector<2x[8]xf32>
-  %0 = vector.extract_strided_slice %arg0 { sizes = [2, 8], strides = [1, 1], offsets = [1, 0] } : vector<4x[8]xf32> to vector<2x[8]xf32>
+  // ALL: %[[RES:.*]] = vector.extract_strided_slice %[[VAL_0]][1:2:1][0:8:1] : vector<4x[8]xf32> to vector<2x[8]xf32>
+  %0 = vector.extract_strided_slice %arg0[1:2:1][0:8:1] : vector<4x[8]xf32> to vector<2x[8]xf32>
   // ALL: return %[[RES]] : vector<2x[8]xf32>
   return %0 : vector<2x[8]xf32>
 }
@@ -204,10 +203,9 @@ func.func @test_extract_strided_slice_2(%arg0 : vector<2x8x2xf32>) -> vector<1x4
   // BW-128: %[[RES:.*]] = vector.shape_cast %[[SHUFFLE]] : vector<8xf32> to vector<1x4x2xf32>
   // BW-128: return %[[RES]] : vector<1x4x2xf32>
 
-  // BW-0: %[[RES:.*]] = vector.extract_strided_slice %[[ORIG_ARG]] {offsets = [1, 2], sizes = [1, 4], strides = [1, 1]} : vector<2x8x2xf32> to vector<1x4x2xf32>
+  // BW-0: %[[RES:.*]] = vector.extract_strided_slice %[[ORIG_ARG]][1:1:1][2:4:1] : vector<2x8x2xf32> to vector<1x4x2xf32>
   // BW-0: return %[[RES]] : vector<1x4x2xf32>
-  %0 = vector.extract_strided_slice %arg0 { offsets = [1, 2], strides = [1, 1], sizes = [1, 4] }
-    : vector<2x8x2xf32> to vector<1x4x2xf32>
+  %0 = vector.extract_strided_slice %arg0[1:1:1][2:4:1] : vector<2x8x2xf32> to vector<1x4x2xf32>
   return %0 : vector<1x4x2xf32>
 }
 

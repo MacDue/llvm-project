@@ -655,49 +655,49 @@ func.func @extui_over_extractelement_3xi16(%a: vector<3xi16>, %pos: i32) -> f16 
 
 // CHECK-LABEL: func.func @extsi_over_extract_strided_slice_1d
 // CHECK-SAME:    (%[[ARG:.+]]: vector<3xi16>)
-// CHECK-NEXT:    %[[EXTR:.+]] = vector.extract_strided_slice %[[ARG]] {offsets = [1], sizes = [2], strides = [1]} : vector<3xi16> to vector<2xi16>
+// CHECK-NEXT:    %[[EXTR:.+]] = vector.extract_strided_slice %[[ARG]][1:2:1] : vector<3xi16> to vector<2xi16>
 // CHECK-NEXT:    %[[RET:.+]]  = arith.extsi %[[EXTR]] : vector<2xi16> to vector<2xi32>
 // CHECK-NEXT:    return %[[RET]] : vector<2xi32>
 func.func @extsi_over_extract_strided_slice_1d(%a: vector<3xi16>) -> vector<2xi32> {
   %b = arith.extsi %a : vector<3xi16> to vector<3xi32>
   %c = vector.extract_strided_slice %b
-   {offsets = [1], sizes = [2], strides = [1]} : vector<3xi32> to vector<2xi32>
+  [1:2:1] : vector<3xi32> to vector<2xi32>
   return %c : vector<2xi32>
 }
 
 // CHECK-LABEL: func.func @extui_over_extract_strided_slice_1d
 // CHECK-SAME:    (%[[ARG:.+]]: vector<3xi16>)
-// CHECK-NEXT:    %[[EXTR:.+]] = vector.extract_strided_slice %[[ARG]] {offsets = [1], sizes = [2], strides = [1]} : vector<3xi16> to vector<2xi16>
+// CHECK-NEXT:    %[[EXTR:.+]] = vector.extract_strided_slice %[[ARG]][1:2:1] : vector<3xi16> to vector<2xi16>
 // CHECK-NEXT:    %[[RET:.+]]  = arith.extui %[[EXTR]] : vector<2xi16> to vector<2xi32>
 // CHECK-NEXT:    return %[[RET]] : vector<2xi32>
 func.func @extui_over_extract_strided_slice_1d(%a: vector<3xi16>) -> vector<2xi32> {
   %b = arith.extui %a : vector<3xi16> to vector<3xi32>
   %c = vector.extract_strided_slice %b
-   {offsets = [1], sizes = [2], strides = [1]} : vector<3xi32> to vector<2xi32>
+  [1:2:1] : vector<3xi32> to vector<2xi32>
   return %c : vector<2xi32>
 }
 
 // CHECK-LABEL: func.func @extsi_over_extract_strided_slice_2d
 // CHECK-SAME:    (%[[ARG:.+]]: vector<2x3xi16>)
-// CHECK-NEXT:    %[[EXTR:.+]] = vector.extract_strided_slice %arg0 {offsets = [1, 1], sizes = [1, 2], strides = [1, 1]} : vector<2x3xi16> to vector<1x2xi16>
+// CHECK-NEXT:    %[[EXTR:.+]] = vector.extract_strided_slice %arg0[1:1:1][1:2:1] : vector<2x3xi16> to vector<1x2xi16>
 // CHECK-NEXT:    %[[RET:.+]]  = arith.extsi %[[EXTR]] : vector<1x2xi16> to vector<1x2xi32>
 // CHECK-NEXT:    return %[[RET]] : vector<1x2xi32>
 func.func @extsi_over_extract_strided_slice_2d(%a: vector<2x3xi16>) -> vector<1x2xi32> {
   %b = arith.extsi %a : vector<2x3xi16> to vector<2x3xi32>
   %c = vector.extract_strided_slice %b
-   {offsets = [1, 1], sizes = [1, 2], strides = [1, 1]} : vector<2x3xi32> to vector<1x2xi32>
+  [1:1:1][1:2:1] : vector<2x3xi32> to vector<1x2xi32>
   return %c : vector<1x2xi32>
 }
 
 // CHECK-LABEL: func.func @extui_over_extract_strided_slice_2d
 // CHECK-SAME:    (%[[ARG:.+]]: vector<2x3xi16>)
-// CHECK-NEXT:    %[[EXTR:.+]] = vector.extract_strided_slice %arg0 {offsets = [1, 1], sizes = [1, 2], strides = [1, 1]} : vector<2x3xi16> to vector<1x2xi16>
+// CHECK-NEXT:    %[[EXTR:.+]] = vector.extract_strided_slice %arg0[1:1:1][1:2:1] : vector<2x3xi16> to vector<1x2xi16>
 // CHECK-NEXT:    %[[RET:.+]]  = arith.extui %[[EXTR]] : vector<1x2xi16> to vector<1x2xi32>
 // CHECK-NEXT:    return %[[RET]] : vector<1x2xi32>
 func.func @extui_over_extract_strided_slice_2d(%a: vector<2x3xi16>) -> vector<1x2xi32> {
   %b = arith.extui %a : vector<2x3xi16> to vector<2x3xi32>
   %c = vector.extract_strided_slice %b
-   {offsets = [1, 1], sizes = [1, 2], strides = [1, 1]} : vector<2x3xi32> to vector<1x2xi32>
+  [1:1:1][1:2:1] : vector<2x3xi32> to vector<1x2xi32>
   return %c : vector<1x2xi32>
 }
 
@@ -851,26 +851,26 @@ func.func @extui_over_insertelement_3xi16_cst_i16(%a: i8, %pos: i32) -> vector<3
 // CHECK-LABEL: func.func @extsi_over_insert_strided_slice_1d
 // CHECK-SAME:    (%[[ARG0:.+]]: vector<3xi16>, %[[ARG1:.+]]: vector<2xi16>)
 // CHECK-NEXT:    %[[INS:.+]] = vector.insert_strided_slice %[[ARG1]], %[[ARG0]]
-// CHECK-SAME:                    {offsets = [1], strides = [1]} : vector<2xi16> into vector<3xi16>
+// CHECK-SAME:                   [1:1] : vector<2xi16> into vector<3xi16>
 // CHECK-NEXT:    %[[RET:.+]] = arith.extsi %[[INS]] : vector<3xi16> to vector<3xi32>
 // CHECK-NEXT:    return %[[RET]] : vector<3xi32>
 func.func @extsi_over_insert_strided_slice_1d(%a: vector<3xi16>, %b: vector<2xi16>) -> vector<3xi32> {
   %c = arith.extsi %a : vector<3xi16> to vector<3xi32>
   %d = arith.extsi %b : vector<2xi16> to vector<2xi32>
-  %e = vector.insert_strided_slice %d, %c {offsets = [1], strides = [1]} : vector<2xi32> into vector<3xi32>
+  %e = vector.insert_strided_slice %d, %c[1:1] : vector<2xi32> into vector<3xi32>
   return %e : vector<3xi32>
 }
 
 // CHECK-LABEL: func.func @extui_over_insert_strided_slice_1d
 // CHECK-SAME:    (%[[ARG0:.+]]: vector<3xi16>, %[[ARG1:.+]]: vector<2xi16>)
 // CHECK-NEXT:    %[[INS:.+]] = vector.insert_strided_slice %[[ARG1]], %[[ARG0]]
-// CHECK-SAME:                    {offsets = [1], strides = [1]} : vector<2xi16> into vector<3xi16>
+// CHECK-SAME:                   [1:1] : vector<2xi16> into vector<3xi16>
 // CHECK-NEXT:    %[[RET:.+]] = arith.extui %[[INS]] : vector<3xi16> to vector<3xi32>
 // CHECK-NEXT:    return %[[RET]] : vector<3xi32>
 func.func @extui_over_insert_strided_slice_1d(%a: vector<3xi16>, %b: vector<2xi16>) -> vector<3xi32> {
   %c = arith.extui %a : vector<3xi16> to vector<3xi32>
   %d = arith.extui %b : vector<2xi16> to vector<2xi32>
-  %e = vector.insert_strided_slice %d, %c {offsets = [1], strides = [1]} : vector<2xi32> into vector<3xi32>
+  %e = vector.insert_strided_slice %d, %c[1:1] : vector<2xi32> into vector<3xi32>
   return %e : vector<3xi32>
 }
 
@@ -881,13 +881,13 @@ func.func @extui_over_insert_strided_slice_1d(%a: vector<3xi16>, %b: vector<2xi1
 // CHECK-NEXT:    %[[SRCE:.+]] = arith.extsi %[[ARG]] : vector<1x2xi8> to vector<1x2xi32>
 // CHECK-NEXT:    %[[SRCT:.+]] = arith.trunci %[[SRCE]] : vector<1x2xi32> to vector<1x2xi16>
 // CHECK-NEXT:    %[[INS:.+]] = vector.insert_strided_slice %[[SRCT]], %[[CST]]
-// CHECK-SAME:                    {offsets = [0, 1], strides = [1, 1]} : vector<1x2xi16> into vector<2x3xi16>
+// CHECK-SAME:                   [0:1][1:1] : vector<1x2xi16> into vector<2x3xi16>
 // CHECK-NEXT:    %[[RET:.+]]  = arith.extsi %[[INS]] : vector<2x3xi16> to vector<2x3xi32>
 // CHECK-NEXT:    return %[[RET]] : vector<2x3xi32>
 func.func @extsi_over_insert_strided_slice_cst_2d(%a: vector<1x2xi8>) -> vector<2x3xi32> {
   %cst = arith.constant dense<[[-1, 128, 0], [-129, 42, 1337]]> : vector<2x3xi32>
   %d = arith.extsi %a : vector<1x2xi8> to vector<1x2xi32>
-  %e = vector.insert_strided_slice %d, %cst {offsets = [0, 1], strides = [1, 1]} : vector<1x2xi32> into vector<2x3xi32>
+  %e = vector.insert_strided_slice %d, %cst[0:1][1:1] : vector<1x2xi32> into vector<2x3xi32>
   return %e : vector<2x3xi32>
 }
 
@@ -898,13 +898,13 @@ func.func @extsi_over_insert_strided_slice_cst_2d(%a: vector<1x2xi8>) -> vector<
 // CHECK-NEXT:    %[[SRCE:.+]] = arith.extui %[[ARG]] : vector<1x2xi8> to vector<1x2xi32>
 // CHECK-NEXT:    %[[SRCT:.+]] = arith.trunci %[[SRCE]] : vector<1x2xi32> to vector<1x2xi16>
 // CHECK-NEXT:    %[[INS:.+]] = vector.insert_strided_slice %[[SRCT]], %[[CST]]
-// CHECK-SAME:                    {offsets = [0, 1], strides = [1, 1]} : vector<1x2xi16> into vector<2x3xi16>
+// CHECK-SAME:                   [0:1][1:1] : vector<1x2xi16> into vector<2x3xi16>
 // CHECK-NEXT:    %[[RET:.+]]  = arith.extui %[[INS]] : vector<2x3xi16> to vector<2x3xi32>
 // CHECK-NEXT:    return %[[RET]] : vector<2x3xi32>
 func.func @extui_over_insert_strided_slice_cst_2d(%a: vector<1x2xi8>) -> vector<2x3xi32> {
   %cst = arith.constant dense<[[1, 128, 0], [256, 42, 1337]]> : vector<2x3xi32>
   %d = arith.extui %a : vector<1x2xi8> to vector<1x2xi32>
-  %e = vector.insert_strided_slice %d, %cst {offsets = [0, 1], strides = [1, 1]} : vector<1x2xi32> into vector<2x3xi32>
+  %e = vector.insert_strided_slice %d, %cst[0:1][1:1] : vector<1x2xi32> into vector<2x3xi32>
   return %e : vector<2x3xi32>
 }
 
