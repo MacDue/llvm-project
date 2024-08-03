@@ -2950,10 +2950,10 @@ void StridedSliceAttr::print(AsmPrinter &printer) const {
   ArrayRef<int64_t> sizes = getSizes();
   ArrayRef<int64_t> strides = getStrides();
   int nonStridedOffsets = offsets.size() - strides.size();
-  int d = 0;
-  for (; d < nonStridedOffsets; ++d)
-    printer << '[' << offsets[d] << ']';
-  for (int e = offsets.size(); d < e; ++d) {
+    printer << '[' ;
+        llvm::interleaveComma(offsets.take_front(nonStridedOffsets), printer);
+    printer << ']';
+  for (int d = nonStridedOffsets, e = offsets.size(); d < e; ++d) {
     int strideIdx = d - nonStridedOffsets;
     printer << '[' << offsets[d] << ':';
     if (!sizes.empty())
