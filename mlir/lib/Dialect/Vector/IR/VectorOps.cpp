@@ -2897,18 +2897,31 @@ Attribute StridedSliceAttr::parse(AsmParser &parser, Type attrType) {
   SmallVector<int64_t> offsets;
   SmallVector<int64_t> sizes;
   SmallVector<int64_t> strides;
+  bool parsedNonStridedOffsets = false;
   while (succeeded(parser.parseOptionalLSquare())) {
     int64_t offset = 0;
     if (parser.parseInteger(offset))
       return {};
     if (parser.parseOptionalColon()) {
-      // Case 1: [Offset]
-      if (!strides.empty() || parser.parseRSquare()) {
+      // Case 1: [Offset, ...]
+      if (!strides.empty() || parsedNonStridedOffsets) {
         parser.emitError(parser.getCurrentLocation(),
                          "expected slice stride or size");
         return {};
       }
       offsets.push_back(offset);
+      if (parser.parseOptionalComma()) {
+        if (failed(parser.parseCommaSeparatedList(
+                AsmParser::Delimiter::None, [&]() -> ParseResult {
+                  if (parser.parseInteger(offset))
+                    return failure();
+                  offsets.push_back(offset);
+                  return success();
+                }))) {
+          return {};
+        }
+      }
+      parsedNonStridedOffsets = true;
       continue;
     }
     int64_t sizeOrStide = 0;
