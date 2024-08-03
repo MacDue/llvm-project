@@ -76,19 +76,17 @@ public:
     // Extract / insert the subvector of matching rank and InsertStridedSlice
     // on it.
     Value extracted = rewriter.create<ExtractOp>(
-        loc, op.getDest(),
-        op.getOffsets().drop_back(rankRest));
+        loc, op.getDest(), op.getOffsets().drop_back(rankRest));
 
     // A different pattern will kick in for InsertStridedSlice with matching
     // ranks.
     auto stridedSliceInnerOp = rewriter.create<InsertStridedSliceOp>(
-        loc, op.getSource(), extracted,
-        op.getOffsets().drop_front(rankDiff),
+        loc, op.getSource(), extracted, op.getOffsets().drop_front(rankDiff),
         op.getStrides());
 
-    rewriter.replaceOpWithNewOp<InsertOp>(
-        op, stridedSliceInnerOp.getResult(), op.getDest(),
-        op.getOffsets().drop_back(rankRest));
+    rewriter.replaceOpWithNewOp<InsertOp>(op, stridedSliceInnerOp.getResult(),
+                                          op.getDest(),
+                                          op.getOffsets().drop_back(rankRest));
     return success();
   }
 };
@@ -177,8 +175,7 @@ public:
         // 3. Reduce the problem to lowering a new InsertStridedSlice op with
         // smaller rank.
         extractedSource = rewriter.create<InsertStridedSliceOp>(
-            loc, extractedSource, extractedDest,
-            op.getOffsets().drop_front(1),
+            loc, extractedSource, extractedDest, op.getOffsets().drop_front(1),
             op.getStrides().drop_front(1));
       }
       // 4. Insert the extractedSource into the res vector.
@@ -309,8 +306,7 @@ public:
          off += stride, ++idx) {
       Value one = extractOne(rewriter, loc, op.getVector(), off);
       Value extracted = rewriter.create<ExtractStridedSliceOp>(
-          loc, one, op.getOffsets().drop_front(),
-          op.getSizes().drop_front(),
+          loc, one, op.getOffsets().drop_front(), op.getSizes().drop_front(),
           op.getStrides().drop_front());
       res = insertOne(rewriter, loc, extracted, res, idx);
     }

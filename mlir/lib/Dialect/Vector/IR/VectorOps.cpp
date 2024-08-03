@@ -2970,7 +2970,8 @@ void InsertStridedSliceOp::build(OpBuilder &builder, OperationState &result,
                                  Value source, Value dest,
                                  ArrayRef<int64_t> offsets,
                                  ArrayRef<int64_t> strides) {
-  build(builder, result, source, dest, StridedSliceAttr::get(builder.getContext(), offsets, strides));
+  build(builder, result, source, dest,
+        StridedSliceAttr::get(builder.getContext(), offsets, strides));
 }
 
 // Returns true if all integers in `arrayAttr` are in the half-open [min, max}
@@ -3025,8 +3026,7 @@ static LogicalResult isSumOfIntArrayConfinedToShape(
     bool halfOpen = true, int64_t min = 1) {
   assert(array1.size() <= shape.size());
   assert(array2.size() <= shape.size());
-  for (auto [index, it] :
-       llvm::enumerate(llvm::zip(array1, array2, shape))) {
+  for (auto [index, it] : llvm::enumerate(llvm::zip(array1, array2, shape))) {
     int64_t val1, val2, max;
     std::tie(val1, val2, max) = it;
     if (!halfOpen)
@@ -3060,16 +3060,14 @@ LogicalResult InsertStridedSliceOp::verify() {
   SmallVector<int64_t, 4> sourceShapeAsDestShape(
       destShape.size() - sourceShape.size(), 0);
   sourceShapeAsDestShape.append(sourceShape.begin(), sourceShape.end());
-  if (failed(isIntArrayConfinedToShape(*this, offsets, destShape,
-                                               "offsets")) ||
+  if (failed(isIntArrayConfinedToShape(*this, offsets, destShape, "offsets")) ||
       failed(isIntArrayConfinedToRange(*this, strides, /*min=*/1,
-                                               /*max=*/1, "strides",
-                                               /*halfOpen=*/false)) ||
-      failed(isSumOfIntArrayConfinedToShape(
-          *this, offsets,
-          sourceShapeAsDestShape, destShape,
-          "offsets", "source vector shape",
-          /*halfOpen=*/false, /*min=*/1)))
+                                       /*max=*/1, "strides",
+                                       /*halfOpen=*/false)) ||
+      failed(isSumOfIntArrayConfinedToShape(*this, offsets,
+                                            sourceShapeAsDestShape, destShape,
+                                            "offsets", "source vector shape",
+                                            /*halfOpen=*/false, /*min=*/1)))
     return failure();
 
   unsigned rankDiff = destShape.size() - sourceShape.size();
@@ -3142,7 +3140,7 @@ public:
 
     // Check if have the same strides and offsets.
     if (extractStridedSliceOp.getStrides() !=
-             insertStridedSliceOp.getStrides() ||
+            insertStridedSliceOp.getStrides() ||
         extractStridedSliceOp.getOffsets() != insertStridedSliceOp.getOffsets())
       return failure();
 
@@ -3475,8 +3473,7 @@ LogicalResult ExtractStridedSliceOp::verify() {
                                         StringRef arrayName) -> LogicalResult {
     if (array.size() > shape.size())
       return emitOpError("expected ")
-                         << arrayName
-                         << " to have rank no greater than vector rank";
+             << arrayName << " to have rank no greater than vector rank";
     return success();
   };
 
@@ -3490,9 +3487,9 @@ LogicalResult ExtractStridedSliceOp::verify() {
       failed(isIntArrayConfinedToRange(*this, strides, /*min=*/1,
                                        /*max=*/1, "strides",
                                        /*halfOpen=*/false)) ||
-      failed(isSumOfIntArrayConfinedToShape(*this, offsets, sizes, shape, "offsets",
-                                       "sizes",
-                                       /*halfOpen=*/false))) {
+      failed(isSumOfIntArrayConfinedToShape(*this, offsets, sizes, shape,
+                                            "offsets", "sizes",
+                                            /*halfOpen=*/false))) {
     return failure();
   }
 
@@ -3563,7 +3560,8 @@ foldExtractStridedOpFromInsertChain(ExtractStridedSliceOp op) {
       op.setOperand(insertOp.getSource());
       // OpBuilder is only used as a helper to build an I64ArrayAttr.
       OpBuilder b(op.getContext());
-      auto stridedSliceAttr = StridedSliceAttr::get(op.getContext(), offsetDiffs, op.getSizes(), op.getStrides());
+      auto stridedSliceAttr = StridedSliceAttr::get(
+          op.getContext(), offsetDiffs, op.getSizes(), op.getStrides());
       op.setStridedSliceAttr(stridedSliceAttr);
       return success();
     }
@@ -3769,8 +3767,7 @@ public:
     bool isScalarSrc = (srcRank == 0 || srcVecType.getNumElements() == 1);
     if (!lowerDimMatch && !isScalarSrc) {
       source = rewriter.create<ExtractStridedSliceOp>(
-          op->getLoc(), source,
-          op.getOffsets().drop_front(rankDiff),
+          op->getLoc(), source, op.getOffsets().drop_front(rankDiff),
           op.getSizes().drop_front(rankDiff),
           op.getStrides().drop_front(rankDiff));
     }

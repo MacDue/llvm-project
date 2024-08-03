@@ -118,8 +118,8 @@ struct CastAwayInsertStridedSliceLeadingOneDim
     Value newDstVector = rewriter.create<vector::ExtractOp>(
         loc, insertOp.getDest(), splatZero(dstDropCount));
 
-    auto newOffsets =  insertOp.getOffsets().take_back(newDstType.getRank());
-    auto newStrides =  insertOp.getStrides().take_back(newSrcType.getRank());
+    auto newOffsets = insertOp.getOffsets().take_back(newDstType.getRank());
+    auto newStrides = insertOp.getStrides().take_back(newSrcType.getRank());
 
     auto newInsertOp = rewriter.create<vector::InsertStridedSliceOp>(
         loc, newSrcVector, newDstVector, newOffsets, newStrides);

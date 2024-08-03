@@ -681,8 +681,8 @@ struct BubbleDownBitCastForStridedSliceExtract
     }
 
     auto newExtractOp = rewriter.create<vector::ExtractStridedSliceOp>(
-        extractOp.getLoc(), castOp.getSource(), newOffsets,
-        newSizes, extractOp.getStrides());
+        extractOp.getLoc(), castOp.getSource(), newOffsets, newSizes,
+        extractOp.getStrides());
 
     rewriter.replaceOpWithNewOp<vector::BitCastOp>(
         extractOp, extractOp.getType(), newExtractOp);

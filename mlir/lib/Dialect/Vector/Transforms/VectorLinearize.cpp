@@ -202,8 +202,7 @@ struct LinearizeVectorExtractStridedSlice final
     llvm::SmallVector<int64_t, 4> extractedStrides(kD, 1);
     // Compute extractedStrides.
     for (int i = kD - 2; i >= 0; --i) {
-      extractedStrides[i] =
-          extractedStrides[i + 1] * sizes[i + 1];
+      extractedStrides[i] = extractedStrides[i + 1] * sizes[i + 1];
     }
     // Iterate over all extracted slices from 0 to nExtractedSlices - 1
     // and compute the multi-dimensional index and the corresponding linearized
@@ -220,9 +219,7 @@ struct LinearizeVectorExtractStridedSlice final
       // i.e. shift the multiDimIndex by the offsets.
       int64_t linearizedIndex = 0;
       for (int64_t j = 0; j < kD; ++j) {
-        linearizedIndex +=
-            (offsets[j] + multiDimIndex[j]) *
-            sourceStrides[j];
+        linearizedIndex += (offsets[j] + multiDimIndex[j]) * sourceStrides[j];
       }
       // Fill the indices array form linearizedIndex to linearizedIndex +
       // extractGranularitySize.
