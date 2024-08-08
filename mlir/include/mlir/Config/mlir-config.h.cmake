@@ -43,4 +43,7 @@
    and targets. */
 #cmakedefine01 MLIR_ENABLE_ROCM_CONVERSIONS
 
+/* If set, disallows unsafe APIs for scalable vectors */
+#cmakedefine01 MLIR_ENABLE_SCALABLE_VECTOR_API_CHECKS
+
 #endif
