@@ -31,7 +31,7 @@ struct NDVectorTypeInfo {
 // 1-D subvectors in the underlying llrepresentation of the n-D vector
 // Iterates on the llvm array type until we hit a non-array type (which is
 // asserted to be an llvm vector type).
-NDVectorTypeInfo extractNDVectorTypeInfo(VectorType vectorType,
+NDVectorTypeInfo extractNDVectorTypeInfo(FixedOrScalableVectorType vectorType,
                                          const LLVMTypeConverter &converter);
 
 // Express `linearIndex` in terms of coordinates of `basis`.
