@@ -1096,7 +1096,7 @@ def Builtin_UnrankedTensor : Builtin_Type<"UnrankedTensor", "unranked_tensor", [
 // VectorType
 //===----------------------------------------------------------------------===//
 
-def Builtin_Vector : Builtin_Type<"Vector", "vector",
+def Builtin_Vector : Builtin_Type<"Vector", "fixed_vector",
     [ShapedTypeInterface, ValueSemantics], "Type"> {
   let summary = "Multi-dimensional SIMD vector type";
   let description = [{
@@ -1281,6 +1281,7 @@ def Builtin_ScalableVector : Builtin_Type<"ScalableVector", "scalable_vector",
   }];
 
   let skipDefaultBuilders = 1;
+  let genVerifyDecl = 1;
 }
 
 #endif // BUILTIN_TYPES

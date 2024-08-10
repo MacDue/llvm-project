@@ -38,7 +38,7 @@ OptionalParseResult Parser::parseOptionalType(Type &type) {
   case Token::kw_complex:
   case Token::kw_tuple:
   case Token::kw_scalable_vector:
-  case Token::kw_vector:
+  case Token::kw_fixed_vector:
   case Token::inttype:
   case Token::kw_f8E5M2:
   case Token::kw_f8E4M3:
@@ -283,7 +283,7 @@ Type Parser::parseNonFunctionType() {
   case Token::kw_tuple:
     return parseTupleType();
   case Token::kw_scalable_vector:
-  case Token::kw_vector:
+  case Token::kw_fixed_vector:
     return parseVectorType();
   // integer-type
   case Token::inttype: {
@@ -462,7 +462,7 @@ Type Parser::parseTupleType() {
 Type Parser::parseVectorType() {
   bool isScalable = consumeIf(Token::kw_scalable_vector);
   if (!isScalable)
-    consumeToken(Token::kw_vector);
+    consumeToken(Token::kw_fixed_vector);
 
   if (parseToken(Token::less, "expected '<' in vector type"))
     return nullptr;
@@ -476,9 +476,17 @@ Type Parser::parseVectorType() {
                      "vector types must have positive constant sizes"),
            nullptr;
 
-  if (!isScalable && llvm::is_contained(scalableDims, true))
-    return emitError(getToken().getLoc(), "vector does not support scalable "
-                                          "dimensions (use scalable_vector)"),
+  bool hasScalableDims = llvm::is_contained(scalableDims, true);
+
+  if (!isScalable && hasScalableDims)
+    return emitError(getToken().getLoc(),
+                     "fixed_vector does not support scalable "
+                     "dimensions (use scalable_vector)"),
+           nullptr;
+  else if (isScalable && !hasScalableDims)
+    return emitError(getToken().getLoc(),
+                     "scalable_vector requires at least one scalable dimension "
+                     "(use fixed_vector)"),
            nullptr;
 
   // Parse the element type.

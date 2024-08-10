@@ -269,6 +269,29 @@ VectorType VectorType::cloneWith(std::optional<ArrayRef<int64_t>> shape,
 }
 
 //===----------------------------------------------------------------------===//
+// ScalableVectorType
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+ScalableVectorType::verify(function_ref<InFlightDiagnostic()> emitError,
+                           ArrayRef<VectorDim> shape, Type elementType) {
+  if (!isValidElementType(elementType))
+    return emitError()
+           << "scalable_vector elements must be int/index/float type but got "
+           << elementType;
+
+  if (any_of(shape, [](VectorDim dim) { return dim.getMinSize() <= 0; }))
+    return emitError()
+           << "scalable_vector types must have positive constant sizes";
+
+  if (none_of(shape, [](VectorDim dim) { return dim.isScalable(); }))
+    return emitError() << "scalable_vector types must have at least one "
+                          "scalable dimension";
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // TensorType
 //===----------------------------------------------------------------------===//
 
