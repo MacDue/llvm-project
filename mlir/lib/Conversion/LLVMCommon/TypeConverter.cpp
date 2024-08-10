@@ -61,7 +61,7 @@ LLVMTypeConverter::LLVMTypeConverter(MLIRContext *ctx,
   addConversion([&](MemRefType type) { return convertMemRefType(type); });
   addConversion(
       [&](UnrankedMemRefType type) { return convertUnrankedMemRefType(type); });
-  addConversion([&](VectorType type) -> std::optional<Type> {
+  addConversion([&](FixedOrScalableVectorType type) -> std::optional<Type> {
     FailureOr<Type> llvmType = convertVectorType(type);
     if (failed(llvmType))
       return std::nullopt;
@@ -511,24 +511,24 @@ Type LLVMTypeConverter::convertMemRefToBarePtr(BaseMemRefType type) const {
 ///    `!llvm.array<ax...array<jxvector<kxT>>>`.
 /// As LLVM supports arrays of scalable vectors, this method will also convert
 /// n-D scalable vectors provided that only the trailing dim is scalable.
-FailureOr<Type> LLVMTypeConverter::convertVectorType(VectorType type) const {
+FailureOr<Type>
+LLVMTypeConverter::convertVectorType(FixedOrScalableVectorType type) const {
   auto elementType = convertType(type.getElementType());
   if (!elementType)
     return {};
   if (type.getShape().empty())
     return VectorType::get({1}, elementType);
-  Type vectorType = VectorType::get(type.getShape().back(), elementType,
-                                    type.getScalableDims().back());
+  Type vectorType = type.cloneWith({type.getShape().back()}, elementType);
   assert(LLVM::isCompatibleVectorType(vectorType) &&
          "expected vector type compatible with the LLVM dialect");
   // For n-D vector types for which a _non-trailing_ dim is scalable,
   // return a failure. Supporting such cases would require LLVM
   // to support something akin "scalable arrays" of vectors.
-  if (llvm::is_contained(type.getScalableDims().drop_back(), true))
+  if (type.getShape().dropBack().hasScalableDims())
     return failure();
   auto shape = type.getShape();
   for (int i = shape.size() - 2; i >= 0; --i)
-    vectorType = LLVM::LLVMArrayType::get(vectorType, shape[i]);
+    vectorType = LLVM::LLVMArrayType::get(vectorType, shape[i].getFixedSize());
   return vectorType;
 }
 

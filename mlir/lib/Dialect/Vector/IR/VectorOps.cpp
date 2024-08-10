@@ -6279,8 +6279,9 @@ OpFoldResult SplatOp::fold(FoldAdaptor adaptor) {
   if (!isa_and_nonnull<IntegerAttr, FloatAttr>(constOperand))
     return {};
 
+  return {};
   // SplatElementsAttr::get treats single value for second arg as being a splat.
-  return SplatElementsAttr::get(getType(), {constOperand});
+  // return SplatElementsAttr::get(getType(), {constOperand});
 }
 
 //===----------------------------------------------------------------------===//

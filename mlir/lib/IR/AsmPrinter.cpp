@@ -2610,19 +2610,16 @@ void AsmPrinter::Impl::printTypeImpl(Type type) {
         }
       })
       .Case<VectorType>([&](VectorType vectorTy) {
-        auto scalableDims = vectorTy.getScalableDims();
         os << "vector<";
-        auto vShape = vectorTy.getShape();
-        unsigned lastDim = vShape.size();
-        unsigned dimIdx = 0;
-        for (dimIdx = 0; dimIdx < lastDim; dimIdx++) {
-          if (!scalableDims.empty() && scalableDims[dimIdx])
-            os << '[';
-          os << vShape[dimIdx];
-          if (!scalableDims.empty() && scalableDims[dimIdx])
-            os << ']';
-          os << 'x';
-        }
+        llvm::interleave(vectorTy.getShape(), os, "x");
+        os << "x";
+        printType(vectorTy.getElementType());
+        os << '>';
+      })
+      .Case<ScalableVectorType>([&](ScalableVectorType vectorTy) {
+        os << "scalable_vector<";
+        llvm::interleave(vectorTy.getShape(), os, "x");
+        os << "x";
         printType(vectorTy.getElementType());
         os << '>';
       })

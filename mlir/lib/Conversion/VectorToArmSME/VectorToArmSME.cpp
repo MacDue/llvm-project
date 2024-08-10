@@ -274,46 +274,46 @@ struct BroadcastOpToArmSMELowering
 ///   }
 ///
 /// This is identical to vector.broadcast of a scalar.
-struct SplatOpToArmSMELowering : public OpRewritePattern<vector::SplatOp> {
-  using OpRewritePattern<vector::SplatOp>::OpRewritePattern;
+// struct SplatOpToArmSMELowering : public OpRewritePattern<vector::SplatOp> {
+//   using OpRewritePattern<vector::SplatOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(vector::SplatOp splatOp,
-                                PatternRewriter &rewriter) const final {
-    auto tileType = splatOp.getResult().getType();
-    if (!tileType || !arm_sme::isValidSMETileVectorType(tileType))
-      return failure();
+//   LogicalResult matchAndRewrite(vector::SplatOp splatOp,
+//                                 PatternRewriter &rewriter) const final {
+//     auto tileType = splatOp.getResult().getType();
+//     if (!tileType || !arm_sme::isValidSMETileVectorType(tileType))
+//       return failure();
 
-    auto loc = splatOp.getLoc();
-    auto srcType = splatOp.getOperand().getType();
+//     auto loc = splatOp.getLoc();
+//     auto srcType = splatOp.getOperand().getType();
 
-    assert(srcType.isIntOrFloat() && "Invalid source type for vector.splat");
-    // Avoid unused-variable warning when building without assertions.
-    (void)srcType;
+//     assert(srcType.isIntOrFloat() && "Invalid source type for vector.splat");
+//     // Avoid unused-variable warning when building without assertions.
+//     (void)srcType;
 
-    // First, broadcast the scalar to a 1-d vector.
-    VectorType tileSliceType = VectorType::Builder(tileType).dropDim(0);
-    Value broadcastOp1D = rewriter.create<vector::BroadcastOp>(
-        loc, tileSliceType, splatOp.getInput());
+//     // First, broadcast the scalar to a 1-d vector.
+//     VectorType tileSliceType = VectorType::Builder(tileType).dropDim(0);
+//     Value broadcastOp1D = rewriter.create<vector::BroadcastOp>(
+//         loc, tileSliceType, splatOp.getInput());
 
-    auto initTile = rewriter.create<arm_sme::GetTileOp>(loc, tileType);
+//     auto initTile = rewriter.create<arm_sme::GetTileOp>(loc, tileType);
 
-    auto makeLoopBody = [&](OpBuilder &b, Location loc, Value tileSliceIndex,
-                            Value currentTile) {
-      auto nextTile = b.create<arm_sme::MoveVectorToTileSliceOp>(
-          loc, tileType, broadcastOp1D, currentTile, tileSliceIndex);
-      return nextTile.getResult();
-    };
+//     auto makeLoopBody = [&](OpBuilder &b, Location loc, Value tileSliceIndex,
+//                             Value currentTile) {
+//       auto nextTile = b.create<arm_sme::MoveVectorToTileSliceOp>(
+//           loc, tileType, broadcastOp1D, currentTile, tileSliceIndex);
+//       return nextTile.getResult();
+//     };
 
-    // Next, create a loop over ZA tile slices and "move" the generated 1-d
-    // vector to each slice.
-    auto forOp =
-        createLoopOverTileSlices(rewriter, loc, initTile, makeLoopBody);
+//     // Next, create a loop over ZA tile slices and "move" the generated 1-d
+//     // vector to each slice.
+//     auto forOp =
+//         createLoopOverTileSlices(rewriter, loc, initTile, makeLoopBody);
 
-    rewriter.replaceOp(splatOp, forOp.getResult(0));
+//     rewriter.replaceOp(splatOp, forOp.getResult(0));
 
-    return success();
-  }
-};
+//     return success();
+//   }
+// };
 
 /// Conversion pattern for vector.transpose.
 ///
@@ -795,10 +795,10 @@ struct ExtractFromCreateMaskToPselLowering
 
 void mlir::populateVectorToArmSMEPatterns(RewritePatternSet &patterns,
                                           MLIRContext &ctx) {
-  patterns.add<BroadcastOpToArmSMELowering, SplatOpToArmSMELowering,
-               TransferReadToArmSMELowering, TransferWriteToArmSMELowering,
-               TransposeOpToArmSMELowering, VectorLoadToArmSMELowering,
-               VectorStoreToArmSMELowering, VectorOuterProductToArmSMELowering,
+  patterns.add<BroadcastOpToArmSMELowering, TransferReadToArmSMELowering,
+               TransferWriteToArmSMELowering, TransposeOpToArmSMELowering,
+               VectorLoadToArmSMELowering, VectorStoreToArmSMELowering,
+               VectorOuterProductToArmSMELowering,
                VectorExtractToArmSMELowering, VectorInsertToArmSMELowering,
                VectorPrintToArmSMELowering, FoldTransferWriteOfExtractTileSlice,
                ExtractFromCreateMaskToPselLowering>(&ctx);

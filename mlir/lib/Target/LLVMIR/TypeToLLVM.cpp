@@ -70,7 +70,7 @@ public:
             .Case<LLVM::LLVMArrayType, IntegerType, LLVM::LLVMFunctionType,
                   LLVM::LLVMPointerType, LLVM::LLVMStructType,
                   LLVM::LLVMFixedVectorType, LLVM::LLVMScalableVectorType,
-                  VectorType, LLVM::LLVMTargetExtType>(
+                  FixedOrScalableVectorType, LLVM::LLVMTargetExtType>(
                 [this](auto type) { return this->translate(type); })
             .Default([](Type t) -> llvm::Type * {
               llvm_unreachable("unknown LLVM dialect type");
@@ -130,14 +130,14 @@ private:
   }
 
   /// Translates the given built-in vector type compatible with LLVM.
-  llvm::Type *translate(VectorType type) {
+  llvm::Type *translate(FixedOrScalableVectorType type) {
     assert(LLVM::isCompatibleVectorType(type) &&
            "expected compatible with LLVM vector type");
     if (type.isScalable())
       return llvm::ScalableVectorType::get(translateType(type.getElementType()),
-                                           type.getNumElements());
+                                           type.getMinNumElements());
     return llvm::FixedVectorType::get(translateType(type.getElementType()),
-                                      type.getNumElements());
+                                      type.getMinNumElements());
   }
 
   /// Translates the given fixed-vector type.

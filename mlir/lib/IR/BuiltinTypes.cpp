@@ -278,7 +278,9 @@ Type TensorType::getElementType() const {
           [](auto type) { return type.getElementType(); });
 }
 
-bool TensorType::hasRank() const { return !llvm::isa<UnrankedTensorType>(*this); }
+bool TensorType::hasRank() const {
+  return !llvm::isa<UnrankedTensorType>(*this);
+}
 
 ArrayRef<int64_t> TensorType::getShape() const {
   return llvm::cast<RankedTensorType>(*this).getShape();
@@ -365,7 +367,9 @@ Type BaseMemRefType::getElementType() const {
           [](auto type) { return type.getElementType(); });
 }
 
-bool BaseMemRefType::hasRank() const { return !llvm::isa<UnrankedMemRefType>(*this); }
+bool BaseMemRefType::hasRank() const {
+  return !llvm::isa<UnrankedMemRefType>(*this);
+}
 
 ArrayRef<int64_t> BaseMemRefType::getShape() const {
   return llvm::cast<MemRefType>(*this).getShape();

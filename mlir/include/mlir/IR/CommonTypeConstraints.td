@@ -642,6 +642,27 @@ def AnyVector : VectorOf<[AnyType]>;
 // Temporary vector type clone that allows gradual transition to 0-D vectors.
 def AnyVectorOfAnyRank : VectorOfAnyRankOf<[AnyType]>;
 
+/// !!!! NEw
+
+class PredicatedFixedOrScalableVectorType<list<Type> allowedTypes,
+                          Pred containerPred, string descr,
+                          string cppClassName = "::mlir::Type"> :
+    Type<And<[containerPred,
+              Concat<"[](::mlir::Type elementType) { return ",
+                SubstLeaves<"$_self", "elementType",
+                AnyTypeOf<allowedTypes>.predicate>,
+                "; }(::llvm::cast<::mlir::FixedOrScalableVectorType>($_self).getElementType())">]>,
+         descr # " of " # AnyTypeOf<allowedTypes>.summary # " values", cppClassName>;
+
+
+class FixedOrScalabeVectorOfAnyRankOf<list<Type> allowedTypes> :
+  PredicatedFixedOrScalableVectorType<allowedTypes, CPred<"::llvm::isa<::mlir::FixedOrScalableVectorType>($_self)">, "vector or scalable_vector",
+                      "::mlir::Type">;
+
+def FixedOrScalabeVectorOfAnyRank : FixedOrScalabeVectorOfAnyRankOf<[AnyType]>;
+
+/// !!!! END NEW
+
 def AnyFixedVector : FixedVectorOf<[AnyType]>;
 
 def AnyScalableVector : ScalableVectorOf<[AnyType]>;

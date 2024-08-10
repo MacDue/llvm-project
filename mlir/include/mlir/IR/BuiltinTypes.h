@@ -245,26 +245,9 @@ public:
       os << ']';
   }
 
-  /// Helper class for indexing into a list of sizes (and possibly empty) list
-  /// of scalable dimensions, extracting VectorDim elements.
-  struct Indexer {
-    explicit Indexer(ArrayRef<int64_t> sizes, ArrayRef<bool> scalableDims)
-        : sizes(sizes), scalableDims(scalableDims) {
-      assert(
-          scalableDims.empty() ||
-          sizes.size() == scalableDims.size() &&
-              "expected `scalableDims` to be empty or match `sizes` in length");
-    }
-
-    VectorDim operator[](size_t idx) const {
-      int64_t size = sizes[idx];
-      bool scalable = scalableDims.empty() ? false : scalableDims[idx];
-      return VectorDim(size, scalable);
-    }
-
-    ArrayRef<int64_t> sizes;
-    ArrayRef<bool> scalableDims;
-  };
+  inline friend ::llvm::hash_code hash_value(VectorDim dim) {
+    return ::llvm::hash_combine(dim.quantity, dim.scalable);
+  }
 
 private:
   int64_t quantity;
@@ -280,18 +263,38 @@ inline raw_ostream &operator<<(raw_ostream &os, VectorDim dim) {
 // VectorDimList
 //===----------------------------------------------------------------------===//
 
+namespace detail {
+struct VectorIndexingAdaptor {
+  VectorIndexingAdaptor(ArrayRef<int64_t> sizes) : fixedShape(sizes) {}
+
+  VectorIndexingAdaptor(ArrayRef<VectorDim> sizes) : scalableShape(sizes) {}
+
+  VectorDim operator[](size_t idx) const {
+    if (!fixedShape.empty())
+      return VectorDim::getFixed(fixedShape[idx]);
+    return scalableShape[idx];
+  }
+
+  const ArrayRef<int64_t> fixedShape{};
+  const ArrayRef<VectorDim> scalableShape{};
+};
+} // namespace detail
+
+class FixedOrScalableVectorType;
+
 /// Represents a non-owning list of vector dimensions. The underlying dimension
 /// sizes and scalability flags are stored a two seperate lists to match the
 /// storage of a VectorType.
-class VectorDimList : public VectorDim::Indexer {
+class VectorDimList : public detail::VectorIndexingAdaptor {
 public:
-  using VectorDim::Indexer::Indexer;
+  using VectorIndexingAdaptor::VectorIndexingAdaptor;
+  using IndexingAdaptor = detail::VectorIndexingAdaptor;
 
   class Iterator : public llvm::iterator_facade_base<
                        Iterator, std::random_access_iterator_tag, VectorDim,
                        std::ptrdiff_t, VectorDim, VectorDim> {
   public:
-    Iterator(VectorDim::Indexer indexer, size_t index)
+    Iterator(IndexingAdaptor indexer, size_t index)
         : indexer(indexer), index(index) {};
 
     // Iterator boilerplate.
@@ -308,11 +311,11 @@ public:
     }
     VectorDim operator*() const { return indexer[index]; }
 
-    VectorDim::Indexer getIndexer() const { return indexer; }
+    IndexingAdaptor getIndexer() const { return indexer; }
     ptrdiff_t getIndex() const { return index; }
 
   private:
-    VectorDim::Indexer indexer;
+    IndexingAdaptor indexer;
     ptrdiff_t index;
   };
 
@@ -330,16 +333,18 @@ public:
       : VectorDimList(VectorDimList(begin.getIndexer())
                           .slice(begin.getIndex(), end - begin)) {}
 
-  VectorDimList(VectorDim::Indexer indexer) : VectorDim::Indexer(indexer) {};
+  VectorDimList(IndexingAdaptor indexer) : IndexingAdaptor(indexer) {};
 
   Iterator begin() const { return Iterator(*this, 0); }
   Iterator end() const { return Iterator(*this, size()); }
 
   /// Check if the dims are empty.
-  bool empty() const { return sizes.empty(); }
+  bool empty() const { return size() == 0; }
 
   /// Get the number of dims.
-  size_t size() const { return sizes.size(); }
+  size_t size() const {
+    return fixedShape.empty() ? scalableShape.size() : fixedShape.size();
+  }
 
   /// Return the first dim.
   VectorDim front() const { return (*this)[0]; }
@@ -349,10 +354,10 @@ public:
 
   /// Chop of the first \p n dims, and keep the remaining \p m dims.
   VectorDimList slice(size_t n, size_t m) const {
-    ArrayRef<int64_t> newSizes = sizes.slice(n, m);
-    ArrayRef<bool> newScalableDims =
-        scalableDims.empty() ? ArrayRef<bool>{} : scalableDims.slice(n, m);
-    return VectorDimList(newSizes, newScalableDims);
+    assert(n + m <= size() && "invalid specifier");
+    if (!fixedShape.empty())
+      return VectorDimList(fixedShape.slice(n, m));
+    return VectorDimList(scalableShape.slice(n, m));
   }
 
   /// Drop the first \p n dims.
@@ -383,7 +388,7 @@ public:
 
   /// Returns true if one or more of the dims are scalable.
   bool hasScalableDims() const {
-    return llvm::is_contained(getScalableDims(), true);
+    return llvm::any_of(*this, [](VectorDim dim) { return dim.isScalable(); });
   }
 
   /// Check for dim equality.
@@ -400,11 +405,7 @@ public:
     return std::equal(begin(), end(), rhs.begin());
   }
 
-  /// Return the underlying sizes.
-  ArrayRef<int64_t> getSizes() const { return sizes; }
-
-  /// Return the underlying scalable dims.
-  ArrayRef<bool> getScalableDims() const { return scalableDims; }
+  friend FixedOrScalableVectorType;
 };
 
 inline bool operator==(VectorDimList lhs, VectorDimList rhs) {
@@ -433,6 +434,97 @@ inline bool operator!=(VectorDimList lhs, ArrayRef<VectorDim> rhs) {
 #include "mlir/IR/BuiltinTypes.h.inc"
 
 namespace mlir {
+
+//===----------------------------------------------------------------------===//
+// FixedOrScalableVectorType
+//===----------------------------------------------------------------------===//
+
+class FixedOrScalableVectorType {
+public:
+  using Dim = VectorDim;
+  using DimList = VectorDimList;
+
+  FixedOrScalableVectorType(Type type) {
+    if (!type)
+      return;
+    if (auto vectorType = dyn_cast<VectorType>(type))
+      this->vectorType = vectorType;
+    else
+      this->scalableVectorType = cast<ScalableVectorType>(type);
+  }
+
+  inline static bool classof(Type type) {
+    return isa<VectorType, ScalableVectorType>(type);
+  }
+
+  /// Returns the value of the specified dimension (including scalability).
+  Dim getDim(unsigned idx) const {
+    assert(idx < getRank() && "invalid dim index for vector type");
+    return getShape()[idx];
+  }
+
+  /// Returns the dimensions of this vector type (including scalability).
+  DimList getShape() const {
+    if (vectorType)
+      return DimList(vectorType.getShape());
+    return DimList(scalableVectorType.getShape());
+  }
+
+  /// Returns the rank of this vector type.
+  int64_t getRank() const { return getShape().size(); }
+
+  /// Returns true if the vector contains scalable dimensions.
+  bool isScalable() const { return getShape().hasScalableDims(); }
+  bool hasAllScalableDims() const {
+    if (scalableVectorType)
+      return scalableVectorType.hasAllScalableDims();
+    return false;
+  }
+
+  /// Returns the element type of this vector type.
+  Type getElementType() const {
+    if (vectorType)
+      return vectorType.getElementType();
+    return scalableVectorType.getElementType();
+  }
+
+  /// Clone this vector type with a new element type.
+  Type clone(Type elementType) {
+    if (vectorType)
+      return vectorType.clone(elementType);
+    return scalableVectorType.clone(elementType);
+  }
+
+  /// Clone this vector type with a new shape and element type.
+  Type cloneWith(DimList dims, Type elementType) {
+    if (vectorType) {
+      SmallVector<int64_t> shape = llvm::map_to_vector(
+          dims, [](VectorDim dim) { return dim.getFixedSize(); });
+      return VectorType::get(shape, elementType);
+    }
+    return ScalableVectorType::get(dims.scalableShape, elementType);
+  }
+
+  /// Returns the minimum number of elements this vector type can hold.
+  int64_t getMinNumElements() const {
+    int64_t minNumElements = 1;
+    for (VectorDim dim : getShape())
+      minNumElements *= dim.getMinSize();
+    return minNumElements;
+  }
+
+  explicit operator bool() const {
+    return bool(vectorType) || bool(scalableVectorType);
+  }
+
+  operator Type() const {
+    return vectorType ? Type(vectorType) : Type(scalableVectorType);
+  }
+
+private:
+  VectorType vectorType;
+  ScalableVectorType scalableVectorType;
+};
 
 //===----------------------------------------------------------------------===//
 // MemRefType

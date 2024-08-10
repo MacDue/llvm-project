@@ -127,6 +127,7 @@ TOK_KEYWORD(tuple)
 TOK_KEYWORD(type)
 TOK_KEYWORD(unit)
 TOK_KEYWORD(vector)
+TOK_KEYWORD(scalable_vector)
 
 #undef TOK_MARKER
 #undef TOK_IDENTIFIER

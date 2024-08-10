@@ -229,7 +229,7 @@ private:
   Type convertMemRefToBarePtr(BaseMemRefType type) const;
 
   /// Convert a 1D vector type into an LLVM vector type.
-  FailureOr<Type> convertVectorType(VectorType type) const;
+  FailureOr<Type> convertVectorType(FixedOrScalableVectorType type) const;
 
   /// Options for customizing the llvm lowering.
   LowerToLLVMOptions options;

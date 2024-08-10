@@ -2786,7 +2786,7 @@ def Vector_SplatOp : Vector_Op<"splat", [
     Pure,
     TypesMatchWith<"operand type matches element type of result",
                    "aggregate", "input",
-                   "::llvm::cast<VectorType>($_self).getElementType()">
+                   "::llvm::cast<FixedOrScalableVectorType>($_self).getElementType()">
   ]> {
   let summary = "vector splat or broadcast operation";
   let description = [{
@@ -2801,9 +2801,15 @@ def Vector_SplatOp : Vector_Op<"splat", [
     ```
   }];
 
+  let extraClassDeclaration = [{
+    FixedOrScalableVectorType getVectorType() {
+      return cast<FixedOrScalableVectorType>(getAggregate().getType());
+    }
+  }];
+
   let arguments = (ins AnyTypeOf<[AnySignlessInteger, Index, AnyFloat],
                                  "integer/index/float type">:$input);
-  let results = (outs AnyVectorOfAnyRank:$aggregate);
+  let results = (outs FixedOrScalabeVectorOfAnyRank:$aggregate);
 
   let builders = [
     OpBuilder<(ins "Value":$element, "Type":$aggregateType),

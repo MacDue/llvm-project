@@ -1652,7 +1652,7 @@ struct VectorSplatOpLowering : public ConvertOpToLLVMPattern<vector::SplatOp> {
   LogicalResult
   matchAndRewrite(vector::SplatOp splatOp, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    VectorType resultType = cast<VectorType>(splatOp.getType());
+    FixedOrScalableVectorType resultType = splatOp.getVectorType();
     if (resultType.getRank() > 1)
       return failure();
 
@@ -1675,8 +1675,8 @@ struct VectorSplatOpLowering : public ConvertOpToLLVMPattern<vector::SplatOp> {
     auto v = rewriter.create<LLVM::InsertElementOp>(
         splatOp.getLoc(), vectorType, undef, adaptor.getInput(), zero);
 
-    int64_t width = cast<VectorType>(splatOp.getType()).getDimSize(0);
-    SmallVector<int32_t> zeroValues(width, 0);
+    int64_t minWidth = resultType.getDim(0).getMinSize();
+    SmallVector<int32_t> zeroValues(minWidth, 0);
 
     // Shuffle the value across the desired number of elements.
     rewriter.replaceOpWithNewOp<LLVM::ShuffleVectorOp>(splatOp, v, undef,
@@ -1688,51 +1688,57 @@ struct VectorSplatOpLowering : public ConvertOpToLLVMPattern<vector::SplatOp> {
 /// The Splat operation is lowered to an insertelement + a shufflevector
 /// operation. Splat to only 2+-d vector result types are lowered by the
 /// SplatNdOpLowering, the 1-d case is handled by SplatOpLowering.
-struct VectorSplatNdOpLowering : public ConvertOpToLLVMPattern<SplatOp> {
-  using ConvertOpToLLVMPattern<SplatOp>::ConvertOpToLLVMPattern;
+// struct VectorSplatNdOpLowering : public ConvertOpToLLVMPattern<SplatOp> {
+//   using ConvertOpToLLVMPattern<SplatOp>::ConvertOpToLLVMPattern;
 
-  LogicalResult
-  matchAndRewrite(SplatOp splatOp, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    VectorType resultType = splatOp.getType();
-    if (resultType.getRank() <= 1)
-      return failure();
+//   LogicalResult
+//   matchAndRewrite(SplatOp splatOp, OpAdaptor adaptor,
+//                   ConversionPatternRewriter &rewriter) const override {
+//     VectorType resultType = splatOp.getType();
+//     if (resultType.getRank() <= 1)
+//       return failure();
 
-    // First insert it into an undef vector so we can shuffle it.
-    auto loc = splatOp.getLoc();
-    auto vectorTypeInfo =
-        LLVM::detail::extractNDVectorTypeInfo(resultType, *getTypeConverter());
-    auto llvmNDVectorTy = vectorTypeInfo.llvmNDVectorTy;
-    auto llvm1DVectorTy = vectorTypeInfo.llvm1DVectorTy;
-    if (!llvmNDVectorTy || !llvm1DVectorTy)
-      return failure();
+//     // First insert it into an undef vector so we can shuffle it.
+//     auto loc = splatOp.getLoc();
+//     auto vectorTypeInfo =
+//         LLVM::detail::extractNDVectorTypeInfo(resultType,
+//         *getTypeConverter());
+//     auto llvmNDVectorTy = vectorTypeInfo.llvmNDVectorTy;
+//     auto llvm1DVectorTy = vectorTypeInfo.llvm1DVectorTy;
+//     if (!llvmNDVectorTy || !llvm1DVectorTy)
+//       return failure();
 
-    // Construct returned value.
-    Value desc = rewriter.create<LLVM::UndefOp>(loc, llvmNDVectorTy);
+//     // Construct returned value.
+//     Value desc = rewriter.create<LLVM::UndefOp>(loc, llvmNDVectorTy);
 
-    // Construct a 1-D vector with the splatted value that we insert in all the
-    // places within the returned descriptor.
-    Value vdesc = rewriter.create<LLVM::UndefOp>(loc, llvm1DVectorTy);
-    auto zero = rewriter.create<LLVM::ConstantOp>(
-        loc, typeConverter->convertType(rewriter.getIntegerType(32)),
-        rewriter.getZeroAttr(rewriter.getIntegerType(32)));
-    Value v = rewriter.create<LLVM::InsertElementOp>(loc, llvm1DVectorTy, vdesc,
-                                                     adaptor.getInput(), zero);
+//     // Construct a 1-D vector with the splatted value that we insert in all
+//     the
+//     // places within the returned descriptor.
+//     Value vdesc = rewriter.create<LLVM::UndefOp>(loc, llvm1DVectorTy);
+//     auto zero = rewriter.create<LLVM::ConstantOp>(
+//         loc, typeConverter->convertType(rewriter.getIntegerType(32)),
+//         rewriter.getZeroAttr(rewriter.getIntegerType(32)));
+//     Value v = rewriter.create<LLVM::InsertElementOp>(loc, llvm1DVectorTy,
+//     vdesc,
+//                                                      adaptor.getInput(),
+//                                                      zero);
 
-    // Shuffle the value across the desired number of elements.
-    int64_t width = resultType.getDimSize(resultType.getRank() - 1);
-    SmallVector<int32_t> zeroValues(width, 0);
-    v = rewriter.create<LLVM::ShuffleVectorOp>(loc, v, v, zeroValues);
+//     // Shuffle the value across the desired number of elements.
+//     int64_t width = resultType.getDimSize(resultType.getRank() - 1);
+//     SmallVector<int32_t> zeroValues(width, 0);
+//     v = rewriter.create<LLVM::ShuffleVectorOp>(loc, v, v, zeroValues);
 
-    // Iterate of linear index, convert to coords space and insert splatted 1-D
-    // vector in each position.
-    nDVectorIterate(vectorTypeInfo, rewriter, [&](ArrayRef<int64_t> position) {
-      desc = rewriter.create<LLVM::InsertValueOp>(loc, desc, v, position);
-    });
-    rewriter.replaceOp(splatOp, desc);
-    return success();
-  }
-};
+//     // Iterate of linear index, convert to coords space and insert splatted
+//     1-D
+//     // vector in each position.
+//     nDVectorIterate(vectorTypeInfo, rewriter, [&](ArrayRef<int64_t> position)
+//     {
+//       desc = rewriter.create<LLVM::InsertValueOp>(loc, desc, v, position);
+//     });
+//     rewriter.replaceOp(splatOp, desc);
+//     return success();
+//   }
+// };
 
 /// Conversion pattern for a `vector.interleave`.
 /// This supports fixed-sized vectors and scalable vectors.
@@ -1896,11 +1902,10 @@ void mlir::populateVectorToLLVMConversionPatterns(
                VectorLoadStoreConversion<vector::MaskedStoreOp>,
                VectorGatherOpConversion, VectorScatterOpConversion,
                VectorExpandLoadOpConversion, VectorCompressStoreOpConversion,
-               VectorSplatOpLowering, VectorSplatNdOpLowering,
-               VectorScalableInsertOpLowering, VectorScalableExtractOpLowering,
-               MaskedReductionOpConversion, VectorInterleaveOpLowering,
-               VectorDeinterleaveOpLowering, VectorFromElementsLowering,
-               VectorStepOpLowering>(converter);
+               VectorSplatOpLowering, VectorScalableInsertOpLowering,
+               VectorScalableExtractOpLowering, MaskedReductionOpConversion,
+               VectorInterleaveOpLowering, VectorDeinterleaveOpLowering,
+               VectorFromElementsLowering, VectorStepOpLowering>(converter);
   // Transfer ops with rank > 1 are handled by VectorToSCF.
   populateVectorTransferLoweringPatterns(patterns, /*maxTransferRank=*/1);
 }

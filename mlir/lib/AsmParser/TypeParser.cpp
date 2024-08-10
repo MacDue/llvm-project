@@ -37,6 +37,7 @@ OptionalParseResult Parser::parseOptionalType(Type &type) {
   case Token::kw_tensor:
   case Token::kw_complex:
   case Token::kw_tuple:
+  case Token::kw_scalable_vector:
   case Token::kw_vector:
   case Token::inttype:
   case Token::kw_f8E5M2:
@@ -281,6 +282,7 @@ Type Parser::parseNonFunctionType() {
     return parseComplexType();
   case Token::kw_tuple:
     return parseTupleType();
+  case Token::kw_scalable_vector:
   case Token::kw_vector:
     return parseVectorType();
   // integer-type
@@ -457,8 +459,10 @@ Type Parser::parseTupleType() {
 /// vector-dim-list := (static-dim-list `x`)? (`[` static-dim-list `]` `x`)?
 /// static-dim-list ::= decimal-literal (`x` decimal-literal)*
 ///
-VectorType Parser::parseVectorType() {
-  consumeToken(Token::kw_vector);
+Type Parser::parseVectorType() {
+  bool isScalable = consumeIf(Token::kw_scalable_vector);
+  if (!isScalable)
+    consumeToken(Token::kw_vector);
 
   if (parseToken(Token::less, "expected '<' in vector type"))
     return nullptr;
@@ -472,6 +476,11 @@ VectorType Parser::parseVectorType() {
                      "vector types must have positive constant sizes"),
            nullptr;
 
+  if (!isScalable && llvm::is_contained(scalableDims, true))
+    return emitError(getToken().getLoc(), "vector does not support scalable "
+                                          "dimensions (use scalable_vector)"),
+           nullptr;
+
   // Parse the element type.
   auto typeLoc = getToken().getLoc();
   auto elementType = parseType();
@@ -482,7 +491,17 @@ VectorType Parser::parseVectorType() {
     return emitError(typeLoc, "vector elements must be int/index/float type"),
            nullptr;
 
-  return VectorType::get(dimensions, elementType, scalableDims);
+  if (!isScalable)
+    return VectorType::get(dimensions, elementType);
+
+  auto dims =
+      llvm::map_to_vector(llvm::zip(dimensions, scalableDims), [](auto pair) {
+        auto [size, scalable] = pair;
+        if (scalable)
+          return VectorDim::getScalable(size);
+        return VectorDim::getFixed(size);
+      });
+  return ScalableVectorType::get(dims, elementType);
 }
 
 /// Parse a dimension list in a vector type. This populates the dimension list.
