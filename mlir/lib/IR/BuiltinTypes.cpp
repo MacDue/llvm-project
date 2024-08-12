@@ -231,21 +231,23 @@ LogicalResult OpaqueType::verify(function_ref<InFlightDiagnostic()> emitError,
 //===----------------------------------------------------------------------===//
 
 LogicalResult VectorType::verify(function_ref<InFlightDiagnostic()> emitError,
-                                 ArrayRef<int64_t> shape, Type elementType,
-                                 ArrayRef<bool> scalableDims) {
+                                 Type elementType, VectorDimList vectorShape) {
   if (!isValidElementType(elementType))
     return emitError()
            << "vector elements must be int/index/float type but got "
            << elementType;
 
-  if (any_of(shape, [](int64_t i) { return i <= 0; }))
+  ArrayRef<int64_t> baseSizes = vectorShape.getSizes();
+  if (any_of(baseSizes, [](int64_t i) { return i <= 0; }))
     return emitError()
            << "vector types must have positive constant sizes but got "
-           << shape;
+           << baseSizes;
 
-  if (scalableDims.size() != shape.size())
+  // Note: This is enforced in VectorDimList too (via an assert).
+  ArrayRef<bool> scalableDims = vectorShape.getScalableDims();
+  if (scalableDims.size() != baseSizes.size())
     return emitError() << "number of dims must match, got "
-                       << scalableDims.size() << " and " << shape.size();
+                       << scalableDims.size() << " and " << baseSizes.size();
 
   return success();
 }

@@ -9,6 +9,7 @@
 #ifndef MLIR_IR_BUILTINTYPES_H
 #define MLIR_IR_BUILTINTYPES_H
 
+#include "mlir/Config/mlir-config.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/Support/ADTExtras.h"
@@ -187,6 +188,249 @@ public:
   /// Allow implicit conversion to ShapedType.
   operator ShapedType() const { return llvm::cast<ShapedType>(*this); }
 };
+
+//===----------------------------------------------------------------------===//
+// VectorDim
+//===----------------------------------------------------------------------===//
+
+/// This class represents a dimension of a vector type. Unlike other ShapedTypes
+/// vector dimensions can have scalable quantities, which means the dimension
+/// has a known minimum size, which is scaled by a constant that is only
+/// known at runtime.
+class VectorDim {
+public:
+  explicit constexpr VectorDim(int64_t quantity, bool scalable)
+      : quantity(quantity), scalable(scalable) {};
+
+  /// Constructs a new fixed dimension.
+  constexpr static VectorDim getFixed(int64_t quantity) {
+    return VectorDim(quantity, false);
+  }
+
+  /// Constructs a new scalable dimension.
+  constexpr static VectorDim getScalable(int64_t quantity) {
+    return VectorDim(quantity, true);
+  }
+
+  /// Returns true if this dimension is scalable;
+  constexpr bool isScalable() const { return scalable; }
+
+  /// Returns true if this dimension is fixed.
+  constexpr bool isFixed() const { return !isScalable(); }
+
+  /// Returns the minimum number of elements this dimension can contain.
+  constexpr int64_t getMinSize() const { return quantity; }
+
+  /// If this dimension is fixed returns the number of elements, otherwise
+  /// aborts.
+  constexpr int64_t getFixedSize() const {
+    assert(isFixed());
+    return quantity;
+  }
+
+  constexpr bool operator==(VectorDim const &dim) const {
+    return quantity == dim.quantity && scalable == dim.scalable;
+  }
+
+  constexpr bool operator!=(VectorDim const &dim) const {
+    return !(*this == dim);
+  }
+
+  /// Print the dim.
+  void print(raw_ostream &os) {
+    if (isScalable())
+      os << '[';
+    os << getMinSize();
+    if (isScalable())
+      os << ']';
+  }
+
+  /// Helper class for indexing into a list of sizes (and possibly empty) list
+  /// of scalable dimensions, extracting VectorDim elements.
+  struct Indexer {
+    explicit Indexer(ArrayRef<int64_t> sizes, ArrayRef<bool> scalableDims)
+        : sizes(sizes), scalableDims(scalableDims) {
+      assert(
+          scalableDims.empty() ||
+          sizes.size() == scalableDims.size() &&
+              "expected `scalableDims` to be empty or match `sizes` in length");
+    }
+
+    VectorDim operator[](size_t idx) const {
+      int64_t size = sizes[idx];
+      bool scalable = scalableDims.empty() ? false : scalableDims[idx];
+      return VectorDim(size, scalable);
+    }
+
+    ArrayRef<int64_t> sizes;
+    ArrayRef<bool> scalableDims;
+  };
+
+private:
+  int64_t quantity;
+  bool scalable;
+};
+
+inline raw_ostream &operator<<(raw_ostream &os, VectorDim dim) {
+  dim.print(os);
+  return os;
+}
+
+//===----------------------------------------------------------------------===//
+// VectorDimList
+//===----------------------------------------------------------------------===//
+
+/// Represents a non-owning list of vector dimensions. The underlying dimension
+/// sizes and scalability flags are stored a two seperate lists to match the
+/// storage of a VectorType.
+class VectorDimList : public VectorDim::Indexer {
+public:
+  using VectorDim::Indexer::Indexer;
+
+  class Iterator : public llvm::iterator_facade_base<
+                       Iterator, std::random_access_iterator_tag, VectorDim,
+                       std::ptrdiff_t, VectorDim, VectorDim> {
+  public:
+    Iterator(VectorDim::Indexer indexer, size_t index)
+        : indexer(indexer), index(index) {};
+
+    // Iterator boilerplate.
+    ptrdiff_t operator-(const Iterator &rhs) const { return index - rhs.index; }
+    bool operator==(const Iterator &rhs) const { return index == rhs.index; }
+    bool operator<(const Iterator &rhs) const { return index < rhs.index; }
+    Iterator &operator+=(ptrdiff_t offset) {
+      index += offset;
+      return *this;
+    }
+    Iterator &operator-=(ptrdiff_t offset) {
+      index -= offset;
+      return *this;
+    }
+    VectorDim operator*() const { return indexer[index]; }
+
+    VectorDim::Indexer getIndexer() const { return indexer; }
+    ptrdiff_t getIndex() const { return index; }
+
+  private:
+    VectorDim::Indexer indexer;
+    ptrdiff_t index;
+  };
+
+  // Generic definitions.
+  using value_type = VectorDim;
+  using iterator = Iterator;
+  using const_iterator = Iterator;
+  using reverse_iterator = std::reverse_iterator<iterator>;
+  using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+  using size_type = size_t;
+  using difference_type = ptrdiff_t;
+
+  /// Construct from iterator pair.
+  VectorDimList(Iterator begin, Iterator end)
+      : VectorDimList(VectorDimList(begin.getIndexer())
+                          .slice(begin.getIndex(), end - begin)) {}
+
+  VectorDimList(VectorDim::Indexer indexer) : VectorDim::Indexer(indexer) {};
+
+  Iterator begin() const { return Iterator(*this, 0); }
+  Iterator end() const { return Iterator(*this, size()); }
+
+  /// Check if the dims are empty.
+  bool empty() const { return sizes.empty(); }
+
+  /// Get the number of dims.
+  size_t size() const { return sizes.size(); }
+
+  /// Return the first dim.
+  VectorDim front() const { return (*this)[0]; }
+
+  /// Return the last dim.
+  VectorDim back() const { return (*this)[size() - 1]; }
+
+  /// Chop of the first \p n dims, and keep the remaining \p m dims.
+  VectorDimList slice(size_t n, size_t m) const {
+    ArrayRef<int64_t> newSizes = sizes.slice(n, m);
+    ArrayRef<bool> newScalableDims =
+        scalableDims.empty() ? ArrayRef<bool>{} : scalableDims.slice(n, m);
+    return VectorDimList(newSizes, newScalableDims);
+  }
+
+  /// Drop the first \p n dims.
+  VectorDimList dropFront(size_t n = 1) const { return slice(n, size() - n); }
+
+  /// Drop the last \p n dims.
+  VectorDimList dropBack(size_t n = 1) const { return slice(0, size() - n); }
+
+  /// Return a copy of *this with only the first \p n elements.
+  VectorDimList takeFront(size_t n = 1) const {
+    if (n >= size())
+      return *this;
+    return dropBack(size() - n);
+  }
+
+  /// Return a copy of *this with only the last \p n elements.
+  VectorDimList takeBack(size_t n = 1) const {
+    if (n >= size())
+      return *this;
+    return dropFront(size() - n);
+  }
+
+  /// Return copy of *this with the first n dims matching the predicate removed.
+  template <class PredicateT>
+  VectorDimList dropWhile(PredicateT predicate) const {
+    return VectorDimList(llvm::find_if_not(*this, predicate), end());
+  }
+
+  /// Returns true if one or more of the dims are scalable.
+  bool hasScalableDims() const {
+    return llvm::is_contained(getScalableDims(), true);
+  }
+
+  /// Check for dim equality.
+  bool equals(VectorDimList rhs) const {
+    if (size() != rhs.size())
+      return false;
+    return std::equal(begin(), end(), rhs.begin());
+  }
+
+  /// Check for dim equality.
+  bool equals(ArrayRef<VectorDim> rhs) const {
+    if (size() != rhs.size())
+      return false;
+    return std::equal(begin(), end(), rhs.begin());
+  }
+
+  /// Return the underlying sizes.
+  ArrayRef<int64_t> getSizes() const { return sizes; }
+
+  /// Return the underlying scalable dims.
+  ArrayRef<bool> getScalableDims() const { return scalableDims; }
+
+  /// Allocate (and copy) this VectorDimList into type storage.
+  VectorDimList allocateInto(mlir::TypeStorageAllocator &alloc) const {
+    return VectorDimList{alloc.copyInto(sizes), alloc.copyInto(scalableDims)};
+  }
+
+  inline friend ::llvm::hash_code hash_value(VectorDimList dimList) {
+    return ::llvm::hash_combine(dimList.getSizes(), dimList.getScalableDims());
+  }
+};
+
+inline bool operator==(VectorDimList lhs, VectorDimList rhs) {
+  return lhs.equals(rhs);
+}
+
+inline bool operator!=(VectorDimList lhs, VectorDimList rhs) {
+  return !(lhs == rhs);
+}
+
+inline bool operator==(VectorDimList lhs, ArrayRef<VectorDim> rhs) {
+  return lhs.equals(rhs);
+}
+
+inline bool operator!=(VectorDimList lhs, ArrayRef<VectorDim> rhs) {
+  return !(lhs == rhs);
+}
 
 } // namespace mlir
 

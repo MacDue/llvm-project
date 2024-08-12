@@ -1146,11 +1146,14 @@ def Builtin_Vector : Builtin_Type<"Vector", "vector",
     ```
   }];
   let parameters = (ins
-    ArrayRefParameter<"int64_t">:$shape,
     AnyTypeOf<[AnyInteger, Index, AnyFloat]>:$elementType,
-    ArrayRefParameter<"bool">:$scalableDims
+    SelfAllocationParameter<"VectorDimList",
+      "vector shape (inc scalability)">:$vectorShape
   );
   let builders = [
+    TypeBuilderWithInferredContext<(ins "Type":$elementType, "VectorDimList": $shape), [{
+      return $_get(elementType.getContext(), elementType, shape);
+    }]>,
     TypeBuilderWithInferredContext<(ins
       "ArrayRef<int64_t>":$shape, "Type":$elementType,
       CArg<"ArrayRef<bool>", "{}">:$scalableDims
@@ -1162,10 +1165,41 @@ def Builtin_Vector : Builtin_Type<"Vector", "vector",
         isScalableVec.resize(shape.size(), false);
         scalableDims = isScalableVec;
       }
-      return $_get(elementType.getContext(), shape, elementType, scalableDims);
+      return get(elementType, VectorDimList{shape, scalableDims});
+    }]>,
+    TypeBuilderWithInferredContext<(ins "Type":$elementType, "ArrayRef<VectorDim>": $shape), [{
+      SmallVector<int64_t> sizes;
+      SmallVector<bool> scalableDims;
+      for (VectorDim dim : shape) {
+        sizes.push_back(dim.getMinSize());
+        scalableDims.push_back(dim.isScalable());
+      }
+      return get(sizes, elementType, scalableDims);
     }]>
   ];
   let extraClassDeclaration = [{
+    using Dim = VectorDim;
+    using DimList = VectorDimList;
+
+    /// [Deprecated] Returns the underlying base vector dim sizes.
+    ArrayRef<int64_t> getShape() const {
+#if MLIR_ENABLE_SCALABLE_VECTOR_API_CHECKS
+      assert(!isScalable() && "unsafe call to getShape() for scalable vector type!");
+#endif
+      return getVectorShape().getSizes();
+    }
+
+    /// [Deprecated] Returns the underlying scalable dims.
+    ArrayRef<bool> getScalableDims() const {
+      return getVectorShape().getScalableDims();
+    }
+
+    /// Returns the value of the specified dimension (including scalability).
+    Dim getDim(unsigned idx) const {
+      assert(idx < getRank() && "invalid dim index for vector type");
+      return getVectorShape()[idx];
+    }
+
     /// This is a builder type that keeps local references to arguments.
     /// Arguments that are passed into the builder must outlive the builder.
     class Builder;
