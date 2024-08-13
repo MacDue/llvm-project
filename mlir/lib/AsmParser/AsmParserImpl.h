@@ -457,11 +457,16 @@ public:
     return parser.parseOptionalAttribute(result, type);
   }
 
+  using AttributeDictParsingHook =
+      function_ref<FailureOr<Attribute>(StringRef)>;
+
   /// Parse a named dictionary into 'result' if it is present.
-  ParseResult parseOptionalAttrDict(NamedAttrList &result) override {
+  ParseResult
+  parseOptionalAttrDict(NamedAttrList &result,
+                        AttributeDictParsingHook hook = nullptr) override {
     if (parser.getToken().isNot(Token::l_brace))
       return success();
-    return parser.parseAttributeDict(result);
+    return parser.parseAttributeDict(result, hook);
   }
 
   /// Parse a named dictionary into 'result' if the `attributes` keyword is

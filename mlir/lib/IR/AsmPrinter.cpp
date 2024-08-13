@@ -452,10 +452,13 @@ public:
   void printDimensionList(ArrayRef<int64_t> shape);
 
 protected:
+  using NamedAttrPrintingHook = function_ref<LogicalResult(NamedAttribute)>;
   void printOptionalAttrDict(ArrayRef<NamedAttribute> attrs,
                              ArrayRef<StringRef> elidedAttrs = {},
-                             bool withKeyword = false);
-  void printNamedAttribute(NamedAttribute attr);
+                             bool withKeyword = false,
+                             NamedAttrPrintingHook hook = nullptr);
+  void printNamedAttribute(NamedAttribute attr,
+                           NamedAttrPrintingHook hook = nullptr);
   void printTrailingLocation(Location loc, bool allowAlias = true);
   void printLocationInternal(LocationAttr loc, bool pretty = false,
                              bool isTopLevel = false);
@@ -779,10 +782,10 @@ private:
 
   /// Print the given set of attributes with names not included within
   /// 'elidedAttrs'.
-  void printOptionalAttrDict(ArrayRef<NamedAttribute> attrs,
-                             ArrayRef<StringRef> elidedAttrs = {}) override {
-    if (attrs.empty())
-      return;
+  void
+  printOptionalAttrDict(ArrayRef<NamedAttribute> attrs,
+                        ArrayRef<StringRef> elidedAttrs = {},
+                        AttributeDictPrintingHook hook = nullptr) override {
     if (elidedAttrs.empty()) {
       for (const NamedAttribute &attr : attrs)
         printAttribute(attr.getValue());
@@ -2689,7 +2692,8 @@ void AsmPrinter::Impl::printTypeImpl(Type type) {
 
 void AsmPrinter::Impl::printOptionalAttrDict(ArrayRef<NamedAttribute> attrs,
                                              ArrayRef<StringRef> elidedAttrs,
-                                             bool withKeyword) {
+                                             bool withKeyword,
+                                             NamedAttrPrintingHook hook) {
   // If there are no attributes, then there is nothing to be done.
   if (attrs.empty())
     return;
@@ -2702,8 +2706,9 @@ void AsmPrinter::Impl::printOptionalAttrDict(ArrayRef<NamedAttribute> attrs,
 
     // Otherwise, print them all out in braces.
     os << " {";
-    interleaveComma(filteredAttrs,
-                    [&](NamedAttribute attr) { printNamedAttribute(attr); });
+    interleaveComma(filteredAttrs, [&](NamedAttribute attr) {
+      printNamedAttribute(attr, hook);
+    });
     os << '}';
   };
 
@@ -2720,7 +2725,8 @@ void AsmPrinter::Impl::printOptionalAttrDict(ArrayRef<NamedAttribute> attrs,
   if (!filteredAttrs.empty())
     printFilteredAttributesFn(filteredAttrs);
 }
-void AsmPrinter::Impl::printNamedAttribute(NamedAttribute attr) {
+void AsmPrinter::Impl::printNamedAttribute(NamedAttribute attr,
+                                           NamedAttrPrintingHook hook) {
   // Print the name without quotes if possible.
   ::printKeywordOrString(attr.getName().strref(), os);
 
@@ -2729,6 +2735,8 @@ void AsmPrinter::Impl::printNamedAttribute(NamedAttribute attr) {
     return;
 
   os << " = ";
+  if (hook && succeeded(hook(attr)))
+    return;
   printAttribute(attr.getValue());
 }
 
@@ -3148,9 +3156,11 @@ public:
   }
 
   /// Print an optional attribute dictionary with a given set of elided values.
-  void printOptionalAttrDict(ArrayRef<NamedAttribute> attrs,
-                             ArrayRef<StringRef> elidedAttrs = {}) override {
-    Impl::printOptionalAttrDict(attrs, elidedAttrs);
+  void
+  printOptionalAttrDict(ArrayRef<NamedAttribute> attrs,
+                        ArrayRef<StringRef> elidedAttrs = {},
+                        AttributeDictPrintingHook hook = nullptr) override {
+    Impl::printOptionalAttrDict(attrs, elidedAttrs, false, hook);
   }
   void printOptionalAttrDictWithKeyword(
       ArrayRef<NamedAttribute> attrs,

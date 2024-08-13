@@ -255,8 +255,12 @@ public:
     return failure();
   }
 
+  using AttributeDictParsingHook =
+      function_ref<FailureOr<Attribute>(StringRef)>;
+
   /// Parse an attribute dictionary.
-  ParseResult parseAttributeDict(NamedAttrList &attributes);
+  ParseResult parseAttributeDict(NamedAttrList &attributes,
+                                 AttributeDictParsingHook = nullptr);
 
   /// Parse a distinct attribute.
   Attribute parseDistinctAttr(Type type);

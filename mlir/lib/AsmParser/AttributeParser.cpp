@@ -296,7 +296,8 @@ OptionalParseResult Parser::parseOptionalAttribute(SymbolRefAttr &result,
 ///                    | `{` attribute-entry (`,` attribute-entry)* `}`
 ///   attribute-entry ::= (bare-id | string-literal) `=` attribute-value
 ///
-ParseResult Parser::parseAttributeDict(NamedAttrList &attributes) {
+ParseResult Parser::parseAttributeDict(NamedAttrList &attributes,
+                                       AttributeDictParsingHook hook) {
   llvm::SmallDenseSet<StringAttr> seenKeys;
   auto parseElt = [&]() -> ParseResult {
     // The name of an attribute can either be a bare identifier, or a string.
@@ -329,7 +330,14 @@ ParseResult Parser::parseAttributeDict(NamedAttrList &attributes) {
       return success();
     }
 
-    auto attr = parseAttribute();
+    Attribute attr = nullptr;
+    FailureOr<Attribute> hookAttribute;
+    if (hook && succeeded(hookAttribute = hook(*nameId))) {
+      attr = *hookAttribute;
+    } else {
+      attr = parseAttribute();
+    }
+
     if (!attr)
       return failure();
     attributes.push_back({*nameId, attr});

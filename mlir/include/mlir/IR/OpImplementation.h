@@ -460,12 +460,16 @@ public:
   virtual void printSuccessorAndUseList(Block *successor,
                                         ValueRange succOperands) = 0;
 
+  using AttributeDictPrintingHook = function_ref<LogicalResult(NamedAttribute)>;
+
   /// If the specified operation has attributes, print out an attribute
   /// dictionary with their values.  elidedAttrs allows the client to ignore
   /// specific well known attributes, commonly used if the attribute value is
   /// printed some other way (like as a fixed operand).
-  virtual void printOptionalAttrDict(ArrayRef<NamedAttribute> attrs,
-                                     ArrayRef<StringRef> elidedAttrs = {}) = 0;
+  virtual void
+  printOptionalAttrDict(ArrayRef<NamedAttribute> attrs,
+                        ArrayRef<StringRef> elidedAttrs = {},
+                        AttributeDictPrintingHook hook = nullptr) = 0;
 
   /// If the specified operation has attributes, print out an attribute
   /// dictionary prefixed with 'attributes'.
@@ -1116,8 +1120,13 @@ public:
     return parseResult;
   }
 
+  using AttributeDictParsingHook =
+      function_ref<FailureOr<Attribute>(StringRef)>;
+
   /// Parse a named dictionary into 'result' if it is present.
-  virtual ParseResult parseOptionalAttrDict(NamedAttrList &result) = 0;
+  virtual ParseResult
+  parseOptionalAttrDict(NamedAttrList &result,
+                        AttributeDictParsingHook = nullptr) = 0;
 
   /// Parse a named dictionary into 'result' if the `attributes` keyword is
   /// present.
