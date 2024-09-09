@@ -1270,6 +1270,16 @@ bool llvm::inferNonMandatoryLibFuncAttrs(Function &F,
     Changed |= setOnlyWritesMemory(F);
     Changed |= setWillReturn(F);
     break;
+  case LibFunc_sincos:
+  case LibFunc_sincosf:
+  case LibFunc_sincosl:
+    Changed |= setDoesNotThrow(F);
+    Changed |= setWillReturn(F);
+    Changed |= setOnlyAccessesArgMemory(F);
+    Changed |= setOnlyWritesMemory(F);
+    Changed |= setDoesNotCapture(F, 1);
+    Changed |= setDoesNotCapture(F, 2);
+    break;
   default:
     // FIXME: It'd be really nice to cover all the library functions we're
     // aware of here.

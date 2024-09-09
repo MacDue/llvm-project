@@ -647,6 +647,26 @@ static Value *emitFrexpBuiltin(CodeGenFunction &CGF, const CallExpr *E,
   return CGF.Builder.CreateExtractValue(Call, 0);
 }
 
+static void emitSincosBuiltin(CodeGenFunction &CGF, const CallExpr *E,
+                              llvm::Intrinsic::ID IntrinsicID) {
+  llvm::Value *Val = CGF.EmitScalarExpr(E->getArg(0));
+  llvm::Value *Dest0 = CGF.EmitScalarExpr(E->getArg(1));
+  llvm::Value *Dest1 = CGF.EmitScalarExpr(E->getArg(2));
+
+  llvm::Function *F = CGF.CGM.getIntrinsic(IntrinsicID, {Val->getType()});
+  llvm::Value *Call = CGF.Builder.CreateCall(F, Val);
+
+  llvm::Value *SinResult = CGF.Builder.CreateExtractValue(Call, 0);
+  llvm::Value *CosResult = CGF.Builder.CreateExtractValue(Call, 1);
+
+  QualType DestPtrType = E->getArg(1)->getType()->getPointeeType();
+  LValue SinLV = CGF.MakeNaturalAlignAddrLValue(Dest0, DestPtrType);
+  LValue CosLV = CGF.MakeNaturalAlignAddrLValue(Dest1, DestPtrType);
+
+  CGF.EmitStoreOfScalar(SinResult, SinLV);
+  CGF.EmitStoreOfScalar(CosResult, CosLV);
+}
+
 /// EmitFAbs - Emit a call to @llvm.fabs().
 static Value *EmitFAbs(CodeGenFunction &CGF, Value *V) {
   Function *F = CGF.CGM.getIntrinsic(Intrinsic::fabs, V->getType());
@@ -690,8 +710,10 @@ static RValue emitLibraryCall(CodeGenFunction &CGF, const FunctionDecl *FD,
                               const CallExpr *E, llvm::Constant *calleeValue) {
   CodeGenFunction::CGFPOptionsRAII FPOptsRAII(CGF, E);
   CGCallee callee = CGCallee::forDirect(calleeValue, GlobalDecl(FD));
+  llvm::CallBase *callOrInvoke = nullptr;
   RValue Call =
-      CGF.EmitCall(E->getCallee()->getType(), callee, E, ReturnValueSlot());
+      CGF.EmitCall(E->getCallee()->getType(), callee, E, ReturnValueSlot(),
+                   /*Chain=*/nullptr, &callOrInvoke);
 
   if (unsigned BuiltinID = FD->getBuiltinID()) {
     // Check whether a FP math builtin function, such as BI__builtin_expf
@@ -705,8 +727,7 @@ static RValue emitLibraryCall(CodeGenFunction &CGF, const FunctionDecl *FD,
       // Emit "int" TBAA metadata on FP math libcalls.
       clang::QualType IntTy = Context.IntTy;
       TBAAAccessInfo TBAAInfo = CGF.CGM.getTBAAAccessInfo(IntTy);
-      Instruction *Inst = cast<llvm::Instruction>(Call.getScalarVal());
-      CGF.CGM.DecorateInstructionWithTBAA(Inst, TBAAInfo);
+      CGF.CGM.DecorateInstructionWithTBAA(callOrInvoke, TBAAInfo);
     }
   }
   return Call;
@@ -2967,6 +2988,17 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     case Builtin::BI__builtin_sinhf128:
       return RValue::get(emitUnaryMaybeConstrainedFPBuiltin(
           *this, E, Intrinsic::sinh, Intrinsic::experimental_constrained_sinh));
+
+    case Builtin::BIsincos:
+    case Builtin::BIsincosf:
+    case Builtin::BIsincosl:
+    case Builtin::BI__builtin_sincos:
+    case Builtin::BI__builtin_sincosf:
+    case Builtin::BI__builtin_sincosl:
+    case Builtin::BI__builtin_sincosf128:
+    case Builtin::BI__builtin_sincosf16:
+      emitSincosBuiltin(*this, E, Intrinsic::sincos);
+      return RValue::get(nullptr);
 
     case Builtin::BIsqrt:
     case Builtin::BIsqrtf:
