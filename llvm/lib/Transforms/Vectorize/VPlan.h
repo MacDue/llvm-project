@@ -306,7 +306,7 @@ struct VPTransformState {
       set(Def, V, VPIteration(Part, 0));
       return;
     }
-    assert((VF.isScalar() || V->getType()->isVectorTy()) &&
+    assert((VF.isScalar() || isWideTy(V->getType())) &&
            "scalar values must be stored as (Part, 0)");
     if (!Data.PerPartOutput.count(Def)) {
       DataState::PerPartValuesTy Entry(UF);
@@ -367,8 +367,8 @@ struct VPTransformState {
   /// Set the debug location in the builder using the debug location \p DL.
   void setDebugLocFrom(DebugLoc DL);
 
-  /// Construct the vector value of a scalarized value \p V one lane at a time.
-  void packScalarIntoVectorValue(VPValue *Def, const VPIteration &Instance);
+  /// Construct the wide value of a scalarized value \p V one lane at a time.
+  void packScalarIntoWideValue(VPValue *Def, const VPIteration &Instance);
 
   /// Hold state information used when constructing the CFG of the output IR,
   /// traversing the VPBasicBlocks and generating corresponding IR BasicBlocks.

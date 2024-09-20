@@ -347,10 +347,10 @@ Value *VPTransformState::get(VPValue *Def, unsigned Part, bool NeedsScalar) {
   } else {
     // Initialize packing with insertelements to start from undef.
     assert(!VF.isScalable() && "VF is assumed to be non scalable.");
-    Value *Undef = PoisonValue::get(VectorType::get(LastInst->getType(), VF));
+    Value *Undef = PoisonValue::get(ToWideTy(LastInst->getType(), VF));
     set(Def, Undef, Part);
     for (unsigned Lane = 0; Lane < VF.getKnownMinValue(); ++Lane)
-      packScalarIntoVectorValue(Def, {Part, Lane});
+      packScalarIntoWideValue(Def, {Part, Lane});
     VectorValue = get(Def, Part);
   }
   Builder.restoreIP(OldIP);
@@ -402,13 +402,24 @@ void VPTransformState::setDebugLocFrom(DebugLoc DL) {
     Builder.SetCurrentDebugLocation(DIL);
 }
 
-void VPTransformState::packScalarIntoVectorValue(VPValue *Def,
-                                                 const VPIteration &Instance) {
+void VPTransformState::packScalarIntoWideValue(VPValue *Def,
+                                               const VPIteration &Instance) {
   Value *ScalarInst = get(Def, Instance);
-  Value *VectorValue = get(Def, Instance.Part);
-  VectorValue = Builder.CreateInsertElement(
-      VectorValue, ScalarInst, Instance.Lane.getAsRuntimeExpr(Builder, VF));
-  set(Def, VectorValue, Instance.Part);
+  Value *WideValue = get(Def, Instance.Part);
+  Value *Lane = Instance.Lane.getAsRuntimeExpr(Builder, VF);
+  if (auto *StructTy = dyn_cast<StructType>(WideValue->getType())) {
+    // We must handle each element of a widened struct type.
+    for (unsigned I = 0, E = StructTy->getNumElements(); I != E; I++) {
+      Value *ScalarValue = Builder.CreateExtractValue(ScalarInst, I);
+      Value *VectorValue = Builder.CreateExtractValue(WideValue, I);
+      VectorValue = Builder.CreateInsertElement(VectorValue, ScalarValue, Lane);
+      WideValue = Builder.CreateInsertValue(WideValue, VectorValue, I);
+    }
+  } else {
+    assert(WideValue->getType()->isVectorTy() && "expected vector type!");
+    WideValue = Builder.CreateInsertElement(WideValue, ScalarInst, Lane);
+  }
+  set(Def, WideValue, Instance.Part);
 }
 
 BasicBlock *

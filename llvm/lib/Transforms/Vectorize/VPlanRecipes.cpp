@@ -1006,7 +1006,7 @@ InstructionCost VPWidenCallRecipe::computeCost(ElementCount VF,
   }
 
   Type *RetTy =
-      ToVectorTy(Ctx.Types.inferScalarType(this->getVPSingleValue()), VF);
+      ToWideTy(Ctx.Types.inferScalarType(this->getVPSingleValue()), VF);
   SmallVector<Type *> ParamTys;
   for (unsigned I = 0; I != getNumOperands(); ++I)
     ParamTys.push_back(
@@ -1179,6 +1179,15 @@ void VPWidenRecipe::execute(VPTransformState &State) {
 
     break;
   }
+  case Instruction::ExtractValue: {
+    for (unsigned Part = 0; Part < State.UF; ++Part) {
+      Value *Op = State.get(getOperand(0), Part);
+      Value *Extract = Builder.CreateExtractValue(
+          Op, cast<ExtractValueInst>(getUnderlyingValue())->getIndices());
+      State.set(this, Extract, Part);
+    }
+    break;
+  }
   case Instruction::Freeze: {
     for (unsigned Part = 0; Part < State.UF; ++Part) {
       Value *Op = State.get(getOperand(0), Part);
@@ -1242,6 +1251,7 @@ InstructionCost VPWidenRecipe::computeCost(ElementCount VF,
         {TargetTransformInfo::OK_AnyValue, TargetTransformInfo::OP_None});
   }
 
+  case Instruction::ExtractValue:
   case Instruction::UDiv:
   case Instruction::SDiv:
   case Instruction::SRem:
