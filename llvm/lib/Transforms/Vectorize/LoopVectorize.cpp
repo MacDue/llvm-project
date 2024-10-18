@@ -170,6 +170,7 @@ STATISTIC(LoopsVectorized, "Number of loops vectorized");
 STATISTIC(LoopsAnalyzed, "Number of loops analyzed for vectorization");
 STATISTIC(LoopsEpilogueVectorized, "Number of epilogues vectorized");
 STATISTIC(LoopsEarlyExitVectorized, "Number of early exit loops vectorized");
+STATISTIC(LoopsAliasMasked, "Number of loops predicated with an alias mask");
 
 static cl::opt<bool> EnableEpilogueVectorization(
     "enable-epilogue-vectorization", cl::init(true), cl::Hidden,
@@ -1315,6 +1316,25 @@ public:
                                : ChosenTailFoldingStyle->second;
   }
 
+  RTCheckStyle getRTCheckStyle(TailFoldingStyle TFStyle,
+                               const TargetTransformInfo &TTI) const {
+    if (!TTI.useSafeEltsMask())
+      return RTCheckStyle::ScalarDifference;
+
+    switch (TFStyle) {
+    case TailFoldingStyle::Data:
+    case TailFoldingStyle::DataAndControlFlow:
+    case TailFoldingStyle::DataAndControlFlowWithoutRuntimeCheck:
+      return RTCheckStyle::UseSafeEltsMask;
+    default:
+      return RTCheckStyle::ScalarDifference;
+    }
+  }
+
+  RTCheckStyle getRTCheckStyle(const TargetTransformInfo &TTI) const {
+    return getRTCheckStyle(getTailFoldingStyle(), TTI);
+  }
+
   /// Selects and saves TailFoldingStyle for 2 options - if IV update may
   /// overflow or not.
   /// \param IsScalableVF true if scalable vector factors enabled.
@@ -1825,7 +1845,7 @@ public:
   /// completely.
   void create(Loop *L, const LoopAccessInfo &LAI,
               const SCEVPredicate &UnionPred, ElementCount VF, unsigned IC,
-              OptimizationRemarkEmitter &ORE) {
+              bool UseSafeEltsMask, OptimizationRemarkEmitter &ORE) {
 
     // Hard cutoff to limit compile-time increase in case a very large number of
     // runtime checks needs to be generated.
@@ -1875,7 +1895,10 @@ public:
                                  "vector.memcheck");
 
       auto DiffChecks = RtPtrChecking.getDiffChecks();
-      if (DiffChecks) {
+      if (UseSafeEltsMask) {
+        MemRuntimeCheckCond = addSafeEltsRuntimeChecks(
+            MemCheckBlock->getTerminator(), *DiffChecks, MemCheckExp, VF);
+      } else if (DiffChecks) {
         Value *RuntimeVF = nullptr;
         MemRuntimeCheckCond = addDiffRuntimeChecks(
             MemCheckBlock->getTerminator(), *DiffChecks, MemCheckExp,
@@ -6763,7 +6786,9 @@ LoopVectorizationPlanner::planInVPlanNativePath(ElementCount UserVF) {
   return VectorizationFactor::Disabled();
 }
 
-void LoopVectorizationPlanner::plan(ElementCount UserVF, unsigned UserIC) {
+void LoopVectorizationPlanner::plan(
+    ElementCount UserVF, unsigned UserIC,
+    std::optional<ArrayRef<PointerDiffInfo>> RTChecks) {
   assert(OrigLoop->isInnermost() && "Inner loop expected.");
   CM.collectValuesToIgnore();
   CM.collectElementTypesForWidening();
@@ -8571,8 +8596,16 @@ VPlanPtr LoopVectorizationPlanner::tryToBuildVPlanWithVPRecipes(
     bool ForControlFlow = useActiveLaneMaskForControlFlow(Style);
     bool WithoutRuntimeCheck =
         Style == TailFoldingStyle::DataAndControlFlowWithoutRuntimeCheck;
+
+    ArrayRef<PointerDiffInfo> DiffChecks;
+    std::optional<ArrayRef<PointerDiffInfo>> RTChecks =
+        CM.Legal->getRuntimePointerChecking()->getDiffChecks();
+    if (RTChecks.has_value() &&
+        CM.getRTCheckStyle(Style, TTI) == RTCheckStyle::UseSafeEltsMask)
+      DiffChecks = *RTChecks;
+
     VPlanTransforms::addActiveLaneMask(*Plan, ForControlFlow,
-                                       WithoutRuntimeCheck);
+                                       WithoutRuntimeCheck, PSE, DiffChecks);
   }
   VPlanTransforms::optimizeInductionExitUsers(*Plan, IVEndValues, *PSE.getSE());
 
@@ -9976,7 +10009,8 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     UserIC = 1;
 
   // Plan how to best vectorize.
-  LVP.plan(UserVF, UserIC);
+  LVP.plan(UserVF, UserIC,
+           LVL.getLAI()->getRuntimePointerChecking()->getDiffChecks());
   VectorizationFactor VF = LVP.computeBestVF();
   unsigned IC = 1;
 
@@ -9989,11 +10023,16 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     IC = LVP.selectInterleaveCount(LVP.getPlanFor(VF.Width), VF.Width, VF.Cost);
 
     unsigned SelectedIC = std::max(IC, UserIC);
-    //  Optimistically generate runtime checks if they are needed. Drop them if
+    // Optimistically generate runtime checks if they are needed. Drop them if
     //  they turn out to not be profitable.
     if (VF.Width.isVector() || SelectedIC > 1) {
+      TailFoldingStyle TFStyle = CM.getTailFoldingStyle();
+      bool UseSafeEltsMask =
+          CM.getRTCheckStyle(TFStyle, *TTI) == RTCheckStyle::UseSafeEltsMask;
+      if (UseSafeEltsMask)
+        LoopsAliasMasked++;
       Checks.create(L, *LVL.getLAI(), PSE.getPredicate(), VF.Width, SelectedIC,
-                    *ORE);
+                    UseSafeEltsMask, *ORE);
 
       // Bail out early if either the SCEV or memory runtime checks are known to
       // fail. In that case, the vector loop would never execute.

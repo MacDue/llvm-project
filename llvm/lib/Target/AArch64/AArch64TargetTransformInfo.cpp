@@ -1084,8 +1084,6 @@ AArch64TTIImpl::getIntrinsicInstrCost(const IntrinsicCostAttributes &ICA,
       return LegalCost;
     }
     break;
-  default:
-    break;
   }
   return BaseT::getIntrinsicInstrCost(ICA, CostKind);
 }
@@ -5937,6 +5935,11 @@ InstructionCost AArch64TTIImpl::getPartialReductionCost(
 
   // Add additional cost for the extends that would need to be inserted.
   return Cost + 2;
+}
+
+bool AArch64TTIImpl::useSafeEltsMask() const {
+  // The whilewr/rw instructions require SVE2
+  return ST->hasSVE2() || ST->hasSME();
 }
 
 InstructionCost
