@@ -19,6 +19,13 @@
 
 namespace llvm {
 
+struct SVECSRanges {
+  int MinZPRFrameIndex = std::numeric_limits<int>::max();
+  int MaxZPRFrameIndex = std::numeric_limits<int>::min();
+  int MinPPRFrameIndex = std::numeric_limits<int>::max();
+  int MaxPPRFrameIndex = std::numeric_limits<int>::min();
+};
+
 class AArch64FrameLowering : public TargetFrameLowering {
 public:
   explicit AArch64FrameLowering()
@@ -145,10 +152,9 @@ private:
   bool shouldCombineCSRLocalStackBump(MachineFunction &MF,
                                       uint64_t StackBumpBytes) const;
 
-  int64_t estimateSVEStackObjectOffsets(MachineFrameInfo &MF) const;
-  int64_t assignSVEStackObjectOffsets(MachineFrameInfo &MF,
-                                      int &MinCSFrameIndex,
-                                      int &MaxCSFrameIndex) const;
+  int64_t estimateSVEStackObjectOffsets(MachineFunction &MF) const;
+  int64_t assignSVEStackObjectOffsets(MachineFunction &MF,
+                                      SVECSRanges &CSRanges) const;
   bool shouldCombineCSRLocalStackBumpInEpilogue(MachineBasicBlock &MBB,
                                                 uint64_t StackBumpBytes) const;
   void emitCalleeSavedGPRLocations(MachineBasicBlock &MBB,

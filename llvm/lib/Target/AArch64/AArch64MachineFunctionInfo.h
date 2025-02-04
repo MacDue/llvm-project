@@ -74,12 +74,15 @@ class AArch64FunctionInfo final : public MachineFunctionInfo {
   uint64_t LocalStackSize = 0;
 
   /// The start and end frame indices for the SVE callee saves.
-  int MinSVECSFrameIndex = 0;
-  int MaxSVECSFrameIndex = 0;
+  int MinZPRCSFrameIndex = 0;
+  int MaxZPRCSFrameIndex = 0;
+  int MinPPRCSFrameIndex = 0;
+  int MaxPPRCSFrameIndex = 0;
 
   /// Amount of stack frame size used for saving callee-saved registers.
   unsigned CalleeSavedStackSize = 0;
-  unsigned SVECalleeSavedStackSize = 0;
+  unsigned ZPRCalleeSavedStackSize = 0;
+  unsigned PPRCalleeSavedStackSize = 0;
   bool HasCalleeSavedStackSize = false;
 
   /// Number of TLS accesses using the special (combinable)
@@ -394,20 +397,37 @@ public:
   }
 
   // Saves the CalleeSavedStackSize for SVE vectors in 'scalable bytes'
-  void setSVECalleeSavedStackSize(unsigned Size) {
-    SVECalleeSavedStackSize = Size;
+  void setZPRCalleeSavedStackSize(unsigned Size) {
+    ZPRCalleeSavedStackSize = Size;
   }
-  unsigned getSVECalleeSavedStackSize() const {
-    return SVECalleeSavedStackSize;
-  }
-
-  void setMinMaxSVECSFrameIndex(int Min, int Max) {
-    MinSVECSFrameIndex = Min;
-    MaxSVECSFrameIndex = Max;
+  unsigned getZPRCalleeSavedStackSize() const {
+    return ZPRCalleeSavedStackSize;
   }
 
-  int getMinSVECSFrameIndex() const { return MinSVECSFrameIndex; }
-  int getMaxSVECSFrameIndex() const { return MaxSVECSFrameIndex; }
+  // Saves the CalleeSavedStackSize for SVE predicate vectors in 'scalable
+  // bytes'
+  void setPPRCalleeSavedStackSize(unsigned Size) {
+    PPRCalleeSavedStackSize = Size;
+  }
+  unsigned getPPRCalleeSavedStackSize() const {
+    return PPRCalleeSavedStackSize;
+  }
+
+  void setMinMaxZPRCSFrameIndex(int Min, int Max) {
+    MinZPRCSFrameIndex = Min;
+    MaxZPRCSFrameIndex = Max;
+  }
+
+  int getMinZPRCSFrameIndex() const { return MinZPRCSFrameIndex; }
+  int getMaxZPRCSFrameIndex() const { return MaxZPRCSFrameIndex; }
+
+  void setMinMaxPPRCSFrameIndex(int Min, int Max) {
+    MinPPRCSFrameIndex = Min;
+    MaxPPRCSFrameIndex = Max;
+  }
+
+  int getMinPPRCSFrameIndex() const { return MinPPRCSFrameIndex; }
+  int getMaxPPRCSFrameIndex() const { return MaxPPRCSFrameIndex; }
 
   void incNumLocalDynamicTLSAccesses() { ++NumLocalDynamicTLSAccesses; }
   unsigned getNumLocalDynamicTLSAccesses() const {
