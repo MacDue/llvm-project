@@ -1901,7 +1901,8 @@ public:
   Align getReducedAlign(EVT VT, bool UseABI);
 
   /// Create a stack temporary based on the size in bytes and the alignment
-  SDValue CreateStackTemporary(TypeSize Bytes, Align Alignment);
+  SDValue CreateStackTemporary(TypeSize Bytes, Align Alignment,
+                               bool IsPredVec = false);
 
   /// Create a stack temporary, suitable for holding the specified value type.
   /// If minAlign is specified, the slot size will have at least that alignment.

@@ -4798,7 +4798,8 @@ void DAGTypeLegalizer::ExpandIntRes_ShiftThroughStack(SDNode *N, SDValue &Lo,
   // FIXME: reuse stack slots?
   Align StackAlign = DAG.getReducedAlign(StackSlotVT, /*UseABI=*/false);
   SDValue StackPtr =
-      DAG.CreateStackTemporary(StackSlotVT.getStoreSize(), StackAlign);
+      DAG.CreateStackTemporary(StackSlotVT.getStoreSize(), StackAlign,
+                               StackSlotVT.isScalableVectorPredicate());
   EVT PtrTy = StackPtr.getValueType();
   SDValue Ch = DAG.getEntryNode();
 

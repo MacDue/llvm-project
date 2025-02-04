@@ -6098,7 +6098,9 @@ LoongArchTargetLowering::LowerCall(CallLoweringInfo &CLI,
         Parts.push_back(std::make_pair(PartValue, Offset));
         ++i;
       }
-      SDValue SpillSlot = DAG.CreateStackTemporary(StoredSize, StackAlign);
+      bool IsPred = ArgValue.getValueType().isVector() &&
+                    ArgValue.getValueType().getVectorElementType() == MVT::i1;
+      SDValue SpillSlot = DAG.CreateStackTemporary(StoredSize, StackAlign, IsPred);
       int FI = cast<FrameIndexSDNode>(SpillSlot)->getIndex();
       MemOpChains.push_back(
           DAG.getStore(Chain, DL, ArgValue, SpillSlot,

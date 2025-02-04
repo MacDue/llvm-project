@@ -5421,7 +5421,7 @@ void AArch64InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
       assert(Subtarget.isSVEorStreamingSVEAvailable() &&
              "Unexpected register store without SVE store instructions");
       Opc = AArch64::STR_PXI;
-      StackID = TargetStackID::ScalableVector;
+      StackID = TargetStackID::ScalablePredVector;
     }
     break;
   }
@@ -5436,7 +5436,7 @@ void AArch64InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
       Opc = AArch64::STRSui;
     else if (AArch64::PPR2RegClass.hasSubClassEq(RC)) {
       Opc = AArch64::STR_PPXI;
-      StackID = TargetStackID::ScalableVector;
+      StackID = TargetStackID::ScalablePredVector;
     }
     break;
   case 8:
@@ -5598,7 +5598,7 @@ void AArch64InstrInfo::loadRegFromStackSlot(
       if (IsPNR)
         PNRReg = DestReg;
       Opc = AArch64::LDR_PXI;
-      StackID = TargetStackID::ScalableVector;
+      StackID = TargetStackID::ScalablePredVector;
     }
     break;
   }
@@ -5613,7 +5613,7 @@ void AArch64InstrInfo::loadRegFromStackSlot(
       Opc = AArch64::LDRSui;
     else if (AArch64::PPR2RegClass.hasSubClassEq(RC)) {
       Opc = AArch64::LDR_PPXI;
-      StackID = TargetStackID::ScalableVector;
+      StackID = TargetStackID::ScalablePredVector;
     }
     break;
   case 8:

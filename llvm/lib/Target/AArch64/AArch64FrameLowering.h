@@ -84,7 +84,7 @@ public:
   }
 
   bool enableStackSlotScavenging(const MachineFunction &MF) const override;
-  TargetStackID::Value getStackIDForScalableVectors() const override;
+  TargetStackID::Value getStackIDForScalableVectors(bool IsPred = false) const override;
 
   void processFunctionBeforeFrameFinalized(MachineFunction &MF,
                                            RegScavenger *RS) const override;
@@ -111,6 +111,7 @@ public:
       return false;
     case TargetStackID::Default:
     case TargetStackID::ScalableVector:
+    case TargetStackID::ScalablePredVector:
     case TargetStackID::NoAlloc:
       return true;
     }
@@ -119,7 +120,8 @@ public:
   bool isStackIdSafeForLocalArea(unsigned StackId) const override {
     // We don't support putting SVE objects into the pre-allocated local
     // frame block at the moment.
-    return StackId != TargetStackID::ScalableVector;
+    return (StackId != TargetStackID::ScalableVector &&
+            StackId != TargetStackID::ScalablePredVector);
   }
 
   void

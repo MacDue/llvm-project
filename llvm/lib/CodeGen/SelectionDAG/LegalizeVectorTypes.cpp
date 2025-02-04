@@ -1708,7 +1708,8 @@ void DAGTypeLegalizer::SplitVecRes_INSERT_SUBVECTOR(SDNode *N, SDValue &Lo,
   // and stored in parts - we should use the alignment for the smallest part.
   Align SmallestAlign = DAG.getReducedAlign(VecVT, /*UseABI=*/false);
   SDValue StackPtr =
-      DAG.CreateStackTemporary(VecVT.getStoreSize(), SmallestAlign);
+      DAG.CreateStackTemporary(VecVT.getStoreSize(), SmallestAlign,
+                               VecVT.isScalableVectorPredicate());
   auto &MF = DAG.getMachineFunction();
   auto FrameIndex = cast<FrameIndexSDNode>(StackPtr.getNode())->getIndex();
   auto PtrInfo = MachinePointerInfo::getFixedStack(MF, FrameIndex);
@@ -2021,7 +2022,8 @@ void DAGTypeLegalizer::SplitVecRes_INSERT_VECTOR_ELT(SDNode *N, SDValue &Lo,
   // and stored in parts - we should use the alignment for the smallest part.
   Align SmallestAlign = DAG.getReducedAlign(VecVT, /*UseABI=*/false);
   SDValue StackPtr =
-      DAG.CreateStackTemporary(VecVT.getStoreSize(), SmallestAlign);
+      DAG.CreateStackTemporary(VecVT.getStoreSize(), SmallestAlign,
+                               VecVT.isScalableVectorPredicate());
   auto &MF = DAG.getMachineFunction();
   auto FrameIndex = cast<FrameIndexSDNode>(StackPtr.getNode())->getIndex();
   auto PtrInfo = MachinePointerInfo::getFixedStack(MF, FrameIndex);
@@ -2533,7 +2535,8 @@ void DAGTypeLegalizer::SplitVecRes_VECTOR_COMPRESS(SDNode *N, SDValue &Lo,
   Hi = DAG.getNode(ISD::VECTOR_COMPRESS, DL, HiVT, Hi, HiMask, UndefPassthru);
 
   SDValue StackPtr = DAG.CreateStackTemporary(
-      VecVT.getStoreSize(), DAG.getReducedAlign(VecVT, /*UseABI=*/false));
+      VecVT.getStoreSize(), DAG.getReducedAlign(VecVT, /*UseABI=*/false),
+      VecVT.isScalableVectorPredicate());
   MachineFunction &MF = DAG.getMachineFunction();
   MachinePointerInfo PtrInfo = MachinePointerInfo::getFixedStack(
       MF, cast<FrameIndexSDNode>(StackPtr.getNode())->getIndex());
@@ -3185,7 +3188,8 @@ void DAGTypeLegalizer::SplitVecRes_VP_REVERSE(SDNode *N, SDValue &Lo,
 
   EVT MemVT = EVT::getVectorVT(*DAG.getContext(), VT.getVectorElementType(),
                                VT.getVectorElementCount());
-  SDValue StackPtr = DAG.CreateStackTemporary(MemVT.getStoreSize(), Alignment);
+  SDValue StackPtr = DAG.CreateStackTemporary(MemVT.getStoreSize(), Alignment,
+                                              MemVT.isScalableVectorPredicate());
   EVT PtrVT = StackPtr.getValueType();
   auto &MF = DAG.getMachineFunction();
   auto FrameIndex = cast<FrameIndexSDNode>(StackPtr.getNode())->getIndex();
@@ -3724,7 +3728,8 @@ SDValue DAGTypeLegalizer::SplitVecOp_EXTRACT_SUBVECTOR(SDNode *N) {
   EVT VecVT = Vec.getValueType();
   Align SmallestAlign = DAG.getReducedAlign(VecVT, /*UseABI=*/false);
   SDValue StackPtr =
-      DAG.CreateStackTemporary(VecVT.getStoreSize(), SmallestAlign);
+      DAG.CreateStackTemporary(VecVT.getStoreSize(), SmallestAlign,
+                               VecVT.isScalableVectorPredicate());
   auto &MF = DAG.getMachineFunction();
   auto FrameIndex = cast<FrameIndexSDNode>(StackPtr.getNode())->getIndex();
   auto PtrInfo = MachinePointerInfo::getFixedStack(MF, FrameIndex);
@@ -3782,7 +3787,8 @@ SDValue DAGTypeLegalizer::SplitVecOp_EXTRACT_VECTOR_ELT(SDNode *N) {
   // and stored in parts - we should use the alignment for the smallest part.
   Align SmallestAlign = DAG.getReducedAlign(VecVT, /*UseABI=*/false);
   SDValue StackPtr =
-      DAG.CreateStackTemporary(VecVT.getStoreSize(), SmallestAlign);
+      DAG.CreateStackTemporary(VecVT.getStoreSize(), SmallestAlign,
+                               VecVT.isScalableVectorPredicate());
   auto &MF = DAG.getMachineFunction();
   auto FrameIndex = cast<FrameIndexSDNode>(StackPtr.getNode())->getIndex();
   auto PtrInfo = MachinePointerInfo::getFixedStack(MF, FrameIndex);

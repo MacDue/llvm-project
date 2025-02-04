@@ -70,7 +70,7 @@ public:
   bool enableShrinkWrapping(const MachineFunction &MF) const override;
 
   bool isSupportedStackID(TargetStackID::Value ID) const override;
-  TargetStackID::Value getStackIDForScalableVectors() const override;
+  TargetStackID::Value getStackIDForScalableVectors(bool IsPred = false) const override;
 
   bool isStackIdSafeForLocalArea(unsigned StackId) const override {
     // We don't support putting RISC-V Vector objects into the pre-allocated

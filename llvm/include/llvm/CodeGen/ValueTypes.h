@@ -175,6 +175,11 @@ namespace llvm {
       return isSimple() ? V.isScalableVector() : isExtendedScalableVector();
     }
 
+    bool isScalableVectorPredicate() const {
+      return isScalableVector() && (getVectorElementType() == MVT::i1 ||
+                                    V == MVT::aarch64svcount);
+    }
+
     /// Return true if this is a vector value type.
     bool isRISCVVectorTuple() const { return V.isRISCVVectorTuple(); }
 

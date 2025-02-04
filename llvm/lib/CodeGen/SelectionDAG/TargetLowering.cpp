@@ -11733,7 +11733,8 @@ SDValue TargetLowering::expandVectorSplice(SDNode *Node,
 
   EVT MemVT = EVT::getVectorVT(*DAG.getContext(), VT.getVectorElementType(),
                                VT.getVectorElementCount() * 2);
-  SDValue StackPtr = DAG.CreateStackTemporary(MemVT.getStoreSize(), Alignment);
+  SDValue StackPtr = DAG.CreateStackTemporary(MemVT.getStoreSize(), Alignment,
+                                              MemVT.isScalableVectorPredicate());
   EVT PtrVT = StackPtr.getValueType();
   auto &MF = DAG.getMachineFunction();
   auto FrameIndex = cast<FrameIndexSDNode>(StackPtr.getNode())->getIndex();

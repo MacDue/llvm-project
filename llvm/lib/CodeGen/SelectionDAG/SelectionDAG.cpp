@@ -2722,12 +2722,13 @@ Align SelectionDAG::getReducedAlign(EVT VT, bool UseABI) {
   return RedAlign;
 }
 
-SDValue SelectionDAG::CreateStackTemporary(TypeSize Bytes, Align Alignment) {
+SDValue SelectionDAG::CreateStackTemporary(TypeSize Bytes, Align Alignment,
+                                           bool IsPredVec) {
   MachineFrameInfo &MFI = MF->getFrameInfo();
   const TargetFrameLowering *TFI = MF->getSubtarget().getFrameLowering();
   int StackID = 0;
   if (Bytes.isScalable())
-    StackID = TFI->getStackIDForScalableVectors();
+    StackID = TFI->getStackIDForScalableVectors(IsPredVec);
   // The stack id gives an indication of whether the object is scalable or
   // not, so it's safe to pass in the minimum size here.
   int FrameIdx = MFI.CreateStackObject(Bytes.getKnownMinValue(), Alignment,
@@ -2739,7 +2740,8 @@ SDValue SelectionDAG::CreateStackTemporary(EVT VT, unsigned minAlign) {
   Type *Ty = VT.getTypeForEVT(*getContext());
   Align StackAlign =
       std::max(getDataLayout().getPrefTypeAlign(Ty), Align(minAlign));
-  return CreateStackTemporary(VT.getStoreSize(), StackAlign);
+  return CreateStackTemporary(VT.getStoreSize(), StackAlign,
+                              VT.isScalableVectorPredicate());
 }
 
 SDValue SelectionDAG::CreateStackTemporary(EVT VT1, EVT VT2) {
@@ -2756,7 +2758,10 @@ SDValue SelectionDAG::CreateStackTemporary(EVT VT1, EVT VT2) {
   Type *Ty2 = VT2.getTypeForEVT(*getContext());
   const DataLayout &DL = getDataLayout();
   Align Align = std::max(DL.getPrefTypeAlign(Ty1), DL.getPrefTypeAlign(Ty2));
-  return CreateStackTemporary(Bytes, Align);
+  bool IsPred = VT1Size.getKnownMinValue() > VT2Size.getKnownMinValue()
+                       ? VT1.isScalableVectorPredicate()
+                       : VT2.isScalableVectorPredicate();
+  return CreateStackTemporary(Bytes, Align, IsPred);
 }
 
 SDValue SelectionDAG::FoldSetCC(EVT VT, SDValue N1, SDValue N2,

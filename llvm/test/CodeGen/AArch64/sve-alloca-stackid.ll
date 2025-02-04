@@ -30,3 +30,18 @@ define i32 @foo2(<vscale x 32 x i8> %val) {
   ret i32 %res
 }
 declare i32 @bar2(ptr %ptr);
+
+; CHECKCG-LABEL: foo3:
+; CHECKCG: addvl   sp, sp, #-1
+
+; CHECKISEL-LABEL: name: foo3
+; CHECKISEL:       stack:
+; CHECKISEL:       id: 0, name: ptr, type: default, offset: 0, size: 2, alignment: 2,
+; CHECKISEL-NEXT:  stack-id: scalable-pred-vector
+define i32 @foo3(<vscale x 16 x i1> %val) {
+  %ptr = alloca <vscale x 16 x i1>
+  %res = call i32 @bar3(ptr %ptr)
+  ret i32 %res
+}
+
+declare i32 @bar3(ptr %ptr);

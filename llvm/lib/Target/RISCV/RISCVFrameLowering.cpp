@@ -2104,7 +2104,7 @@ bool RISCVFrameLowering::isSupportedStackID(TargetStackID::Value ID) const {
   llvm_unreachable("Invalid TargetStackID::Value");
 }
 
-TargetStackID::Value RISCVFrameLowering::getStackIDForScalableVectors() const {
+TargetStackID::Value RISCVFrameLowering::getStackIDForScalableVectors(bool IsPred) const {
   return TargetStackID::ScalableVector;
 }
 

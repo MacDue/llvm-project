@@ -163,7 +163,7 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
           // stack objects.
           if (Ty->isScalableTy())
             MF->getFrameInfo().setStackID(FrameIndex,
-                                          TFI->getStackIDForScalableVectors());
+                                          TFI->getStackIDForScalableVectors(Ty->isIntOrIntVectorTy(1)));
 
           StaticAllocaMap[AI] = FrameIndex;
           // Update the catch handler information.

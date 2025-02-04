@@ -906,7 +906,8 @@ SDValue DAGTypeLegalizer::CreateStackStoreLoad(SDValue Op,
   Align OpAlign = DAG.getReducedAlign(Op.getValueType(), /*UseABI=*/false);
   Align Align = std::max(DestAlign, OpAlign);
   SDValue StackPtr =
-      DAG.CreateStackTemporary(Op.getValueType().getStoreSize(), Align);
+      DAG.CreateStackTemporary(Op.getValueType().getStoreSize(), Align,
+                               Op.getValueType().isScalableVectorPredicate());
   // Emit a store to the stack slot.
   SDValue Store = DAG.getStore(DAG.getEntryNode(), dl, Op, StackPtr,
                                MachinePointerInfo(), Align);
