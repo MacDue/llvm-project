@@ -4781,6 +4781,60 @@ bool AArch64InstrInfo::isFpOrNEON(const MachineInstr &MI) {
   return llvm::any_of(MI.operands(), IsFPR);
 }
 
+bool AArch64InstrInfo::isZPR(Register Reg, const AArch64RegisterInfo &TRI) {
+  if (Reg == 0)
+    return false;
+  assert(Reg.isPhysical() && "Expected physical register in isSVE");
+
+  return llvm::any_of(TRI.subregs_inclusive(Reg), [](const MCPhysReg &SR) {
+    return AArch64::ZPRRegClass.contains(SR);
+  });
+}
+
+bool AArch64InstrInfo::isZPR(const MachineInstr &MI) {
+  auto &Subtarget = MI.getMF()->getSubtarget<AArch64Subtarget>();
+  const AArch64RegisterInfo *TRI = Subtarget.getRegisterInfo();
+
+  auto IsZPR = [&TRI, &MI](const MachineOperand &Op) {
+    if (!Op.isReg())
+      return false;
+    auto Reg = Op.getReg();
+    if (Reg.isPhysical())
+      return isZPR(Reg, *TRI);
+    const TargetRegisterClass *TRC = ::getRegClass(MI, Reg);
+    return (bool)TRI->getCommonSubClass(&AArch64::ZPRRegClass, TRC);
+  };
+
+  return llvm::any_of(MI.operands(), IsZPR);
+}
+
+bool AArch64InstrInfo::isPPR(Register Reg, const AArch64RegisterInfo &TRI) {
+  if (Reg == 0)
+    return false;
+  assert(Reg.isPhysical() && "Expected physical register in isSVEPred");
+
+  return llvm::any_of(TRI.subregs_inclusive(Reg), [](const MCPhysReg &SR) {
+    return AArch64::PPRRegClass.contains(SR);
+  });
+}
+
+bool AArch64InstrInfo::isPPR(const MachineInstr &MI) {
+  auto &Subtarget = MI.getMF()->getSubtarget<AArch64Subtarget>();
+  const AArch64RegisterInfo *TRI = Subtarget.getRegisterInfo();
+
+  auto IsPPR = [&TRI, &MI](const MachineOperand &Op) {
+    if (!Op.isReg())
+      return false;
+    auto Reg = Op.getReg();
+    if (Reg.isPhysical())
+      return isPPR(Reg, *TRI);
+    const TargetRegisterClass *TRC = ::getRegClass(MI, Reg);
+    return (bool)TRI->getCommonSubClass(&AArch64::PPRRegClass, TRC);
+  };
+
+  return llvm::any_of(MI.operands(), IsPPR);
+}
+
 // Scale the unscaled offsets.  Returns false if the unscaled offset can't be
 // scaled.
 static bool scaleOffset(unsigned Opc, int64_t &Offset) {

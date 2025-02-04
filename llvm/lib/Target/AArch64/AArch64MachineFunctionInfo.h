@@ -118,6 +118,9 @@ class AArch64FunctionInfo final : public MachineFunctionInfo {
   int StackHazardSlotIndex = std::numeric_limits<int>::max();
   int StackHazardCSRSlotIndex = std::numeric_limits<int>::max();
 
+  std::vector<unsigned> ZPRObjAccesses;
+  std::vector<unsigned> PPRObjAccesses;
+
   /// True if this function has a subset of CSRs that is handled explicitly via
   /// copies.
   bool IsSplitCSR = false;
@@ -138,9 +141,10 @@ class AArch64FunctionInfo final : public MachineFunctionInfo {
   /// SVE stack size (for predicates and data vectors) are maintained here
   /// rather than in FrameInfo, as the placement and Stack IDs are target
   /// specific.
-  uint64_t StackSizeSVE = 0;
+  uint64_t StackSizeZPR = 0;
+  uint64_t StackSizePPR = 0;
 
-  /// HasCalculatedStackSizeSVE indicates whether StackSizeSVE is valid.
+  /// HasCalculatedStackSizeSVE indicates whether StackSizeZPR/PPR is valid.
   bool HasCalculatedStackSizeSVE = false;
 
   /// Has a value when it is known whether or not the function uses a
@@ -298,14 +302,20 @@ public:
     TailCallReservedStack = bytes;
   }
 
-  bool hasCalculatedStackSizeSVE() const { return HasCalculatedStackSizeSVE; }
-
-  void setStackSizeSVE(uint64_t S) {
+  void setStackSizeZPR(uint64_t S) {
     HasCalculatedStackSizeSVE = true;
-    StackSizeSVE = S;
+    StackSizeZPR = S;
   }
 
-  uint64_t getStackSizeSVE() const { return StackSizeSVE; }
+  void setStackSizePPR(uint64_t S) {
+    HasCalculatedStackSizeSVE = true;
+    StackSizePPR = S;
+  }
+
+  uint64_t getStackSizeZPR() const { return StackSizeZPR; }
+  uint64_t getStackSizePPR() const { return StackSizePPR; }
+
+  bool hasCalculatedStackSizeSVE() const { return HasCalculatedStackSizeSVE; }
 
   bool hasStackFrame() const { return HasStackFrame; }
   void setHasStackFrame(bool s) { HasStackFrame = s; }
@@ -467,6 +477,16 @@ public:
   void setStackHazardCSRSlotIndex(int Index) {
     assert(StackHazardCSRSlotIndex == std::numeric_limits<int>::max());
     StackHazardCSRSlotIndex = Index;
+  }
+
+  std::vector<unsigned> getZPRObjAccesses() const { return ZPRObjAccesses; }
+  void setZPRObjAccesses(std::vector<unsigned> ObjAccesses) {
+    ZPRObjAccesses = std::move(ObjAccesses);
+  }
+
+  std::vector<unsigned> getPPRObjAccesses() const { return PPRObjAccesses; }
+  void setPPRObjAccesses(std::vector<unsigned> ObjAccesses) {
+    PPRObjAccesses = std::move(ObjAccesses);
   }
 
   unsigned getSRetReturnReg() const { return SRetReturnReg; }

@@ -59,7 +59,8 @@ public:
   StackOffset resolveFrameOffsetReference(const MachineFunction &MF,
                                           int64_t ObjectOffset, bool isFixed,
                                           bool isSVE, Register &FrameReg,
-                                          bool PreferFP, bool ForSimm) const;
+                                          bool PreferFP, bool ForSimm,
+                                          int64_t FI = -1) const;
   bool spillCalleeSavedRegisters(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MI,
                                  ArrayRef<CalleeSavedInfo> CSI,
@@ -152,9 +153,9 @@ private:
   bool shouldCombineCSRLocalStackBump(MachineFunction &MF,
                                       uint64_t StackBumpBytes) const;
 
-  int64_t estimateSVEStackObjectOffsets(MachineFunction &MF) const;
-  int64_t assignSVEStackObjectOffsets(MachineFunction &MF,
-                                      SVECSRanges &CSRanges) const;
+  void estimateSVEStackObjectOffsets(MachineFunction &MF) const;
+  void assignSVEStackObjectOffsets(MachineFunction &MF,
+                                   SVECSRanges &CSRanges) const;
   bool shouldCombineCSRLocalStackBumpInEpilogue(MachineBasicBlock &MBB,
                                                 uint64_t StackBumpBytes) const;
   void emitCalleeSavedGPRLocations(MachineBasicBlock &MBB,
@@ -170,6 +171,7 @@ private:
                           int64_t RealignmentPadding, StackOffset AllocSize,
                           bool NeedsWinCFI, bool *HasWinCFI, bool EmitCFI,
                           StackOffset InitialOffset, bool FollowupAllocs) const;
+
   /// Make a determination whether a Hazard slot is used and create it if
   /// needed.
   void determineStackHazardSlot(MachineFunction &MF,
