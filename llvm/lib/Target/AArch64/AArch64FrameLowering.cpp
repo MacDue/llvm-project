@@ -2720,7 +2720,9 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
   bool isCSR =
       !isFixed && ObjectOffset >= -((int)AFI->getCalleeSavedStackSize(MFI));
 
-  const StackOffset &SVEStackSize = getZPRStackSize(MF) + getPPRStackSize(MF);
+  const StackOffset ZPRStackSize = getZPRStackSize(MF);
+  const StackOffset PPRStackSize = getPPRStackSize(MF);
+  const StackOffset &SVEStackSize = ZPRStackSize + PPRStackSize;
 
   // Use frame pointer to reference fixed objects. Use it for locals if
   // there are VLAs or a dynamically realigned SP (and thus the SP isn't
@@ -2794,6 +2796,7 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
   if (isSVE) {
     StackOffset FPOffset =
         StackOffset::get(-AFI->getCalleeSaveBaseToFrameRecordOffset(), ObjectOffset);
+
     StackOffset SPOffset =
         SVEStackSize +
         StackOffset::get(MFI.getStackSize() - AFI->getCalleeSavedStackSize(),
@@ -3916,17 +3919,8 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   AFI->setCalleeSavedStackSize(AlignedCSStackSize);
   AFI->setCalleeSaveStackHasFreeSpace(AlignedCSStackSize != CSStackSize);
 
-  if (ZPRCSStackSize == 0) {
-    AFI->setZPRCalleeSavedStackSize(ZPRCSStackSize);
-    AFI->setPPRCalleeSavedStackSize(alignTo(PPRCSStackSize, 16));
-  } else if (PPRCSStackSize == 0) {
-    AFI->setZPRCalleeSavedStackSize(alignTo(ZPRCSStackSize, 16));
-    AFI->setPPRCalleeSavedStackSize(PPRCSStackSize);
-  } else {
-    unsigned TotalSize = alignTo(ZPRCSStackSize + PPRCSStackSize, 16);
-    AFI->setZPRCalleeSavedStackSize(TotalSize - PPRCSStackSize);
-    AFI->setPPRCalleeSavedStackSize(PPRCSStackSize);
-  }
+  AFI->setZPRCalleeSavedStackSize(ZPRCSStackSize);
+  AFI->setPPRCalleeSavedStackSize(alignTo(PPRCSStackSize, 16));
 }
 
 bool AArch64FrameLowering::assignCalleeSavedSpillSlots(
@@ -4109,7 +4103,15 @@ static void determineSVEStackObjectOffsets(MachineFunction &MF,
                                            bool AssignOffsets) {
   MachineFrameInfo &MFI = MF.getFrameInfo();
   AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
-  int64_t Offset = 0;
+
+  int64_t ZPRStack = 0;
+  int64_t PPRStack = 0;
+
+  auto [ZPROffset, PPROffset] = [&] {
+    if (SplitSVEObjects)
+      return std::tie(ZPRStack, PPRStack);
+    return std::tie(ZPRStack, ZPRStack);
+  }();
 
 #ifndef NDEBUG
   // First process all fixed stack objects.
@@ -4124,7 +4126,7 @@ static void determineSVEStackObjectOffsets(MachineFunction &MF,
     MFI.setObjectOffset(FI, Offset);
   };
 
-  auto processCalleeSaves = [&](int Min, int Max) {
+  auto processCalleeSaves = [&](int Min, int Max, int64_t &Offset) {
     for (int I = Min; I <= Max; ++I) {
       Offset += MFI.getObjectSize(I);
       Offset = alignTo(Offset, MFI.getObjectAlign(I));
@@ -4135,31 +4137,20 @@ static void determineSVEStackObjectOffsets(MachineFunction &MF,
     }
   };
 
-  int64_t ZPRStackSize = 0;
-  int64_t PPRStackSize = 0;
-
   getSVECalleeSaveSlotRanges(MFI, CSRanges);
 
   // Then process all callee saved slots.
-  if (AFI->getPPRCalleeSavedStackSize())
-    processCalleeSaves(CSRanges.MinPPRFrameIndex, CSRanges.MaxPPRFrameIndex);
-
-  PPRStackSize += Offset;
-
   if (AFI->getZPRCalleeSavedStackSize())
-    processCalleeSaves(CSRanges.MinZPRFrameIndex, CSRanges.MaxZPRFrameIndex);
+    processCalleeSaves(CSRanges.MinZPRFrameIndex, CSRanges.MaxZPRFrameIndex,
+                       ZPROffset);
 
-  ZPRStackSize += Offset - PPRStackSize;
+  if (AFI->getPPRCalleeSavedStackSize())
+    processCalleeSaves(CSRanges.MinPPRFrameIndex, CSRanges.MaxPPRFrameIndex,
+                       PPROffset);
 
-  // Ensure that the Callee-save area is aligned to 16bytes.
-  // TODO: Fix alignment if assigned together
-  if (SplitSVEObjects || ZPRStackSize == 0 || PPRStackSize == 0) {
-    ZPRStackSize = alignTo(ZPRStackSize, Align(16U));
-    PPRStackSize = alignTo(PPRStackSize, Align(16U));
-  } else {
-    int64_t TotalStackSize = alignTo(ZPRStackSize + PPRStackSize, Align(16U));
-    PPRStackSize = (TotalStackSize - ZPRStackSize);
-  }
+  // Ensure the CS area is 16-byte aligned.
+  PPROffset = alignTo(PPROffset, Align(16U));
+  ZPROffset = alignTo(ZPROffset, Align(16U));
 
   // Create a buffer of SVE objects to allocate and sort it.
   SmallVector<int, 8> ZPRObjectsToAllocate;
@@ -4177,25 +4168,16 @@ static void determineSVEStackObjectOffsets(MachineFunction &MF,
   for (int FI = 0, E = MFI.getObjectIndexEnd(); FI != E; ++FI) {
     if (FI == StackProtectorFI || MFI.isDeadObjectIndex(FI))
       continue;
+    if (CSRanges.MaxZPRFrameIndex >= FI && FI >= CSRanges.MinZPRFrameIndex)
+      continue;
+    if (CSRanges.MaxPPRFrameIndex >= FI && FI >= CSRanges.MinPPRFrameIndex)
+      continue;
+
     if (MFI.getStackID(FI) == TargetStackID::ScalableVector)
       ZPRObjectsToAllocate.push_back(FI);
-    else if (MFI.getStackID(FI) == TargetStackID::ScalablePredVector)
+    if (MFI.getStackID(FI) == TargetStackID::ScalablePredVector)
       PPRObjectsToAllocate.push_back(FI);
   }
-
-  // Allocate all SVE locals and spills
-  for (unsigned FI : PPRObjectsToAllocate) {
-    Align Alignment = MFI.getObjectAlign(FI);
-    if (Alignment > Align(16))
-      report_fatal_error(
-          "Alignment of scalable vectors > 16 bytes is not yet supported");
-
-    Offset = alignTo(Offset + MFI.getObjectSize(FI), Alignment);
-    if (AssignOffsets)
-      Assign(FI, -Offset);
-  }
-
-  PPRStackSize += Offset - ZPRStackSize - PPRStackSize;
 
   for (unsigned FI : ZPRObjectsToAllocate) {
     Align Alignment = MFI.getObjectAlign(FI);
@@ -4206,25 +4188,36 @@ static void determineSVEStackObjectOffsets(MachineFunction &MF,
       report_fatal_error(
           "Alignment of scalable vectors > 16 bytes is not yet supported");
 
-    Offset = alignTo(Offset + MFI.getObjectSize(FI), Alignment);
+    ZPROffset = alignTo(ZPROffset + MFI.getObjectSize(FI), Alignment);
     if (AssignOffsets)
-      Assign(FI, -Offset);
+      Assign(FI, -ZPROffset);
   }
 
-  ZPRStackSize += Offset - ZPRStackSize - PPRStackSize;
+  // Allocate all SVE locals and spills
+  for (unsigned FI : PPRObjectsToAllocate) {
+    Align Alignment = MFI.getObjectAlign(FI);
+    if (Alignment > Align(16))
+      report_fatal_error(
+          "Alignment of scalable vectors > 16 bytes is not yet supported");
 
-  if (SplitSVEObjects || ZPRStackSize == 0 || PPRStackSize == 0) {
-    ZPRStackSize = alignTo(ZPRStackSize, Align(16U));
-    PPRStackSize = alignTo(PPRStackSize, Align(16U));
+    PPROffset = alignTo(PPROffset + MFI.getObjectSize(FI), Alignment);
+    if (AssignOffsets)
+      Assign(FI, -PPROffset);
+  }
+
+  PPROffset = alignTo(PPROffset, Align(16U));
+  ZPROffset = alignTo(ZPROffset, Align(16U));
+
+  if (&ZPROffset != &PPROffset) {
+    // SplitSVEObjects.
+    AFI->setStackSizeZPR(ZPROffset);
+    AFI->setStackSizePPR(PPROffset);
   } else {
-    int64_t TotalStackSize = alignTo(ZPRStackSize + PPRStackSize, Align(16U));
-    PPRStackSize = (TotalStackSize - ZPRStackSize);
+    // When SplitSVEObjects is disabled just attribute all the stack to ZPRs.
+    // Determining the split is not necessary.
+    AFI->setStackSizeZPR(ZPROffset);
+    AFI->setStackSizePPR(0);
   }
-
-  // TODO: Alignment needs fixed if assigning together
-  AFI->setStackSizeZPR(ZPRStackSize);
-  AFI->setStackSizePPR(PPRStackSize);
-
   return;
 }
 
