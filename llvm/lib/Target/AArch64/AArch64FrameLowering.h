@@ -26,6 +26,11 @@ struct SVECSRanges {
   int MaxPPRFrameIndex = std::numeric_limits<int>::min();
 };
 
+struct SVEStackSizes {
+  int64_t ZPRStackSize{0};
+  int64_t PPRStackSize{0};
+};
+
 class AArch64FrameLowering : public TargetFrameLowering {
 public:
   explicit AArch64FrameLowering()
@@ -153,9 +158,9 @@ private:
   bool shouldCombineCSRLocalStackBump(MachineFunction &MF,
                                       uint64_t StackBumpBytes) const;
 
-  void estimateSVEStackObjectOffsets(MachineFunction &MF) const;
-  void assignSVEStackObjectOffsets(MachineFunction &MF,
-                                   SVECSRanges &CSRanges) const;
+  SVEStackSizes estimateSVEStackObjectOffsets(MachineFunction &MF) const;
+  SVEStackSizes assignSVEStackObjectOffsets(MachineFunction &MF,
+                                            SVECSRanges &CSRanges) const;
   bool shouldCombineCSRLocalStackBumpInEpilogue(MachineBasicBlock &MBB,
                                                 uint64_t StackBumpBytes) const;
   void emitCalleeSavedGPRLocations(MachineBasicBlock &MBB,

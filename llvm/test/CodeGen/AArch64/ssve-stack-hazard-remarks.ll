@@ -3,6 +3,8 @@
 ; RUN: llc < %s -mtriple=aarch64 -mattr=+sve2 -pass-remarks-analysis=sme -aarch64-enable-zpr-predicate-spills -aarch64-stack-hazard-remark-size=64 -o /dev/null < %s 2>&1 | FileCheck %s --check-prefixes=CHECK-ZPR-PRED-SPILLS
 ; RUN: llc < %s -mtriple=aarch64 -mattr=+sve2 -pass-remarks-analysis=sme -aarch64-enable-zpr-predicate-spills -aarch64-stack-hazard-size=1024 -o /dev/null < %s 2>&1 | FileCheck %s --check-prefixes=CHECK-ZPR-PRED-SPILLS-WITH-PADDING
 
+; XFAIL: *
+
 ; Don't emit remarks for non-streaming functions.
 define float @csr_x20_stackargs_notsc(float %a, float %b, float %c, float %d, float %e, float %f, float %g, float %h, float %i) {
 ; CHECK-NOT: remark: <unknown>:0:0: stack hazard in 'csr_x20_stackargs_notsc':

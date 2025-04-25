@@ -3828,12 +3828,11 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   });
 
   // If any callee-saved registers are used, the frame cannot be eliminated.
-  estimateSVEStackObjectOffsets(MF);
-  int64_t SVELocals = AFI->getStackSizeZPR() + AFI->getStackSizePPR();
+  auto [ZPRLocalStackSize, PPRLocalStackSize] =
+      estimateSVEStackObjectOffsets(MF);
+  int64_t SVELocals = ZPRLocalStackSize + PPRLocalStackSize;
   int64_t SVEStackSize =
       alignTo(ZPRCSStackSize + PPRCSStackSize + SVELocals, 16);
-  // int64_t SVEStackSize = alignTo(
-  //     AFI->getStackSizeZPR() + AFI->getStackSizePPR(), 16);
   bool CanEliminateFrame = (SavedRegs.count() == 0) && !SVEStackSize;
 
   // The CSR spill slots have not been allocated yet, so estimateStackSize
@@ -4098,9 +4097,9 @@ static bool getSVECalleeSaveSlotRanges(const MachineFrameInfo &MFI,
 // Fills in the first and last callee-saved frame indices into
 // Min/MaxCSFrameIndex, respectively.
 // Returns the size of the stack.
-static void determineSVEStackObjectOffsets(MachineFunction &MF,
-                                           SVECSRanges &CSRanges,
-                                           bool AssignOffsets) {
+static SVEStackSizes determineSVEStackObjectOffsets(MachineFunction &MF,
+                                                    SVECSRanges &CSRanges,
+                                                    bool AssignOffsets) {
   MachineFrameInfo &MFI = MF.getFrameInfo();
   AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
 
@@ -4202,26 +4201,23 @@ static void determineSVEStackObjectOffsets(MachineFunction &MF,
 
   if (&ZPROffset != &PPROffset) {
     // SplitSVEObjects.
-    AFI->setStackSizeZPR(ZPROffset);
-    AFI->setStackSizePPR(PPROffset);
-  } else {
-    // When SplitSVEObjects is disabled just attribute all the stack to ZPRs.
-    // Determining the split is not necessary.
-    AFI->setStackSizeZPR(ZPROffset);
-    AFI->setStackSizePPR(0);
+    return SVEStackSizes{ZPROffset, ZPROffset};
   }
-  return;
+  // When SplitSVEObjects is disabled just attribute all the stack to ZPRs.
+  // Determining the split is not necessary.
+  return SVEStackSizes{ZPROffset, 0};
 }
 
-void AArch64FrameLowering::estimateSVEStackObjectOffsets(
-    MachineFunction &MF) const {
+SVEStackSizes
+AArch64FrameLowering::estimateSVEStackObjectOffsets(MachineFunction &MF) const {
   SVECSRanges CSRanges = SVECSRanges();
-  determineSVEStackObjectOffsets(MF, CSRanges, false);
+  return determineSVEStackObjectOffsets(MF, CSRanges, false);
 }
 
-void AArch64FrameLowering::assignSVEStackObjectOffsets(
-    MachineFunction &MF, SVECSRanges &CSRanges) const {
-  determineSVEStackObjectOffsets(MF, CSRanges, true);
+SVEStackSizes
+AArch64FrameLowering::assignSVEStackObjectOffsets(MachineFunction &MF,
+                                                  SVECSRanges &CSRanges) const {
+  return determineSVEStackObjectOffsets(MF, CSRanges, true);
 }
 
 /// Attempts to scavenge a register from \p ScavengeableRegs given the used
@@ -4536,7 +4532,9 @@ void AArch64FrameLowering::processFunctionBeforeFrameFinalized(
          "Upwards growing stack unsupported");
 
   SVECSRanges CSRanges = SVECSRanges();
-  assignSVEStackObjectOffsets(MF, CSRanges);
+  auto [ZPRStackSize, PPRStackSize] = assignSVEStackObjectOffsets(MF, CSRanges);
+  AFI->setStackSizeZPR(ZPRStackSize);
+  AFI->setStackSizePPR(PPRStackSize);
 
   AFI->setMinMaxZPRCSFrameIndex(CSRanges.MinZPRFrameIndex,
                                 CSRanges.MaxZPRFrameIndex);
