@@ -1585,6 +1585,7 @@ static bool IsZPRCalleeSave(MachineBasicBlock::iterator I) {
   case AArch64::STR_ZXI:
   case AArch64::LDR_ZXI:
   case AArch64::CPY_ZPzI_B:
+  case AArch64::PTRUE_C_B:
     return I->getFlag(MachineInstr::FrameSetup) ||
            I->getFlag(MachineInstr::FrameDestroy);
   }
@@ -1595,11 +1596,8 @@ static bool IsPPRCalleeSave(MachineBasicBlock::iterator I) {
   switch (I->getOpcode()) {
   default:
     return false;
-  case AArch64::PTRUE_C_B:
-  case AArch64::PTRUE_B:
   case AArch64::STR_PXI:
   case AArch64::LDR_PXI:
-  case AArch64::CMPNE_PPzZI_B:
    return I->getFlag(MachineInstr::FrameSetup) ||
           I->getFlag(MachineInstr::FrameDestroy);
  }
