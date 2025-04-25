@@ -4153,8 +4153,7 @@ static void determineSVEStackObjectOffsets(MachineFunction &MF,
   ZPROffset = alignTo(ZPROffset, Align(16U));
 
   // Create a buffer of SVE objects to allocate and sort it.
-  SmallVector<int, 8> ZPRObjectsToAllocate;
-  SmallVector<int, 8> PPRObjectsToAllocate;
+  SmallVector<int, 8> ObjectsToAllocate;
   // If we have a stack protector, and we've previously decided that we have SVE
   // objects on the stack and thus need it to go in the SVE stack area, then it
   // needs to go first.
@@ -4162,7 +4161,7 @@ static void determineSVEStackObjectOffsets(MachineFunction &MF,
   if (MFI.hasStackProtectorIndex()) {
     StackProtectorFI = MFI.getStackProtectorIndex();
     if (MFI.getStackID(StackProtectorFI) == TargetStackID::ScalableVector)
-      ZPRObjectsToAllocate.push_back(StackProtectorFI);
+      ObjectsToAllocate.push_back(StackProtectorFI);
   }
 
   for (int FI = 0, E = MFI.getObjectIndexEnd(); FI != E; ++FI) {
@@ -4173,13 +4172,15 @@ static void determineSVEStackObjectOffsets(MachineFunction &MF,
     if (CSRanges.MaxPPRFrameIndex >= FI && FI >= CSRanges.MinPPRFrameIndex)
       continue;
 
-    if (MFI.getStackID(FI) == TargetStackID::ScalableVector)
-      ZPRObjectsToAllocate.push_back(FI);
-    if (MFI.getStackID(FI) == TargetStackID::ScalablePredVector)
-      PPRObjectsToAllocate.push_back(FI);
+    if (MFI.getStackID(FI) != TargetStackID::ScalableVector &&
+        MFI.getStackID(FI) != TargetStackID::ScalablePredVector)
+      continue;
+
+    ObjectsToAllocate.push_back(FI);
   }
 
-  for (unsigned FI : ZPRObjectsToAllocate) {
+  // Allocate all SVE locals and spills
+  for (unsigned FI : ObjectsToAllocate) {
     Align Alignment = MFI.getObjectAlign(FI);
     // FIXME: Given that the length of SVE vectors is not necessarily a power of
     // two, we'd need to align every object dynamically at runtime if the
@@ -4188,21 +4189,12 @@ static void determineSVEStackObjectOffsets(MachineFunction &MF,
       report_fatal_error(
           "Alignment of scalable vectors > 16 bytes is not yet supported");
 
-    ZPROffset = alignTo(ZPROffset + MFI.getObjectSize(FI), Alignment);
+    int64_t &Offset = MFI.getStackID(FI) == TargetStackID::ScalableVector
+                          ? ZPROffset
+                          : PPROffset;
+    Offset = alignTo(Offset + MFI.getObjectSize(FI), Alignment);
     if (AssignOffsets)
-      Assign(FI, -ZPROffset);
-  }
-
-  // Allocate all SVE locals and spills
-  for (unsigned FI : PPRObjectsToAllocate) {
-    Align Alignment = MFI.getObjectAlign(FI);
-    if (Alignment > Align(16))
-      report_fatal_error(
-          "Alignment of scalable vectors > 16 bytes is not yet supported");
-
-    PPROffset = alignTo(PPROffset + MFI.getObjectSize(FI), Alignment);
-    if (AssignOffsets)
-      Assign(FI, -PPROffset);
+      Assign(FI, -Offset);
   }
 
   PPROffset = alignTo(PPROffset, Align(16U));
