@@ -2226,6 +2226,9 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   } else {
     assert(!canUseRedZone(MF) &&
            "Cannot use redzone with aarch64-split-sve-objects");
+    // TODO: Handle HasWinCFI/NeedsWinCFI?
+    assert(!NeedsWinCFI &&
+           "WinCFI with aarch64-split-sve-objects is not supported");
 
     // Insert hazard padding for GPR CS/PPRs after PPR locals.
     if (AFI->hasStackHazardSlotIndex())
@@ -2233,31 +2236,26 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
 
     // Split ZPR and PPR allocation.
     // Allocate PPR callee saves
-    allocateStackSpace(MBB, PPRCalleeSavesBegin, 0, PPRCalleeSavesSize,
-                       false, // 2
+    allocateStackSpace(MBB, PPRCalleeSavesBegin, 0, PPRCalleeSavesSize, false,
                        nullptr, EmitAsyncCFI && !HasFP, CFAOffset,
                        MFI.hasVarSizedObjects() || ZPRCalleeSavesSize ||
                            ZPRLocalsSize || PPRLocalsSize);
     CFAOffset += PPRCalleeSavesSize;
 
-    // Allocate PPR locals
-    allocateStackSpace(
-        MBB, PPRCalleeSavesEnd, RealignmentPadding, PPRLocalsSize, NeedsWinCFI,
-        &HasWinCFI, EmitAsyncCFI && !HasFP, CFAOffset,
-        MFI.hasVarSizedObjects() || ZPRCalleeSavesSize || ZPRLocalsSize);
-    CFAOffset += PPRLocalsSize;
-
-    // Allocate ZPR callee saves
-    allocateStackSpace(MBB, ZPRCalleeSavesBegin, 0, ZPRCalleeSavesSize, false,
-                       nullptr, EmitAsyncCFI && !HasFP, CFAOffset,
+    // Allocate PPR locals + ZPR callee saves
+    assert(PPRCalleeSavesEnd == ZPRCalleeSavesBegin &&
+           "Expected ZPR callee saves after PPR locals");
+    allocateStackSpace(MBB, PPRCalleeSavesEnd, RealignmentPadding,
+                       PPRLocalsSize + ZPRCalleeSavesSize, false, nullptr,
+                       EmitAsyncCFI && !HasFP, CFAOffset,
                        MFI.hasVarSizedObjects() || ZPRLocalsSize);
-    CFAOffset += ZPRCalleeSavesSize;
+    CFAOffset += PPRLocalsSize + ZPRCalleeSavesSize;
 
     // Allocate ZPR locals
     allocateStackSpace(MBB, ZPRCalleeSavesEnd, RealignmentPadding,
-                       ZPRLocalsSize + StackOffset::getFixed(NumBytes),
-                       NeedsWinCFI, &HasWinCFI, EmitAsyncCFI && !HasFP,
-                       CFAOffset, MFI.hasVarSizedObjects());
+                       ZPRLocalsSize + StackOffset::getFixed(NumBytes), false,
+                       nullptr, EmitAsyncCFI && !HasFP, CFAOffset,
+                       MFI.hasVarSizedObjects());
 
     if (EmitAsyncCFI)
       emitCalleeSavedSVELocations(MBB, ZPRCalleeSavesEnd);
@@ -2391,6 +2389,13 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
 
   int64_t AfterCSRPopSize = ArgumentStackToRestore;
   auto PrologueSaveSize = AFI->getCalleeSavedStackSize() + FixedObject;
+  auto StackHazardSize = getStackHazardSize(MF);
+  // With split SVE allocation the padding occurs after the PPR locals.
+  if (SplitSVEObjects && AFI->hasStackHazardSlotIndex()) {
+    PrologueSaveSize -= StackHazardSize;
+    NumBytes -= StackHazardSize;
+  }
+
   // We cannot rely on the local stack size set in emitPrologue if the function
   // has funclets, as funclets have different local stack size requirements, and
   // the current value set in emitPrologue may be that of the containing
@@ -2854,13 +2859,22 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
       "In the presence of dynamic stack pointer realignment, "
       "non-argument/CSR objects cannot be accessed through the frame pointer");
 
+  // TODO: Validate non-SVE accesses with SplitSVEObjects + HZ pad.
   if (isSVE) {
+    // We have to manually go above the stack hazard as it (somewhat
+    // wrongly) is attributed to the callee saves with split allocation.
+    int64_t HazardPaddingAdjustment = 0;
+    if (SplitSVEObjects && AFI->hasStackHazardSlotIndex() &&
+        MFI.getStackID(FI) == TargetStackID::ScalablePredVector)
+      HazardPaddingAdjustment = getStackHazardSize(MF);
+
     StackOffset FPOffset =
         StackOffset::get(-AFI->getCalleeSaveBaseToFrameRecordOffset(), ObjectOffset);
 
     StackOffset SPOffset =
         SVEStackSize +
-        StackOffset::get(MFI.getStackSize() - AFI->getCalleeSavedStackSize(),
+        StackOffset::get(MFI.getStackSize() - AFI->getCalleeSavedStackSize() +
+                             HazardPaddingAdjustment,
                          ObjectOffset);
 
     // Always use the FP for SVE spills if available and beneficial.
