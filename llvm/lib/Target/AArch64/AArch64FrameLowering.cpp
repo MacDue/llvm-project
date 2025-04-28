@@ -474,6 +474,10 @@ bool AArch64FrameLowering::canUseRedZone(const MachineFunction &MF) const {
   if (!EnableRedZone)
     return false;
 
+  // TODO: Relax this. It's only the PPR locals that can't use the red-zone.
+  if (SplitSVEObjects)
+    return false;
+
   // Don't use the red zone if the function explicitly asks us not to.
   // This is typically used for kernel code.
   const AArch64Subtarget &Subtarget = MF.getSubtarget<AArch64Subtarget>();
@@ -2138,10 +2142,13 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
     }
   }
 
-  StackOffset SVECalleeSavesSize =
-      StackOffset::getScalable(AFI->getZPRCalleeSavedStackSize() +
-                               AFI->getPPRCalleeSavedStackSize());
-  StackOffset SVELocalsSize = getZPRStackSize(MF) + getPPRStackSize(MF);
+  StackOffset PPRCalleeSavesSize =
+      StackOffset::getScalable(AFI->getPPRCalleeSavedStackSize());
+  StackOffset ZPRCalleeSavesSize =
+      StackOffset::getScalable(AFI->getZPRCalleeSavedStackSize());
+  StackOffset PPRLocalsSize = getPPRStackSize(MF);
+  StackOffset ZPRLocalsSize = getZPRStackSize(MF);
+
   MachineBasicBlock::iterator ZPRCalleeSavesBegin = MBBI, ZPRCalleeSavesEnd = MBBI;
   MachineBasicBlock::iterator PPRCalleeSavesBegin = MBBI, PPRCalleeSavesEnd = MBBI;
 
@@ -2158,7 +2165,7 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
       ++MBBI;
     PPRCalleeSavesEnd = MBBI;
 
-    SVELocalsSize -= StackOffset::getScalable(PPRCalleeSavedSize);
+    PPRLocalsSize -= StackOffset::getScalable(PPRCalleeSavedSize);
   }
 
   if (int64_t ZPRCalleeSavedSize = AFI->getZPRCalleeSavedStackSize()) {
@@ -2171,37 +2178,78 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
       ++MBBI;
     ZPRCalleeSavesEnd = MBBI;
 
-    SVELocalsSize -= StackOffset::getScalable(ZPRCalleeSavedSize);
+    ZPRLocalsSize -= StackOffset::getScalable(ZPRCalleeSavedSize);
   }
 
   // Allocate space for the callee saves (if any).
   StackOffset CFAOffset =
       StackOffset::getFixed((int64_t)MFI.getStackSize() - NumBytes);
-  StackOffset LocalsSize = SVELocalsSize + StackOffset::getFixed(NumBytes);
-  MachineBasicBlock::iterator CalleeSavesBegin =
-      AFI->getPPRCalleeSavedStackSize() ? PPRCalleeSavesBegin : ZPRCalleeSavesBegin;
-  allocateStackSpace(MBB, CalleeSavesBegin, 0, SVECalleeSavesSize, false,
-                     nullptr, EmitAsyncCFI && !HasFP, CFAOffset,
-                     MFI.hasVarSizedObjects() || LocalsSize);
-  CFAOffset += SVECalleeSavesSize;
+  StackOffset LocalsSize =
+      PPRLocalsSize + ZPRLocalsSize + StackOffset::getFixed(NumBytes);
+  if (!SplitSVEObjects) {
+    StackOffset SVECalleeSavesSize = PPRCalleeSavesSize + ZPRCalleeSavesSize;
+    MachineBasicBlock::iterator CalleeSavesBegin =
+        AFI->getPPRCalleeSavedStackSize() ? PPRCalleeSavesBegin
+                                          : ZPRCalleeSavesBegin;
+    allocateStackSpace(MBB, CalleeSavesBegin, 0, SVECalleeSavesSize, false,
+                       nullptr, EmitAsyncCFI && !HasFP, CFAOffset,
+                       MFI.hasVarSizedObjects() || LocalsSize);
+    CFAOffset += SVECalleeSavesSize;
 
-  MachineBasicBlock::iterator CalleeSavesEnd =
-      AFI->getZPRCalleeSavedStackSize() ? ZPRCalleeSavesEnd : PPRCalleeSavesEnd;
-  if (EmitAsyncCFI)
-    emitCalleeSavedSVELocations(MBB, CalleeSavesEnd);
+    MachineBasicBlock::iterator CalleeSavesEnd =
+        AFI->getZPRCalleeSavedStackSize() ? ZPRCalleeSavesEnd
+                                          : PPRCalleeSavesEnd;
+    if (EmitAsyncCFI)
+      emitCalleeSavedSVELocations(MBB, CalleeSavesEnd);
 
-  // Allocate space for the rest of the frame including SVE locals. Align the
-  // stack as necessary.
-  assert(!(canUseRedZone(MF) && NeedsRealignment) &&
-         "Cannot use redzone with stack realignment");
-  if (!canUseRedZone(MF)) {
-    // FIXME: in the case of dynamic re-alignment, NumBytes doesn't have
-    // the correct value here, as NumBytes also includes padding bytes,
-    // which shouldn't be counted here.
-    allocateStackSpace(MBB, CalleeSavesEnd, RealignmentPadding,
-                       SVELocalsSize + StackOffset::getFixed(NumBytes),
+    // Allocate space for the rest of the frame including SVE locals. Align the
+    // stack as necessary.
+    assert(!(canUseRedZone(MF) && NeedsRealignment) &&
+           "Cannot use redzone with stack realignment");
+    if (!canUseRedZone(MF)) {
+      // FIXME: in the case of dynamic re-alignment, NumBytes doesn't have
+      // the correct value here, as NumBytes also includes padding bytes,
+      // which shouldn't be counted here.
+      StackOffset SVELocalsSize = PPRLocalsSize + ZPRLocalsSize;
+      allocateStackSpace(MBB, CalleeSavesEnd, RealignmentPadding,
+                         SVELocalsSize + StackOffset::getFixed(NumBytes),
+                         NeedsWinCFI, &HasWinCFI, EmitAsyncCFI && !HasFP,
+                         CFAOffset, MFI.hasVarSizedObjects());
+    }
+  } else {
+    assert(!canUseRedZone(MF) &&
+           "Cannot use redzone with aarch64-split-sve-objects");
+
+    // Split ZPR and PPR allocation.
+    // Allocate PPR callee saves
+    allocateStackSpace(MBB, PPRCalleeSavesBegin, 0, PPRCalleeSavesSize,
+                       false, // 2
+                       nullptr, EmitAsyncCFI && !HasFP, CFAOffset,
+                       MFI.hasVarSizedObjects() || ZPRCalleeSavesSize ||
+                           ZPRLocalsSize || PPRLocalsSize);
+    CFAOffset += PPRCalleeSavesSize;
+
+    // Allocate PPR locals
+    allocateStackSpace(
+        MBB, PPRCalleeSavesEnd, RealignmentPadding, PPRLocalsSize, NeedsWinCFI,
+        &HasWinCFI, EmitAsyncCFI && !HasFP, CFAOffset,
+        MFI.hasVarSizedObjects() || ZPRCalleeSavesSize || ZPRLocalsSize);
+    CFAOffset += PPRLocalsSize;
+
+    // Allocate ZPR callee saves
+    allocateStackSpace(MBB, ZPRCalleeSavesBegin, 0, ZPRCalleeSavesSize, false,
+                       nullptr, EmitAsyncCFI && !HasFP, CFAOffset,
+                       MFI.hasVarSizedObjects() || ZPRLocalsSize);
+    CFAOffset += ZPRCalleeSavesSize;
+
+    // Allocate ZPR locals
+    allocateStackSpace(MBB, ZPRCalleeSavesEnd, RealignmentPadding,
+                       ZPRLocalsSize + StackOffset::getFixed(NumBytes),
                        NeedsWinCFI, &HasWinCFI, EmitAsyncCFI && !HasFP,
                        CFAOffset, MFI.hasVarSizedObjects());
+
+    if (EmitAsyncCFI)
+      emitCalleeSavedSVELocations(MBB, ZPRCalleeSavesEnd);
   }
 
   // If we need a base pointer, set it up here. It's whatever the value of the
@@ -2996,8 +3044,20 @@ static void computeCalleeSaveRegisterPairs(
     RegInc = -1;
     FirstReg = Count - 1;
   }
-  int ScalableByteOffset =
-      AFI->getZPRCalleeSavedStackSize() + AFI->getPPRCalleeSavedStackSize();
+  int ZPRByteOffset = 0;
+  int PPRByteOffset = 0;
+
+  bool SplitPPRs = SplitSVEObjects;
+  if (SplitPPRs) {
+    ZPRByteOffset = AFI->getZPRCalleeSavedStackSize();
+    PPRByteOffset = AFI->getPPRCalleeSavedStackSize();
+  } else {
+    ZPRByteOffset =
+        AFI->getZPRCalleeSavedStackSize() + AFI->getPPRCalleeSavedStackSize();
+    // Unused: Everything goes in ZPR space.
+    PPRByteOffset = 0;
+  }
+
   bool NeedGapToAlignStack = AFI->hasCalleeSaveStackFreeSpace();
   Register LastReg = 0;
 
@@ -3027,6 +3087,10 @@ static void computeCalleeSaveRegisterPairs(
     } else {
       llvm_unreachable("Unsupported register class.");
     }
+
+    int &ScalableByteOffset = RPI.Type == RegPairInfo::PPR && SplitPPRs
+                                  ? PPRByteOffset
+                                  : ZPRByteOffset;
 
     // Add the stack hazard size as we transition from GPR->FPR CSRs.
     if (AFI->hasStackHazardSlotIndex() &&
@@ -4201,7 +4265,7 @@ static SVEStackSizes determineSVEStackObjectOffsets(MachineFunction &MF,
 
   if (&ZPROffset != &PPROffset) {
     // SplitSVEObjects.
-    return SVEStackSizes{ZPROffset, ZPROffset};
+    return SVEStackSizes{ZPROffset, PPROffset};
   }
   // When SplitSVEObjects is disabled just attribute all the stack to ZPRs.
   // Determining the split is not necessary.
