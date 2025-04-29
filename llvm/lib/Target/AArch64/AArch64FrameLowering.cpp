@@ -3078,7 +3078,8 @@ static void computeCalleeSaveRegisterPairs(
   if (SplitPPRs) {
     ZPRByteOffset = AFI->getZPRCalleeSavedStackSize();
     PPRByteOffset = AFI->getPPRCalleeSavedStackSize();
-    ByteOffset -= StackHazardSize;
+    if (AFI->hasStackHazardSlotIndex())
+      ByteOffset -= StackHazardSize;
   } else {
     ZPRByteOffset =
         AFI->getZPRCalleeSavedStackSize() + AFI->getPPRCalleeSavedStackSize();
@@ -3229,6 +3230,9 @@ static void computeCalleeSaveRegisterPairs(
       MFI.setObjectAlignment(RPI.FrameIdx, Align(16));
       NeedGapToAlignStack = false;
     }
+
+    llvm::dbgs() << "ScalableByteOffset = " << ScalableByteOffset << '\n';
+    llvm::dbgs() << "ByteOffset = " << ByteOffset << '\n';
 
     int OffsetPost = RPI.isScalable() ? ScalableByteOffset : ByteOffset;
     assert(OffsetPost % Scale == 0);
@@ -3751,10 +3755,18 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   if (MF.getFunction().getCallingConv() == CallingConv::GHC)
     return;
 
+  const AArch64Subtarget &Subtarget = MF.getSubtarget<AArch64Subtarget>();
+
+  if (SplitSVEObjects && Subtarget.isSVEorStreamingSVEAvailable()) {
+    // TODO: Solve this without changing the CC. Currently, this is required as
+    // in PEI assignCalleeSavedSpillSlots() only looks at registers in the CS
+    // mask.
+    MF.getInfo<AArch64FunctionInfo>()->setIsSVECC(true);
+  }
+
   TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
   const AArch64RegisterInfo *RegInfo = static_cast<const AArch64RegisterInfo *>(
       MF.getSubtarget().getRegisterInfo());
-  const AArch64Subtarget &Subtarget = MF.getSubtarget<AArch64Subtarget>();
   AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
   unsigned UnspilledCSGPR = AArch64::NoRegister;
   unsigned UnspilledCSGPRPaired = AArch64::NoRegister;
@@ -3864,11 +3876,41 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
     SavedRegs.set(AArch64::X18);
   }
 
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+
+  // if (SplitSVEObjects) {
+  //   // // With SplitSVEObjects the CS hazard padding is placed between the
+  //   PPRs and
+  //   // // ZPRs. If there are any FPR CS there would be a hazard between them
+  //   and
+  //   // // the CS GRPs. Avoid this by promoting all FPR CS to ZPRs.
+  //   // BitVector FPRZRegs(SavedRegs.size());
+  //   // for (size_t Reg = 0, E = SavedRegs.size(); Reg < E; ++Reg) {
+  //   //   BitVector::reference RegBit = SavedRegs[Reg];
+  //   //   if (!RegBit)
+  //   //     continue;
+  //   //   unsigned SubRegIdx = 0;
+  //   //   if (AArch64::FPR64RegClass.contains(Reg))
+  //   //     SubRegIdx = AArch64::dsub;
+  //   //   else if (AArch64::FPR128RegClass.contains(Reg))
+  //   //     SubRegIdx = AArch64::zsub; // TODO: Is the the right sub-register?
+  //   //   else
+  //   //     continue;
+
+  //   //   // Clear the bit for the FPR save.
+  //   //   RegBit = false;
+  //   //   // Mark that we should save the corresponding ZPR.
+  //   //   Register ZReg =
+  //   //       TRI->getMatchingSuperReg(Reg, SubRegIdx, &AArch64::ZPRRegClass);
+  //   //   FPRZRegs.set(ZReg);
+  //   // }
+  //   // SavedRegs |= FPRZRegs;
+  // }
+
   // Calculates the callee saved stack size.
   unsigned CSStackSize = 0;
   unsigned ZPRCSStackSize = 0;
   unsigned PPRCSStackSize = 0;
-  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
   for (unsigned Reg : SavedRegs.set_bits()) {
     auto *RC = TRI->getMinimalPhysRegClass(Reg);
     assert(RC && "expected register class!");
@@ -4228,6 +4270,16 @@ static SVEStackSizes determineSVEStackObjectOffsets(MachineFunction &MF,
   };
 
   getSVECalleeSaveSlotRanges(MFI, CSRanges);
+
+  llvm::dbgs() << "CSRanges.MinZPRFrameIndex: " << CSRanges.MinZPRFrameIndex
+               << '\n';
+  llvm::dbgs() << "CSRanges.MaxZPRFrameIndex: " << CSRanges.MaxZPRFrameIndex
+               << '\n';
+  llvm::dbgs() << "CSRanges.MinPPRFrameIndex: " << CSRanges.MinPPRFrameIndex
+               << '\n';
+  llvm::dbgs() << "CSRanges.MaxPPRFrameIndex: " << CSRanges.MaxPPRFrameIndex
+               << '\n';
+
 
   // Then process all callee saved slots.
   if (AFI->getZPRCalleeSavedStackSize())
