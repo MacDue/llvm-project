@@ -2929,23 +2929,27 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
       "In the presence of dynamic stack pointer realignment, "
       "non-argument/CSR objects cannot be accessed through the frame pointer");
 
-  // TODO: Validate non-SVE accesses with SplitSVEObjects + HZ pad.
+  StackOffset StackHazardSize = StackOffset::getFixed(getStackHazardSize(MF));
   if (isSVE) {
-    // We have to manually go above the stack hazard as it (somewhat
-    // wrongly) is attributed to the callee saves with split allocation.
-    int64_t HazardPaddingAdjustment = 0;
-    if (SplitSVEObjects && AFI->hasStackHazardSlotIndex() &&
-        MFI.getStackID(FI) == TargetStackID::ScalablePredVector)
-      HazardPaddingAdjustment = getStackHazardSize(MF);
+    StackOffset SPHazardPaddingAdjustment{};
+    StackOffset FPHazardPaddingAdjustment{};
+    if (SplitSVEObjects && AFI->hasStackHazardSlotIndex()) {
+      if (MFI.getStackID(FI) == TargetStackID::ScalablePredVector)
+        SPHazardPaddingAdjustment = StackHazardSize;
+      else
+        FPHazardPaddingAdjustment = -StackHazardSize;
+    }
 
     StackOffset FPOffset =
-        StackOffset::get(-AFI->getCalleeSaveBaseToFrameRecordOffset(), ObjectOffset);
+        StackOffset::get(-AFI->getCalleeSaveBaseToFrameRecordOffset(),
+                         ObjectOffset) +
+        FPHazardPaddingAdjustment;
 
     StackOffset SPOffset =
         SVEStackSize +
-        StackOffset::get(MFI.getStackSize() - AFI->getCalleeSavedStackSize() +
-                             HazardPaddingAdjustment,
-                         ObjectOffset);
+        StackOffset::get(MFI.getStackSize() - AFI->getCalleeSavedStackSize(),
+                         ObjectOffset) +
+        SPHazardPaddingAdjustment;
 
     // Always use the FP for SVE spills if available and beneficial.
     if (hasFP(MF) && (SPOffset.getFixed() ||
@@ -2960,15 +2964,19 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
     return SPOffset;
   }
 
-  StackOffset ScalableOffset = {};
+  StackOffset SVEAreaSize = SVEStackSize;
+  if (SplitSVEObjects)
+    SVEAreaSize += StackHazardSize;
+
+  StackOffset SVEAreaOffset = {};
   if (UseFP && !(isFixed || isCSR))
-    ScalableOffset = -SVEStackSize;
+    SVEAreaOffset = -SVEAreaSize;
   if (!UseFP && (isFixed || isCSR))
-    ScalableOffset = SVEStackSize;
+    SVEAreaOffset = SVEAreaSize;
 
   if (UseFP) {
     FrameReg = RegInfo->getFrameRegister(MF);
-    return StackOffset::getFixed(FPOffset) + ScalableOffset;
+    return StackOffset::getFixed(FPOffset) + SVEAreaOffset;
   }
 
   // Use the base pointer if we have one.
@@ -2985,7 +2993,7 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
       Offset -= AFI->getLocalStackSize();
   }
 
-  return StackOffset::getFixed(Offset) + ScalableOffset;
+  return StackOffset::getFixed(Offset) + SVEAreaOffset;
 }
 
 static unsigned getPrologueDeath(MachineFunction &MF, unsigned Reg) {
