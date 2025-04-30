@@ -468,7 +468,7 @@ static StackOffset getZPRStackSize(const MachineFunction &MF) {
 static StackOffset getPPRStackSize(const MachineFunction &MF) {
   const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
   return StackOffset::get(SplitSVEObjects ? getStackHazardSize(MF) : 0,
-                     AFI->getStackSizePPR());
+                          AFI->getStackSizePPR());
 }
 
 static bool hasSVEStackSize(const MachineFunction &MF) {
@@ -3768,12 +3768,12 @@ void AArch64FrameLowering::determineStackHazardSlot(
            AArch64::FPR128RegClass.contains(Reg) ||
            AArch64::ZPRRegClass.contains(Reg);
   });
-  bool HasPPRCS = any_of(SavedRegs.set_bits(), [](unsigned Reg) {
+  bool HasPPRCSRs = any_of(SavedRegs.set_bits(), [](unsigned Reg) {
     return AArch64::PPRRegClass.contains(Reg);
   });
   bool HasFPRStackObjects = false;
   bool HasPPRStackObjects = false;
-  if (!HasFPRCSRs) {
+  if (!HasFPRCSRs || (SplitSVEObjects && !HasPPRCSRs)) {
     std::vector<unsigned> FrameObjects(MFI.getObjectIndexEnd());
     for (auto &MBB : MF) {
       for (auto &MI : MBB) {
@@ -3803,10 +3803,10 @@ void AArch64FrameLowering::determineStackHazardSlot(
   // Determine if we should use SplitSVEObjects. This should only be used if
   // there's a possibility of a stack hazard between PPRs and ZPRs or FPRs.
   if (SplitSVEObjects) {
-    if (!HasPPRCS && !HasPPRStackObjects) {
+    if (!HasPPRCSRs && !HasPPRStackObjects) {
       SplitSVEObjects = false;
       LLVM_DEBUG(
-          dbgs() << "SplitSVEObjects disabled as no PPRs are on the stack");
+          dbgs() << "SplitSVEObjects disabled as no PPRs are on the stack\n");
       return;
     }
 
@@ -3814,7 +3814,7 @@ void AArch64FrameLowering::determineStackHazardSlot(
       SplitSVEObjects = false;
       LLVM_DEBUG(
           dbgs()
-          << "SplitSVEObjects disabled as no FPRs or ZPRs are on the stack");
+          << "SplitSVEObjects disabled as no FPRs or ZPRs are on the stack\n");
       return;
     }
 
@@ -3977,6 +3977,11 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
     SavedRegs.set(AArch64::X18);
   }
 
+  // Determine if a Hazard slot should be used and where it should go.
+  // If SplitSVEObjects is used, the hazard padding is placed between the PPRs
+  // and ZPRs. Otherwise, it goes in the callee save area.
+  determineStackHazardSlot(MF, SavedRegs);
+
   const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
 
   // Calculates the callee saved stack size.
@@ -3995,6 +4000,10 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
       CSStackSize += SpillSize;
   }
 
+  // If we have hazard padding in the CS area add that to the size.
+  if (AFI->hasStackHazardSlotIndex() && !SplitSVEObjects)
+    CSStackSize += getStackHazardSize(MF);
+
   // Increase the callee-saved stack size if the function has streaming mode
   // changes, as we will need to spill the value of the VG register.
   // For locally streaming functions, we spill both the streaming and
@@ -4007,13 +4016,6 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
     else
       CSStackSize += 8;
   }
-
-  // Determine if a Hazard slot should be used, and increase the CSStackSize by
-  // the hazard size if we're not using SplitSVEObjects. With SplitSVEObjects
-  // the hazard padding occurs between the PPRs and ZPRs.
-  determineStackHazardSlot(MF, SavedRegs);
-  if (AFI->hasStackHazardSlotIndex() && !SplitSVEObjects)
-    CSStackSize += getStackHazardSize(MF);
 
   // Save number of saved regs, so we can easily update CSStackSize later.
   unsigned NumSavedRegs = SavedRegs.count();
@@ -4194,8 +4196,8 @@ bool AArch64FrameLowering::assignCalleeSavedSpillSlots(
     const TargetRegisterClass *RC = RegInfo->getMinimalPhysRegClass(Reg);
 
     // Create a hazard slot as we switch between GPR and FPR CSRs.
-    if (AFI->hasStackHazardSlotIndex() &&
-        !SplitSVEObjects && (!LastReg || !AArch64InstrInfo::isFpOrNEON(LastReg)) &&
+    if (AFI->hasStackHazardSlotIndex() && !SplitSVEObjects &&
+        (!LastReg || !AArch64InstrInfo::isFpOrNEON(LastReg)) &&
         AArch64InstrInfo::isFpOrNEON(Reg)) {
       assert(HazardSlotIndex == std::numeric_limits<int>::max() &&
              "Unexpected register order for hazard slot");
