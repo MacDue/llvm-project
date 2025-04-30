@@ -453,16 +453,22 @@ static unsigned getFixedObjectSize(const MachineFunction &MF,
   }
 }
 
+static unsigned getStackHazardSize(const MachineFunction &MF) {
+  return MF.getSubtarget<AArch64Subtarget>().getStreamingHazardSize();
+}
+
 /// Returns the size of the entire ZPR stackframe (calleesaves + spills).
 static StackOffset getZPRStackSize(const MachineFunction &MF) {
   const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
   return StackOffset::getScalable(AFI->getStackSizeZPR());
 }
 
-/// Returns the size of the entire PPR stackframe (calleesaves + spills).
+/// Returns the size of the entire PPR stackframe (calleesaves + spills + hazard
+/// padding).
 static StackOffset getPPRStackSize(const MachineFunction &MF) {
   const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
-  return StackOffset::getScalable(AFI->getStackSizePPR());
+  return StackOffset::get(SplitSVEObjects ? getStackHazardSize(MF) : 0,
+                     AFI->getStackSizePPR());
 }
 
 static bool hasSVEStackSize(const MachineFunction &MF) {
@@ -1597,10 +1603,6 @@ static bool isTargetWindows(const MachineFunction &MF) {
   return MF.getSubtarget<AArch64Subtarget>().isTargetWindows();
 }
 
-static unsigned getStackHazardSize(const MachineFunction &MF) {
-  return MF.getSubtarget<AArch64Subtarget>().getStreamingHazardSize();
-}
-
 // Convenience function to determine whether I is an SVE callee save.
 static bool IsZPRCalleeSave(MachineBasicBlock::iterator I) {
   switch (I->getOpcode()) {
@@ -1911,12 +1913,6 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   unsigned FixedObject = getFixedObjectSize(MF, AFI, IsWin64, IsFunclet);
 
   auto PrologueSaveSize = AFI->getCalleeSavedStackSize() + FixedObject;
-  auto StackHazardSize = getStackHazardSize(MF);
-  // With split SVE allocation the padding occurs after the PPR locals.
-  if (SplitSVEObjects && AFI->hasStackHazardSlotIndex()) {
-    PrologueSaveSize -= StackHazardSize;
-    NumBytes -= StackHazardSize;
-  }
 
   // All of the remaining stack allocations are for locals.
   AFI->setLocalStackSize(NumBytes - PrologueSaveSize);
@@ -2230,10 +2226,6 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
     assert(!NeedsWinCFI &&
            "WinCFI with aarch64-split-sve-objects is not supported");
 
-    // Insert hazard padding for GPR CS/PPRs after PPR locals.
-    if (AFI->hasStackHazardSlotIndex())
-      PPRLocalsSize += StackOffset::getFixed(StackHazardSize);
-
     // Split ZPR and PPR allocation.
     // Allocate PPR callee saves
     allocateStackSpace(MBB, PPRCalleeSavesBegin, 0, PPRCalleeSavesSize, false,
@@ -2389,12 +2381,6 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
 
   int64_t AfterCSRPopSize = ArgumentStackToRestore;
   auto PrologueSaveSize = AFI->getCalleeSavedStackSize() + FixedObject;
-  auto StackHazardSize = getStackHazardSize(MF);
-  // With split SVE allocation the padding occurs after the PPR locals.
-  if (SplitSVEObjects && AFI->hasStackHazardSlotIndex()) {
-    PrologueSaveSize -= StackHazardSize;
-    NumBytes -= StackHazardSize;
-  }
 
   // We cannot rely on the local stack size set in emitPrologue if the function
   // has funclets, as funclets have different local stack size requirements, and
@@ -2608,10 +2594,6 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
         StackOffset::getScalable(AFI->getPPRCalleeSavedStackSize());
     StackOffset PPRLocalsSize = PPRStackSize - PPRCalleeSavedSize;
     StackOffset ZPRLocalsSize = ZPRStackSize - ZPRCalleeSavedSize;
-
-    // Insert hazard padding for GPR CS/PPRs after PPR locals.
-    if (AFI->hasStackHazardSlotIndex())
-      PPRLocalsSize += StackOffset::getFixed(StackHazardSize);
 
     MachineBasicBlock::iterator PPRRestoreBegin = LastPopI,
                                 PPRRestoreEnd = LastPopI;
@@ -2929,27 +2911,20 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
       "In the presence of dynamic stack pointer realignment, "
       "non-argument/CSR objects cannot be accessed through the frame pointer");
 
-  StackOffset StackHazardSize = StackOffset::getFixed(getStackHazardSize(MF));
   if (isSVE) {
-    StackOffset SPHazardPaddingAdjustment{};
-    StackOffset FPHazardPaddingAdjustment{};
-    if (SplitSVEObjects && AFI->hasStackHazardSlotIndex()) {
-      if (MFI.getStackID(FI) == TargetStackID::ScalablePredVector)
-        SPHazardPaddingAdjustment = StackHazardSize;
-      else
-        FPHazardPaddingAdjustment = -StackHazardSize;
-    }
+    StackOffset AccessOffset{};
+    if (SplitSVEObjects && MFI.getStackID(FI) == TargetStackID::ScalableVector)
+      AccessOffset = -PPRStackSize;
 
     StackOffset FPOffset =
+        AccessOffset +
         StackOffset::get(-AFI->getCalleeSaveBaseToFrameRecordOffset(),
-                         ObjectOffset) +
-        FPHazardPaddingAdjustment;
+                         ObjectOffset);
 
     StackOffset SPOffset =
-        SVEStackSize +
+        SVEStackSize + AccessOffset +
         StackOffset::get(MFI.getStackSize() - AFI->getCalleeSavedStackSize(),
-                         ObjectOffset) +
-        SPHazardPaddingAdjustment;
+                         ObjectOffset);
 
     // Always use the FP for SVE spills if available and beneficial.
     if (hasFP(MF) && (SPOffset.getFixed() ||
@@ -2964,15 +2939,11 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
     return SPOffset;
   }
 
-  StackOffset SVEAreaSize = SVEStackSize;
-  if (SplitSVEObjects)
-    SVEAreaSize += StackHazardSize;
-
   StackOffset SVEAreaOffset = {};
   if (UseFP && !(isFixed || isCSR))
-    SVEAreaOffset = -SVEAreaSize;
+    SVEAreaOffset = -SVEStackSize;
   if (!UseFP && (isFixed || isCSR))
-    SVEAreaOffset = SVEAreaSize;
+    SVEAreaOffset = SVEStackSize;
 
   if (UseFP) {
     FrameReg = RegInfo->getFrameRegister(MF);
@@ -3156,8 +3127,6 @@ static void computeCalleeSaveRegisterPairs(
   if (SplitPPRs) {
     ZPRByteOffset = AFI->getZPRCalleeSavedStackSize();
     PPRByteOffset = AFI->getPPRCalleeSavedStackSize();
-    if (AFI->hasStackHazardSlotIndex())
-      ByteOffset -= StackHazardSize;
   } else {
     ZPRByteOffset =
         AFI->getZPRCalleeSavedStackSize() + AFI->getPPRCalleeSavedStackSize();
@@ -3780,8 +3749,9 @@ static std::optional<int> getLdStFrameID(const MachineInstr &MI,
 void AArch64FrameLowering::determineStackHazardSlot(
     MachineFunction &MF, BitVector &SavedRegs) const {
   unsigned StackHazardSize = getStackHazardSize(MF);
+  AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
   if (StackHazardSize == 0 || StackHazardSize % 16 != 0 ||
-      MF.getInfo<AArch64FunctionInfo>()->hasStackHazardSlotIndex())
+      AFI->hasStackHazardSlotIndex())
     return;
 
   // Stack hazards are only needed in streaming functions.
@@ -3798,18 +3768,24 @@ void AArch64FrameLowering::determineStackHazardSlot(
            AArch64::FPR128RegClass.contains(Reg) ||
            AArch64::ZPRRegClass.contains(Reg);
   });
+  bool HasPPRCS = any_of(SavedRegs.set_bits(), [](unsigned Reg) {
+    return AArch64::PPRRegClass.contains(Reg);
+  });
   bool HasFPRStackObjects = false;
+  bool HasPPRStackObjects = false;
   if (!HasFPRCSRs) {
     std::vector<unsigned> FrameObjects(MFI.getObjectIndexEnd());
     for (auto &MBB : MF) {
       for (auto &MI : MBB) {
         std::optional<int> FI = getLdStFrameID(MI, MFI);
         if (FI && *FI >= 0 && *FI < (int)FrameObjects.size()) {
-          if (MFI.isScalableStackID(*FI) ||
+          auto StackID = MFI.getStackID(*FI);
+          if (StackID == TargetStackID::ScalableVector ||
               AArch64InstrInfo::isFpOrNEON(MI))
             FrameObjects[*FI] |= 2;
           else
             FrameObjects[*FI] |= 1;
+          HasPPRStackObjects |= StackID == TargetStackID::ScalablePredVector;
         }
       }
     }
@@ -3821,7 +3797,61 @@ void AArch64FrameLowering::determineStackHazardSlot(
     int ID = MFI.CreateStackObject(StackHazardSize, Align(16), false);
     LLVM_DEBUG(dbgs() << "Created Hazard slot at " << ID << " size "
                       << StackHazardSize << "\n");
-    MF.getInfo<AArch64FunctionInfo>()->setStackHazardSlotIndex(ID);
+    AFI->setStackHazardSlotIndex(ID);
+  }
+
+  // Determine if we should use SplitSVEObjects. This should only be used if
+  // there's a possibility of a stack hazard between PPRs and ZPRs or FPRs.
+  if (SplitSVEObjects) {
+    if (!HasPPRCS && !HasPPRStackObjects) {
+      SplitSVEObjects = false;
+      LLVM_DEBUG(
+          dbgs() << "SplitSVEObjects disabled as no PPRs are on the stack");
+      return;
+    }
+
+    if (!HasFPRCSRs && !HasFPRStackObjects) {
+      SplitSVEObjects = false;
+      LLVM_DEBUG(
+          dbgs()
+          << "SplitSVEObjects disabled as no FPRs or ZPRs are on the stack");
+      return;
+    }
+
+    [[maybe_unused]] const AArch64Subtarget &Subtarget =
+        MF.getSubtarget<AArch64Subtarget>();
+    assert(Subtarget.isSVEorStreamingSVEAvailable() &&
+           "Expected SVE to be available for PPRs");
+
+    // With SplitSVEObjects the CS hazard padding is placed between the
+    // PPRs and ZPRs. If there are any FPR CS there would be a hazard between
+    // them and the CS GRPs. Avoid this by promoting all FPR CS to ZPRs.
+    BitVector FPRZRegs(SavedRegs.size());
+    const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+    for (size_t Reg = 0, E = SavedRegs.size(); HasFPRCSRs && Reg < E; ++Reg) {
+      BitVector::reference RegBit = SavedRegs[Reg];
+      if (!RegBit)
+        continue;
+      unsigned SubRegIdx = 0;
+      if (AArch64::FPR64RegClass.contains(Reg))
+        SubRegIdx = AArch64::dsub;
+      else if (AArch64::FPR128RegClass.contains(Reg))
+        SubRegIdx = AArch64::zsub; // TODO: Is the the right sub-register?
+      else
+        continue;
+      // Clear the bit for the FPR save.
+      RegBit = false;
+      // Mark that we should save the corresponding ZPR.
+      Register ZReg =
+          TRI->getMatchingSuperReg(Reg, SubRegIdx, &AArch64::ZPRRegClass);
+      FPRZRegs.set(ZReg);
+    }
+    SavedRegs |= FPRZRegs;
+
+    // FIXME: Avoid setting setting the CC. Since we've replaced FPRs with ZPRs
+    // we need to set this or later in PEI the ZPR CS will be masked out.
+    AFI->setIsSVECC(true);
+    AFI->setSplitSVEObjects(true);
   }
 }
 
@@ -3834,13 +3864,6 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
     return;
 
   const AArch64Subtarget &Subtarget = MF.getSubtarget<AArch64Subtarget>();
-
-  if (SplitSVEObjects && Subtarget.isSVEorStreamingSVEAvailable()) {
-    // TODO: Solve this without changing the CC. Currently, this is required as
-    // in PEI assignCalleeSavedSpillSlots() only looks at registers in the CS
-    // mask.
-    MF.getInfo<AArch64FunctionInfo>()->setIsSVECC(true);
-  }
 
   TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
   const AArch64RegisterInfo *RegInfo = static_cast<const AArch64RegisterInfo *>(
@@ -3956,35 +3979,6 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
 
   const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
 
-  // if (SplitSVEObjects) {
-  //   // // With SplitSVEObjects the CS hazard padding is placed between the
-  //   PPRs and
-  //   // // ZPRs. If there are any FPR CS there would be a hazard between them
-  //   and
-  //   // // the CS GRPs. Avoid this by promoting all FPR CS to ZPRs.
-  //   // BitVector FPRZRegs(SavedRegs.size());
-  //   // for (size_t Reg = 0, E = SavedRegs.size(); Reg < E; ++Reg) {
-  //   //   BitVector::reference RegBit = SavedRegs[Reg];
-  //   //   if (!RegBit)
-  //   //     continue;
-  //   //   unsigned SubRegIdx = 0;
-  //   //   if (AArch64::FPR64RegClass.contains(Reg))
-  //   //     SubRegIdx = AArch64::dsub;
-  //   //   else if (AArch64::FPR128RegClass.contains(Reg))
-  //   //     SubRegIdx = AArch64::zsub; // TODO: Is the the right sub-register?
-  //   //   else
-  //   //     continue;
-
-  //   //   // Clear the bit for the FPR save.
-  //   //   RegBit = false;
-  //   //   // Mark that we should save the corresponding ZPR.
-  //   //   Register ZReg =
-  //   //       TRI->getMatchingSuperReg(Reg, SubRegIdx, &AArch64::ZPRRegClass);
-  //   //   FPRZRegs.set(ZReg);
-  //   // }
-  //   // SavedRegs |= FPRZRegs;
-  // }
-
   // Calculates the callee saved stack size.
   unsigned CSStackSize = 0;
   unsigned ZPRCSStackSize = 0;
@@ -4015,9 +4009,10 @@ void AArch64FrameLowering::determineCalleeSaves(MachineFunction &MF,
   }
 
   // Determine if a Hazard slot should be used, and increase the CSStackSize by
-  // StackHazardSize if so.
+  // the hazard size if we're not using SplitSVEObjects. With SplitSVEObjects
+  // the hazard padding occurs between the PPRs and ZPRs.
   determineStackHazardSlot(MF, SavedRegs);
-  if (AFI->hasStackHazardSlotIndex())
+  if (AFI->hasStackHazardSlotIndex() && !SplitSVEObjects)
     CSStackSize += getStackHazardSize(MF);
 
   // Save number of saved regs, so we can easily update CSStackSize later.
@@ -4200,7 +4195,7 @@ bool AArch64FrameLowering::assignCalleeSavedSpillSlots(
 
     // Create a hazard slot as we switch between GPR and FPR CSRs.
     if (AFI->hasStackHazardSlotIndex() &&
-        (!LastReg || !AArch64InstrInfo::isFpOrNEON(LastReg)) &&
+        !SplitSVEObjects && (!LastReg || !AArch64InstrInfo::isFpOrNEON(LastReg)) &&
         AArch64InstrInfo::isFpOrNEON(Reg)) {
       assert(HazardSlotIndex == std::numeric_limits<int>::max() &&
              "Unexpected register order for hazard slot");
@@ -4238,7 +4233,7 @@ bool AArch64FrameLowering::assignCalleeSavedSpillSlots(
   }
 
   // Add hazard slot in the case where no FPR CSRs are present.
-  if (AFI->hasStackHazardSlotIndex() &&
+  if (AFI->hasStackHazardSlotIndex() && !SplitSVEObjects &&
       HazardSlotIndex == std::numeric_limits<int>::max()) {
     HazardSlotIndex = MFI.CreateStackObject(StackHazardSize, Align(8), true);
     LLVM_DEBUG(dbgs() << "Created CSR Hazard at slot " << HazardSlotIndex
