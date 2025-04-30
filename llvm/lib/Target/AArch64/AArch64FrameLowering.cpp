@@ -2597,7 +2597,7 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
       if (EmitCFI)
         emitCalleeSavedSVERestores(MBB, RestoreEnd);
     }
-  } else {
+  } else if (SVEStackSize) {
     assert(!AFI->isStackRealigned() && !MFI.hasVarSizedObjects() && "TODO");
     // SplitSVEObjects
     // Process the SVE callee-saves to determine what space needs to be
@@ -3301,8 +3301,8 @@ static void computeCalleeSaveRegisterPairs(
       NeedGapToAlignStack = false;
     }
 
-    llvm::dbgs() << "ScalableByteOffset = " << ScalableByteOffset << '\n';
-    llvm::dbgs() << "ByteOffset = " << ByteOffset << '\n';
+    // llvm::dbgs() << "ScalableByteOffset = " << ScalableByteOffset << '\n';
+    // llvm::dbgs() << "ByteOffset = " << ByteOffset << '\n';
 
     int OffsetPost = RPI.isScalable() ? ScalableByteOffset : ByteOffset;
     assert(OffsetPost % Scale == 0);
@@ -4341,14 +4341,14 @@ static SVEStackSizes determineSVEStackObjectOffsets(MachineFunction &MF,
 
   getSVECalleeSaveSlotRanges(MFI, CSRanges);
 
-  llvm::dbgs() << "CSRanges.MinZPRFrameIndex: " << CSRanges.MinZPRFrameIndex
-               << '\n';
-  llvm::dbgs() << "CSRanges.MaxZPRFrameIndex: " << CSRanges.MaxZPRFrameIndex
-               << '\n';
-  llvm::dbgs() << "CSRanges.MinPPRFrameIndex: " << CSRanges.MinPPRFrameIndex
-               << '\n';
-  llvm::dbgs() << "CSRanges.MaxPPRFrameIndex: " << CSRanges.MaxPPRFrameIndex
-               << '\n';
+  // llvm::dbgs() << "CSRanges.MinZPRFrameIndex: " << CSRanges.MinZPRFrameIndex
+  //              << '\n';
+  // llvm::dbgs() << "CSRanges.MaxZPRFrameIndex: " << CSRanges.MaxZPRFrameIndex
+  //              << '\n';
+  // llvm::dbgs() << "CSRanges.MinPPRFrameIndex: " << CSRanges.MinPPRFrameIndex
+  //              << '\n';
+  // llvm::dbgs() << "CSRanges.MaxPPRFrameIndex: " << CSRanges.MaxPPRFrameIndex
+  //              << '\n';
 
   // Then process all callee saved slots.
   if (AFI->getZPRCalleeSavedStackSize())
