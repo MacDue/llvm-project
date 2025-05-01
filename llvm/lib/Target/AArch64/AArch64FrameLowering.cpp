@@ -2613,21 +2613,25 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
         --ZPRRestoreBegin;
     }
 
+    auto CFAOffset =
+        SVEStackSize + StackOffset::getFixed(NumBytes + PrologueSaveSize);
     // TODO: Work out CFA offsets.
     if (PPRCalleeSavedSize || ZPRCalleeSavedSize) {
       // Deallocate the non-SVE locals first before we can deallocate (and
       // restore callee saves) from the SVE area.
-      emitFrameOffset(MBB, ZPRRestoreBegin, DL, AArch64::SP, AArch64::SP,
-                      StackOffset::getFixed(NumBytes), TII,
-                      MachineInstr::FrameDestroy, false, false, nullptr,
-                      EmitCFI && !hasFP(MF), {});
+      auto NonSVELocals = StackOffset::getFixed(NumBytes);
+          emitFrameOffset(MBB, ZPRRestoreBegin, DL, AArch64::SP, AArch64::SP,
+                          NonSVELocals, TII, MachineInstr::FrameDestroy, false,
+                          false, nullptr, EmitCFI && !hasFP(MF), CFAOffset);
       NumBytes = 0;
+      CFAOffset -= NonSVELocals;
     }
 
     if (ZPRLocalsSize) {
       emitFrameOffset(MBB, ZPRRestoreBegin, DL, AArch64::SP, AArch64::SP,
                       ZPRLocalsSize, TII, MachineInstr::FrameDestroy, false,
-                      false, nullptr, EmitCFI && !hasFP(MF), {});
+                      false, nullptr, EmitCFI && !hasFP(MF), CFAOffset);
+      CFAOffset -= ZPRLocalsSize;
     }
 
     if (PPRLocalsSize || ZPRCalleeSavedSize) {
@@ -2636,13 +2640,17 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
       emitFrameOffset(MBB, PPRRestoreBegin, DL, AArch64::SP, AArch64::SP,
                       PPRLocalsSize + ZPRCalleeSavedSize, TII,
                       MachineInstr::FrameDestroy, false, false, nullptr,
-                      EmitCFI && !hasFP(MF), {});
+                      EmitCFI && !hasFP(MF), CFAOffset);
+      CFAOffset -= PPRLocalsSize + ZPRCalleeSavedSize;
     }
     if (PPRCalleeSavedSize) {
       emitFrameOffset(MBB, PPRRestoreEnd, DL, AArch64::SP, AArch64::SP,
                       PPRCalleeSavedSize, TII, MachineInstr::FrameDestroy,
-                      false, false, nullptr, EmitCFI && !hasFP(MF), {});
+                      false, false, nullptr, EmitCFI && !hasFP(MF), CFAOffset);
     }
+
+    if (EmitCFI)
+      emitCalleeSavedSVERestores(MBB, PPRRestoreEnd);
   }
 
   if (!hasFP(MF)) {
@@ -3145,6 +3153,7 @@ static void computeCalleeSaveRegisterPairs(
 
   bool NeedGapToAlignStack = AFI->hasCalleeSaveStackFreeSpace();
   Register LastReg = 0;
+  bool HasCSHazardPadding = AFI->hasStackHazardSlotIndex() && !SplitPPRs;
 
   // When iterating backwards, the loop condition relies on unsigned wraparound.
   for (unsigned i = FirstReg; i < Count; i += RegInc) {
@@ -3178,7 +3187,7 @@ static void computeCalleeSaveRegisterPairs(
                                   : ZPRByteOffset;
 
     // Add the stack hazard size as we transition from GPR->FPR CSRs.
-    if (AFI->hasStackHazardSlotIndex() && !SplitPPRs &&
+    if (HasCSHazardPadding &&
         (!LastReg || !AArch64InstrInfo::isFpOrNEON(LastReg)) &&
         AArch64InstrInfo::isFpOrNEON(RPI.Reg1))
       ByteOffset += StackFillDir * StackHazardSize;
@@ -3186,7 +3195,7 @@ static void computeCalleeSaveRegisterPairs(
 
     int Scale = TRI->getSpillSize(*RPI.RC);
     // Add the next reg to the pair if it is in the same register class.
-    if (unsigned(i + RegInc) < Count && !AFI->hasStackHazardSlotIndex()) {
+    if (unsigned(i + RegInc) < Count && !HasCSHazardPadding) {
       MCRegister NextReg = CSI[i + RegInc].getReg();
       bool IsFirst = i == FirstReg;
       switch (RPI.Type) {
