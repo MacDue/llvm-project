@@ -467,7 +467,8 @@ static StackOffset getZPRStackSize(const MachineFunction &MF) {
 /// padding).
 static StackOffset getPPRStackSize(const MachineFunction &MF) {
   const AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
-  return StackOffset::get(AFI->hasSplitSVEObjects() ? getStackHazardSize(MF) : 0,
+  return StackOffset::get(AFI->hasSplitSVEObjects() ? getStackHazardSize(MF)
+                                                    : 0,
                           AFI->getStackSizePPR());
 }
 
@@ -2746,7 +2747,9 @@ AArch64FrameLowering::getFrameIndexReferenceFromSP(const MachineFunction &MF,
   const auto &MFI = MF.getFrameInfo();
 
   int64_t ObjectOffset = MFI.getObjectOffset(FI);
-  StackOffset SVEStackSize = getZPRStackSize(MF) + getPPRStackSize(MF);
+  StackOffset ZPRStackSize = getZPRStackSize(MF);
+  StackOffset PPRStackSize = getPPRStackSize(MF);
+  StackOffset SVEStackSize = ZPRStackSize + PPRStackSize;
 
   // For VLA-area objects, just emit an offset at the end of the stack frame.
   // Whilst not quite correct, these objects do live at the end of the frame and
@@ -2760,9 +2763,15 @@ AArch64FrameLowering::getFrameIndexReferenceFromSP(const MachineFunction &MF,
     return StackOffset::getFixed(ObjectOffset - getOffsetOfLocalArea());
 
   const auto *AFI = MF.getInfo<AArch64FunctionInfo>();
-  if (MFI.isScalableStackID(FI))
-    return StackOffset::get(-((int64_t)AFI->getCalleeSavedStackSize()),
+  if (MFI.isScalableStackID(FI)) {
+    StackOffset AccessOffset{};
+    if (AFI->hasSplitSVEObjects() &&
+        MFI.getStackID(FI) == TargetStackID::ScalableVector)
+      AccessOffset = -PPRStackSize;
+    return AccessOffset +
+           StackOffset::get(-((int64_t)AFI->getCalleeSavedStackSize()),
                             ObjectOffset);
+  }
 
   bool IsFixed = MFI.isFixedObjectIndex(FI);
   bool IsCSR =
@@ -2912,7 +2921,8 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
 
   if (isSVE) {
     StackOffset AccessOffset{};
-    if (AFI->hasSplitSVEObjects() && MFI.getStackID(FI) == TargetStackID::ScalableVector)
+    if (AFI->hasSplitSVEObjects() &&
+        MFI.getStackID(FI) == TargetStackID::ScalableVector)
       AccessOffset = -PPRStackSize;
 
     StackOffset FPOffset =
@@ -5391,7 +5401,8 @@ void AArch64FrameLowering::orderFrameObjects(
     const MachineFunction &MF, SmallVectorImpl<int> &ObjectsToAllocate) const {
   const AArch64FunctionInfo &AFI = *MF.getInfo<AArch64FunctionInfo>();
 
-  if ((!OrderFrameObjects && !AFI.hasSplitSVEObjects()) || ObjectsToAllocate.empty())
+  if ((!OrderFrameObjects && !AFI.hasSplitSVEObjects()) ||
+      ObjectsToAllocate.empty())
     return;
 
   const MachineFrameInfo &MFI = MF.getFrameInfo();
