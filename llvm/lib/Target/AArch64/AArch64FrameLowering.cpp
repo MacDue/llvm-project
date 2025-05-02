@@ -666,9 +666,11 @@ void AArch64FrameLowering::emitCalleeSavedSVELocations(
   const TargetRegisterInfo &TRI = *STI.getRegisterInfo();
   AArch64FunctionInfo &AFI = *MF.getInfo<AArch64FunctionInfo>();
   CFIInstBuilder CFIBuilder(MBB, MBBI, MachineInstr::FrameSetup);
+  StackOffset PPRStackSize = getPPRStackSize(MF);
 
   for (const auto &Info : CSI) {
-    if (!MFI.isScalableStackID(Info.getFrameIdx()))
+    int FI = Info.getFrameIdx();
+    if (!MFI.isScalableStackID(FI))
       continue;
 
     // Not all unwinders may know about SVE registers, so assume the lowest
@@ -678,13 +680,13 @@ void AArch64FrameLowering::emitCalleeSavedSVELocations(
     if (!static_cast<const AArch64RegisterInfo &>(TRI).regNeedsCFI(Reg, Reg))
       continue;
 
-    // Offsets incorrect in many tests, e.g. active_lane_mask.ll
-    LLVM_DEBUG(dbgs() << "Scalable: " << MFI.getObjectOffset(Info.getFrameIdx())
-                      << "\n");
-    LLVM_DEBUG(dbgs() << "Fixed: " << AFI.getCalleeSavedStackSize(MFI) << "\n");
     StackOffset Offset =
-        StackOffset::getScalable(MFI.getObjectOffset(Info.getFrameIdx())) -
+        StackOffset::getScalable(MFI.getObjectOffset(FI)) -
         StackOffset::getFixed(AFI.getCalleeSavedStackSize(MFI));
+
+    if (AFI.hasSplitSVEObjects() &&
+        MFI.getStackID(FI) == TargetStackID::ScalableVector)
+      Offset -= PPRStackSize;
 
     CFIBuilder.insertCFIInst(createCFAOffset(TRI, Reg, Offset));
   }
@@ -2620,9 +2622,9 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
       // Deallocate the non-SVE locals first before we can deallocate (and
       // restore callee saves) from the SVE area.
       auto NonSVELocals = StackOffset::getFixed(NumBytes);
-          emitFrameOffset(MBB, ZPRRestoreBegin, DL, AArch64::SP, AArch64::SP,
-                          NonSVELocals, TII, MachineInstr::FrameDestroy, false,
-                          false, nullptr, EmitCFI && !hasFP(MF), CFAOffset);
+      emitFrameOffset(MBB, ZPRRestoreBegin, DL, AArch64::SP, AArch64::SP,
+                      NonSVELocals, TII, MachineInstr::FrameDestroy, false,
+                      false, nullptr, EmitCFI && !hasFP(MF), CFAOffset);
       NumBytes = 0;
       CFAOffset -= NonSVELocals;
     }
@@ -2649,8 +2651,9 @@ void AArch64FrameLowering::emitEpilogue(MachineFunction &MF,
                       false, false, nullptr, EmitCFI && !hasFP(MF), CFAOffset);
     }
 
+    // We only emit CFI information for ZPRs so emit CFI after the ZPR restores.
     if (EmitCFI)
-      emitCalleeSavedSVERestores(MBB, PPRRestoreEnd);
+      emitCalleeSavedSVERestores(MBB, ZPRRestoreEnd);
   }
 
   if (!hasFP(MF)) {
