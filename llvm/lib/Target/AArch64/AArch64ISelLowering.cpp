@@ -2730,6 +2730,9 @@ const char *AArch64TargetLowering::getTargetNodeName(unsigned Opcode) const {
     MAKE_CASE(AArch64ISD::COND_SMSTOP)
     MAKE_CASE(AArch64ISD::RESTORE_ZA)
     MAKE_CASE(AArch64ISD::RESTORE_ZT)
+    MAKE_CASE(AArch64ISD::SME_CALL_START)
+    MAKE_CASE(AArch64ISD::SME_CALL_SM_CHANGE)
+    MAKE_CASE(AArch64ISD::SME_CALL_END)
     MAKE_CASE(AArch64ISD::SAVE_ZT)
     MAKE_CASE(AArch64ISD::CALL)
     MAKE_CASE(AArch64ISD::ADRP)
@@ -9115,6 +9118,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     assert(FPDiff % 16 == 0 && "unaligned stack on tail call");
   }
 
+  // SME 1
   // Determine whether we need any streaming mode changes.
   SMECallAttrs CallAttrs = getSMECallAttrs(MF.getFunction(), CLI);
 
@@ -9131,78 +9135,14 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     return R;
   };
 
+  Chain = DAG.getNode(AArch64ISD::SME_CALL_START, DL, DAG.getVTList(MVT::Other),
+    Chain,
+    DAG.getTargetConstant(unsigned(CallAttrs.caller()), DL, MVT::i32),
+    DAG.getTargetConstant(unsigned(CallAttrs.callee()), DL, MVT::i32),
+    DAG.getTargetConstant(unsigned(CallAttrs.callsite()), DL, MVT::i32));
+
   bool RequiresLazySave = CallAttrs.requiresLazySave();
   bool RequiresSaveAllZA = CallAttrs.requiresPreservingAllZAState();
-  if (RequiresLazySave) {
-    TPIDR2Object &TPIDR2 = FuncInfo->getTPIDR2Obj();
-    SDValue TPIDR2ObjAddr = DAG.getFrameIndex(
-        TPIDR2.FrameIndex,
-        DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
-    Chain = DAG.getNode(
-        ISD::INTRINSIC_VOID, DL, MVT::Other, Chain,
-        DAG.getConstant(Intrinsic::aarch64_sme_set_tpidr2, DL, MVT::i32),
-        TPIDR2ObjAddr);
-    OptimizationRemarkEmitter ORE(&MF.getFunction());
-    ORE.emit([&]() {
-      auto R = CLI.CB ? OptimizationRemarkAnalysis("sme", "SMELazySaveZA",
-                                                   CLI.CB)
-                      : OptimizationRemarkAnalysis("sme", "SMELazySaveZA",
-                                                   &MF.getFunction());
-      return DescribeCallsite(R) << " sets up a lazy save for ZA";
-    });
-  } else if (RequiresSaveAllZA) {
-    assert(!CallAttrs.callee().hasSharedZAInterface() &&
-           "Cannot share state that may not exist");
-    Chain = emitSMEStateSaveRestore(*this, DAG, FuncInfo, DL, Chain,
-                                    /*IsSave=*/true);
-  }
-
-  SDValue PStateSM;
-  bool RequiresSMChange = CallAttrs.requiresSMChange();
-  if (RequiresSMChange) {
-    if (CallAttrs.caller().hasStreamingInterfaceOrBody())
-      PStateSM = DAG.getConstant(1, DL, MVT::i64);
-    else if (CallAttrs.caller().hasNonStreamingInterface())
-      PStateSM = DAG.getConstant(0, DL, MVT::i64);
-    else
-      PStateSM = getRuntimePStateSM(DAG, Chain, DL, MVT::i64);
-    OptimizationRemarkEmitter ORE(&MF.getFunction());
-    ORE.emit([&]() {
-      auto R = CLI.CB ? OptimizationRemarkAnalysis("sme", "SMETransition",
-                                                   CLI.CB)
-                      : OptimizationRemarkAnalysis("sme", "SMETransition",
-                                                   &MF.getFunction());
-      DescribeCallsite(R) << " requires a streaming mode transition";
-      return R;
-    });
-  }
-
-  SDValue ZTFrameIdx;
-  MachineFrameInfo &MFI = MF.getFrameInfo();
-  bool ShouldPreserveZT0 = CallAttrs.requiresPreservingZT0();
-
-  // If the caller has ZT0 state which will not be preserved by the callee,
-  // spill ZT0 before the call.
-  if (ShouldPreserveZT0) {
-    unsigned ZTObj = MFI.CreateSpillStackObject(64, Align(16));
-    ZTFrameIdx = DAG.getFrameIndex(
-        ZTObj,
-        DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
-
-    Chain = DAG.getNode(AArch64ISD::SAVE_ZT, DL, DAG.getVTList(MVT::Other),
-                        {Chain, DAG.getConstant(0, DL, MVT::i32), ZTFrameIdx});
-  }
-
-  // If caller shares ZT0 but the callee is not shared ZA, we need to stop
-  // PSTATE.ZA before the call if there is no lazy-save active.
-  bool DisableZA = CallAttrs.requiresDisablingZABeforeCall();
-  assert((!DisableZA || !RequiresLazySave) &&
-         "Lazy-save should have PSTATE.SM=1 on entry to the function");
-
-  if (DisableZA)
-    Chain = DAG.getNode(
-        AArch64ISD::SMSTOP, DL, DAG.getVTList(MVT::Other, MVT::Glue), Chain,
-        DAG.getTargetConstant((int32_t)(AArch64SVCR::SVCRZA), DL, MVT::i32));
 
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
@@ -9662,6 +9602,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   if (!Ins.empty())
     InGlue = Result.getValue(Result->getNumValues() - 1);
 
+    // SME 2
   if (RequiresSMChange) {
     assert(PStateSM && "Expected a PStateSM to be set");
     Result = changeStreamingMode(
@@ -9736,6 +9677,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
                                      InVals[I].getValueType());
     }
   }
+  // sme2
 
   if (CallConv == CallingConv::PreserveNone) {
     for (const ISD::OutputArg &O : Outs) {

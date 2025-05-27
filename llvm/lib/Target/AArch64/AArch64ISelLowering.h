@@ -79,6 +79,10 @@ enum NodeType : unsigned {
   RESTORE_ZT,
   SAVE_ZT,
 
+  SME_CALL_START,
+  SME_CALL_SM_CHANGE,
+  SME_CALL_END,
+
   // A call with the callee in x16, i.e. "blr x16".
   CALL_ARM64EC_TO_X64,
 
