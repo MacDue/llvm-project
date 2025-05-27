@@ -26523,6 +26523,16 @@ static SMECallAttrs findSMECallAttrs(SDNode *N) {
   llvm_unreachable("Unexpected opcode!");
 }
 
+static unsigned getOrCreateZT0SpillSlot(AArch64FunctionInfo *FuncInfo,
+                                        MachineFrameInfo &MFI) {
+  unsigned ZTObj = FuncInfo->getZT0Idx();
+  if (ZTObj == std::numeric_limits<int>::max()) {
+    ZTObj = MFI.CreateSpillStackObject(64, Align(16));
+    FuncInfo->setZT0Idx(ZTObj);
+  }
+  return ZTObj;
+}
+
 static SDValue lowerSMECallStart(SDNode *N,
                                  TargetLowering::DAGCombinerInfo &DCI,
                                  const AArch64TargetLowering &TLI,
@@ -26555,17 +26565,13 @@ static SDValue lowerSMECallStart(SDNode *N,
   }
 
   SDValue ZTFrameIdx;
-  MachineFrameInfo &MFI = MF.getFrameInfo();
   bool ShouldPreserveZT0 = CallAttrs.requiresPreservingZT0();
 
   // If the caller has ZT0 state which will not be preserved by the callee,
   // spill ZT0 before the call.
   if (ShouldPreserveZT0) {
-    unsigned ZTObj = FuncInfo->getZT0Idx();
-    if (ZTObj == std::numeric_limits<int>::max()) {
-      ZTObj = MFI.CreateSpillStackObject(64, Align(16));
-      FuncInfo->setZT0Idx(ZTObj);
-    }
+    MachineFrameInfo &MFI = MF.getFrameInfo();
+    unsigned ZTObj = getOrCreateZT0SpillSlot(FuncInfo, MFI);
     ZTFrameIdx = DAG.getFrameIndex(
         ZTObj,
         DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
@@ -26623,7 +26629,7 @@ static SDValue lowerSMEStreamingModeChange(SDNode *N,
       DAG, DL, CallAttrs.callee().hasStreamingInterface(), Chain, InGlue,
       getSMToggleCondition(CallAttrs), PStateSM);
 
-  return DAG.getMergeValues({PStateSM, NewChain, InGlue}, DL);
+  return DAG.getMergeValues({PStateSM, NewChain, NewChain.getValue(1)}, DL);
 }
 
 static SDValue lowerSMECallEnd(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
@@ -26636,11 +26642,11 @@ static SDValue lowerSMECallEnd(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
   SDLoc DL(N);
   SMECallAttrs CallAttrs = findSMECallAttrs(N);
   bool ShouldPreserveZT0 = CallAttrs.requiresPreservingZT0();
+  auto &MF = DAG.getMachineFunction();
+  auto *FuncInfo = MF.getInfo<AArch64FunctionInfo>();
   SDValue Result = N->getOperand(0);
   SDValue PStateSM = N->getOperand(2);
   SDValue InGlue = N->getOperand(3);
-  auto &MF = DAG.getMachineFunction();
-  auto *FuncInfo = MF.getInfo<AArch64FunctionInfo>();
   const AArch64RegisterInfo *TRI = Subtarget->getRegisterInfo();
   bool RequiresLazySave = CallAttrs.requiresLazySave();
   bool RequiresSaveAllZA = CallAttrs.requiresPreservingAllZAState();
@@ -26667,8 +26673,10 @@ static SDValue lowerSMECallEnd(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
         DAG.getTargetConstant((int32_t)(AArch64SVCR::SVCRZA), DL, MVT::i32));
 
   if (ShouldPreserveZT0) {
+    MachineFrameInfo &MFI = MF.getFrameInfo();
+    unsigned ZTObj = getOrCreateZT0SpillSlot(FuncInfo, MFI);
     SDValue ZTFrameIdx = DAG.getFrameIndex(
-        FuncInfo->getZT0Idx(),
+        ZTObj,
         DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
     Result =
         DAG.getNode(AArch64ISD::RESTORE_ZT, DL, DAG.getVTList(MVT::Other),
