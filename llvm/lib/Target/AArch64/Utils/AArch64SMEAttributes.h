@@ -145,9 +145,7 @@ public:
     return Bitmask == Other.Bitmask;
   }
 
-  explicit operator unsigned() const {
-    return Bitmask;
-  }
+  explicit operator unsigned() const { return Bitmask; }
 
 private:
   void addKnownFunctionAttrs(StringRef FuncName);

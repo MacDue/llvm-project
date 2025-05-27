@@ -9118,31 +9118,25 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     assert(FPDiff % 16 == 0 && "unaligned stack on tail call");
   }
 
-  // SME 1
   // Determine whether we need any streaming mode changes.
   SMECallAttrs CallAttrs = getSMECallAttrs(MF.getFunction(), CLI);
 
-  auto DescribeCallsite =
-      [&](OptimizationRemarkAnalysis &R) -> OptimizationRemarkAnalysis & {
-    R << "call from '" << ore::NV("Caller", MF.getName()) << "' to '";
-    if (auto *ES = dyn_cast<ExternalSymbolSDNode>(CLI.Callee))
-      R << ore::NV("Callee", ES->getSymbol());
-    else if (CLI.CB && CLI.CB->getCalledFunction())
-      R << ore::NV("Callee", CLI.CB->getCalledFunction()->getName());
-    else
-      R << "unknown callee";
-    R << "'";
-    return R;
-  };
-
-  Chain = DAG.getNode(AArch64ISD::SME_CALL_START, DL, DAG.getVTList(MVT::Other),
-    Chain,
-    DAG.getTargetConstant(unsigned(CallAttrs.caller()), DL, MVT::i32),
-    DAG.getTargetConstant(unsigned(CallAttrs.callee()), DL, MVT::i32),
-    DAG.getTargetConstant(unsigned(CallAttrs.callsite()), DL, MVT::i32));
-
+  SDValue SMECallStart;
   bool RequiresLazySave = CallAttrs.requiresLazySave();
   bool RequiresSaveAllZA = CallAttrs.requiresPreservingAllZAState();
+  bool RequiresSMChange = CallAttrs.requiresSMChange();
+  bool ShouldPreserveZT0 = CallAttrs.requiresPreservingZT0();
+  bool DisableZA = CallAttrs.requiresDisablingZABeforeCall();
+  bool IsSMECall = RequiresLazySave || RequiresSaveAllZA || RequiresSMChange ||
+                   ShouldPreserveZT0 || DisableZA;
+
+  if (IsSMECall) {
+    Chain = SMECallStart = DAG.getNode(
+        AArch64ISD::SME_CALL_START, DL, DAG.getVTList(MVT::Other), Chain,
+        DAG.getTargetConstant(unsigned(CallAttrs.caller()), DL, MVT::i32),
+        DAG.getTargetConstant(unsigned(CallAttrs.callee()), DL, MVT::i32),
+        DAG.getTargetConstant(unsigned(CallAttrs.callsite()), DL, MVT::i32));
+  }
 
   // Adjust the stack pointer for the new arguments...
   // These operations are automatically eliminated by the prolog/epilog pass
@@ -9410,18 +9404,15 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, MemOpChains);
 
   SDValue InGlue;
+  SDValue SMECallSMChange;
+  SDValue PStateSM;
   if (RequiresSMChange) {
-    if (!Subtarget->isTargetDarwin() || Subtarget->hasSVE()) {
-      Chain = DAG.getNode(AArch64ISD::VG_SAVE, DL,
-                          DAG.getVTList(MVT::Other, MVT::Glue), Chain);
-      InGlue = Chain.getValue(1);
-    }
-
-    SDValue NewChain = changeStreamingMode(
-        DAG, DL, CallAttrs.callee().hasStreamingInterface(), Chain, InGlue,
-        getSMToggleCondition(CallAttrs), PStateSM);
-    Chain = NewChain.getValue(0);
-    InGlue = NewChain.getValue(1);
+    SMECallSMChange = DAG.getNode(
+        AArch64ISD::SME_CALL_SM_CHANGE, DL,
+        DAG.getVTList(MVT::i64, MVT::Other, MVT::Glue), Chain, SMECallStart);
+    PStateSM = SMECallSMChange;
+    Chain = SMECallSMChange.getValue(1);
+    InGlue = SMECallSMChange.getValue(2);
   }
 
   // Build a sequence of copy-to-reg nodes chained together with token chain
@@ -9602,64 +9593,11 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   if (!Ins.empty())
     InGlue = Result.getValue(Result->getNumValues() - 1);
 
-    // SME 2
-  if (RequiresSMChange) {
-    assert(PStateSM && "Expected a PStateSM to be set");
-    Result = changeStreamingMode(
-        DAG, DL, !CallAttrs.callee().hasStreamingInterface(), Result, InGlue,
-        getSMToggleCondition(CallAttrs), PStateSM);
-
-    if (!Subtarget->isTargetDarwin() || Subtarget->hasSVE()) {
-      InGlue = Result.getValue(1);
-      Result =
-          DAG.getNode(AArch64ISD::VG_RESTORE, DL,
-                      DAG.getVTList(MVT::Other, MVT::Glue), {Result, InGlue});
-    }
-  }
-
-  if (CallAttrs.requiresEnablingZAAfterCall())
-    // Unconditionally resume ZA.
-    Result = DAG.getNode(
-        AArch64ISD::SMSTART, DL, DAG.getVTList(MVT::Other, MVT::Glue), Result,
-        DAG.getTargetConstant((int32_t)(AArch64SVCR::SVCRZA), DL, MVT::i32));
-
-  if (ShouldPreserveZT0)
+  if (IsSMECall) {
     Result =
-        DAG.getNode(AArch64ISD::RESTORE_ZT, DL, DAG.getVTList(MVT::Other),
-                    {Result, DAG.getConstant(0, DL, MVT::i32), ZTFrameIdx});
-
-  if (RequiresLazySave) {
-    // Conditionally restore the lazy save using a pseudo node.
-    TPIDR2Object &TPIDR2 = FuncInfo->getTPIDR2Obj();
-    SDValue RegMask = DAG.getRegisterMask(
-        TRI->SMEABISupportRoutinesCallPreservedMaskFromX0());
-    SDValue RestoreRoutine = DAG.getTargetExternalSymbol(
-        "__arm_tpidr2_restore", getPointerTy(DAG.getDataLayout()));
-    SDValue TPIDR2_EL0 = DAG.getNode(
-        ISD::INTRINSIC_W_CHAIN, DL, MVT::i64, Result,
-        DAG.getConstant(Intrinsic::aarch64_sme_get_tpidr2, DL, MVT::i32));
-
-    // Copy the address of the TPIDR2 block into X0 before 'calling' the
-    // RESTORE_ZA pseudo.
-    SDValue Glue;
-    SDValue TPIDR2Block = DAG.getFrameIndex(
-        TPIDR2.FrameIndex,
-        DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
-    Result = DAG.getCopyToReg(Result, DL, AArch64::X0, TPIDR2Block, Glue);
-    Result =
-        DAG.getNode(AArch64ISD::RESTORE_ZA, DL, MVT::Other,
-                    {Result, TPIDR2_EL0, DAG.getRegister(AArch64::X0, MVT::i64),
-                     RestoreRoutine, RegMask, Result.getValue(1)});
-
-    // Finally reset the TPIDR2_EL0 register to 0.
-    Result = DAG.getNode(
-        ISD::INTRINSIC_VOID, DL, MVT::Other, Result,
-        DAG.getConstant(Intrinsic::aarch64_sme_set_tpidr2, DL, MVT::i32),
-        DAG.getConstant(0, DL, MVT::i64));
-    TPIDR2.Uses++;
-  } else if (RequiresSaveAllZA) {
-    Result = emitSMEStateSaveRestore(*this, DAG, FuncInfo, DL, Result,
-                                     /*IsSave=*/false);
+        DAG.getNode(AArch64ISD::SME_CALL_END, DL, DAG.getVTList(MVT::Other),
+                    Result, SMECallSMChange ? SMECallSMChange : SMECallStart,
+                    PStateSM ? PStateSM : DAG.getUNDEF(MVT::i64), InGlue);
   }
 
   if (RequiresSMChange || RequiresLazySave || ShouldPreserveZT0 ||
@@ -9673,11 +9611,9 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
       Register Reg = MF.getRegInfo().createVirtualRegister(
           getRegClassFor(InVals[I].getValueType().getSimpleVT()));
       SDValue X = DAG.getCopyToReg(Result, DL, Reg, InVals[I]);
-      InVals[I] = DAG.getCopyFromReg(X, DL, Reg,
-                                     InVals[I].getValueType());
+      InVals[I] = DAG.getCopyFromReg(X, DL, Reg, InVals[I].getValueType());
     }
   }
-  // sme2
 
   if (CallConv == CallingConv::PreserveNone) {
     for (const ISD::OutputArg &O : Outs) {
@@ -26572,6 +26508,210 @@ static SDValue performSHLCombine(SDNode *N,
   return DAG.getNode(ISD::AND, DL, VT, NewShift, NewRHS);
 }
 
+static SMECallAttrs findSMECallAttrs(SDNode *N) {
+  unsigned Opcode = N->getOpcode();
+  if (Opcode == AArch64ISD::SME_CALL_START) {
+    SMEAttrs CallerAttrs(N->getConstantOperandVal(1));
+    SMEAttrs CalleeAttrs(N->getConstantOperandVal(2));
+    SMEAttrs CallsiteAttrs(N->getConstantOperandVal(3));
+    return SMECallAttrs(CallerAttrs, CalleeAttrs, CallsiteAttrs);
+  }
+  if (Opcode == AArch64ISD::SME_CALL_SM_CHANGE)
+    return findSMECallAttrs(N->getOperand(1).getNode());
+  if (Opcode == AArch64ISD::SME_CALL_END)
+    return findSMECallAttrs(N->getOperand(1).getNode());
+  llvm_unreachable("Unexpected opcode!");
+}
+
+static SDValue lowerSMECallStart(SDNode *N,
+                                 TargetLowering::DAGCombinerInfo &DCI,
+                                 const AArch64TargetLowering &TLI,
+                                 SelectionDAG &DAG) {
+  if (DCI.isBeforeLegalizeOps())
+    return SDValue();
+
+  SDLoc DL(N);
+  SMECallAttrs CallAttrs = findSMECallAttrs(N);
+  auto &MF = DAG.getMachineFunction();
+  auto *FuncInfo = MF.getInfo<AArch64FunctionInfo>();
+  bool RequiresLazySave = CallAttrs.requiresLazySave();
+  bool RequiresSaveAllZA = CallAttrs.requiresPreservingAllZAState();
+
+  SDValue Chain = N->getOperand(0);
+  if (RequiresLazySave) {
+    TPIDR2Object &TPIDR2 = FuncInfo->getTPIDR2Obj();
+    SDValue TPIDR2ObjAddr = DAG.getFrameIndex(
+        TPIDR2.FrameIndex,
+        DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
+    Chain = DAG.getNode(
+        ISD::INTRINSIC_VOID, DL, MVT::Other, Chain,
+        DAG.getConstant(Intrinsic::aarch64_sme_set_tpidr2, DL, MVT::i32),
+        TPIDR2ObjAddr);
+  } else if (RequiresSaveAllZA) {
+    assert(!CallAttrs.callee().hasSharedZAInterface() &&
+           "Cannot share state that may not exist");
+    Chain = emitSMEStateSaveRestore(TLI, DAG, FuncInfo, DL, Chain,
+                                    /*IsSave=*/true);
+  }
+
+  SDValue ZTFrameIdx;
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  bool ShouldPreserveZT0 = CallAttrs.requiresPreservingZT0();
+
+  // If the caller has ZT0 state which will not be preserved by the callee,
+  // spill ZT0 before the call.
+  if (ShouldPreserveZT0) {
+    unsigned ZTObj = FuncInfo->getZT0Idx();
+    if (ZTObj == std::numeric_limits<int>::max()) {
+      ZTObj = MFI.CreateSpillStackObject(64, Align(16));
+      FuncInfo->setZT0Idx(ZTObj);
+    }
+    ZTFrameIdx = DAG.getFrameIndex(
+        ZTObj,
+        DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
+
+    Chain = DAG.getNode(AArch64ISD::SAVE_ZT, DL, DAG.getVTList(MVT::Other),
+                        {Chain, DAG.getConstant(0, DL, MVT::i32), ZTFrameIdx});
+  }
+
+  // If caller shares ZT0 but the callee is not shared ZA, we need to stop
+  // PSTATE.ZA before the call if there is no lazy-save active.
+  bool DisableZA = CallAttrs.requiresDisablingZABeforeCall();
+  assert((!DisableZA || !RequiresLazySave) &&
+         "Lazy-save should have PSTATE.SM=1 on entry to the function");
+
+  if (DisableZA)
+    Chain = DAG.getNode(
+        AArch64ISD::SMSTOP, DL, DAG.getVTList(MVT::Other, MVT::Glue), Chain,
+        DAG.getTargetConstant((int32_t)(AArch64SVCR::SVCRZA), DL, MVT::i32));
+
+  DAG.ReplaceAllUsesOfValueWith(SDValue(N, 0), Chain);
+  return SDValue();
+}
+
+static SDValue lowerSMEStreamingModeChange(SDNode *N,
+                                           TargetLowering::DAGCombinerInfo &DCI,
+                                           const AArch64TargetLowering &TLI,
+                                           SelectionDAG &DAG,
+                                           const AArch64Subtarget *Subtarget) {
+  if (DCI.isBeforeLegalizeOps())
+    return SDValue();
+
+  SDLoc DL(N);
+  SMECallAttrs CallAttrs = findSMECallAttrs(N);
+  SDValue Chain = N->getOperand(0);
+  SDValue InGlue;
+
+  SDValue PStateSM;
+  bool RequiresSMChange = CallAttrs.requiresSMChange();
+  if (RequiresSMChange) {
+    if (CallAttrs.caller().hasStreamingInterfaceOrBody())
+      PStateSM = DAG.getConstant(1, DL, MVT::i64);
+    else if (CallAttrs.caller().hasNonStreamingInterface())
+      PStateSM = DAG.getConstant(0, DL, MVT::i64);
+    else
+      PStateSM = TLI.getRuntimePStateSM(DAG, Chain, DL, MVT::i64);
+  }
+
+  if (!Subtarget->isTargetDarwin() || Subtarget->hasSVE()) {
+    Chain = DAG.getNode(AArch64ISD::VG_SAVE, DL,
+                        DAG.getVTList(MVT::Other, MVT::Glue), Chain);
+    InGlue = Chain.getValue(1);
+  }
+
+  SDValue NewChain = TLI.changeStreamingMode(
+      DAG, DL, CallAttrs.callee().hasStreamingInterface(), Chain, InGlue,
+      getSMToggleCondition(CallAttrs), PStateSM);
+
+  return DAG.getMergeValues({PStateSM, NewChain, InGlue}, DL);
+}
+
+static SDValue lowerSMECallEnd(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
+                               const AArch64TargetLowering &TLI,
+                               SelectionDAG &DAG,
+                               const AArch64Subtarget *Subtarget) {
+  if (DCI.isBeforeLegalizeOps())
+    return SDValue();
+
+  SDLoc DL(N);
+  SMECallAttrs CallAttrs = findSMECallAttrs(N);
+  bool ShouldPreserveZT0 = CallAttrs.requiresPreservingZT0();
+  SDValue Result = N->getOperand(0);
+  SDValue PStateSM = N->getOperand(2);
+  SDValue InGlue = N->getOperand(3);
+  auto &MF = DAG.getMachineFunction();
+  auto *FuncInfo = MF.getInfo<AArch64FunctionInfo>();
+  const AArch64RegisterInfo *TRI = Subtarget->getRegisterInfo();
+  bool RequiresLazySave = CallAttrs.requiresLazySave();
+  bool RequiresSaveAllZA = CallAttrs.requiresPreservingAllZAState();
+  bool RequiresSMChange = CallAttrs.requiresSMChange();
+
+  if (RequiresSMChange) {
+    assert(PStateSM && "Expected a PStateSM to be set");
+    Result = TLI.changeStreamingMode(
+        DAG, DL, !CallAttrs.callee().hasStreamingInterface(), Result, InGlue,
+        getSMToggleCondition(CallAttrs), PStateSM);
+
+    if (!Subtarget->isTargetDarwin() || Subtarget->hasSVE()) {
+      InGlue = Result.getValue(1);
+      Result =
+          DAG.getNode(AArch64ISD::VG_RESTORE, DL,
+                      DAG.getVTList(MVT::Other, MVT::Glue), {Result, InGlue});
+    }
+  }
+
+  if (CallAttrs.requiresEnablingZAAfterCall())
+    // Unconditionally resume ZA.
+    Result = DAG.getNode(
+        AArch64ISD::SMSTART, DL, DAG.getVTList(MVT::Other, MVT::Glue), Result,
+        DAG.getTargetConstant((int32_t)(AArch64SVCR::SVCRZA), DL, MVT::i32));
+
+  if (ShouldPreserveZT0) {
+    SDValue ZTFrameIdx = DAG.getFrameIndex(
+        FuncInfo->getZT0Idx(),
+        DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
+    Result =
+        DAG.getNode(AArch64ISD::RESTORE_ZT, DL, DAG.getVTList(MVT::Other),
+                    {Result, DAG.getConstant(0, DL, MVT::i32), ZTFrameIdx});
+  }
+
+  if (RequiresLazySave) {
+    // Conditionally restore the lazy save using a pseudo node.
+    TPIDR2Object &TPIDR2 = FuncInfo->getTPIDR2Obj();
+    SDValue RegMask = DAG.getRegisterMask(
+        TRI->SMEABISupportRoutinesCallPreservedMaskFromX0());
+    SDValue RestoreRoutine = DAG.getTargetExternalSymbol(
+        "__arm_tpidr2_restore", TLI.getPointerTy(DAG.getDataLayout()));
+    SDValue TPIDR2_EL0 = DAG.getNode(
+        ISD::INTRINSIC_W_CHAIN, DL, MVT::i64, Result,
+        DAG.getConstant(Intrinsic::aarch64_sme_get_tpidr2, DL, MVT::i32));
+
+    // Copy the address of the TPIDR2 block into X0 before 'calling' the
+    // RESTORE_ZA pseudo.
+    SDValue Glue;
+    SDValue TPIDR2Block = DAG.getFrameIndex(
+        TPIDR2.FrameIndex,
+        DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
+    Result = DAG.getCopyToReg(Result, DL, AArch64::X0, TPIDR2Block, Glue);
+    Result =
+        DAG.getNode(AArch64ISD::RESTORE_ZA, DL, MVT::Other,
+                    {Result, TPIDR2_EL0, DAG.getRegister(AArch64::X0, MVT::i64),
+                     RestoreRoutine, RegMask, Result.getValue(1)});
+
+    // Finally reset the TPIDR2_EL0 register to 0.
+    Result = DAG.getNode(
+        ISD::INTRINSIC_VOID, DL, MVT::Other, Result,
+        DAG.getConstant(Intrinsic::aarch64_sme_set_tpidr2, DL, MVT::i32),
+        DAG.getConstant(0, DL, MVT::i64));
+    TPIDR2.Uses++;
+  } else if (RequiresSaveAllZA) {
+    Result = emitSMEStateSaveRestore(TLI, DAG, FuncInfo, DL, Result,
+                                     /*IsSave=*/false);
+  }
+  DAG.ReplaceAllUsesOfValueWith(SDValue(N, 0), Result);
+  return SDValue();
+}
+
 SDValue AArch64TargetLowering::PerformDAGCombine(SDNode *N,
                                                  DAGCombinerInfo &DCI) const {
   SelectionDAG &DAG = DCI.DAG;
@@ -26733,6 +26873,12 @@ SDValue AArch64TargetLowering::PerformDAGCombine(SDNode *N,
   case AArch64ISD::UMULL:
   case AArch64ISD::PMULL:
     return performMULLCombine(N, DCI, DAG);
+  case AArch64ISD::SME_CALL_START:
+    return lowerSMECallStart(N, DCI, *this, DAG);
+  case AArch64ISD::SME_CALL_SM_CHANGE:
+    return lowerSMEStreamingModeChange(N, DCI, *this, DAG, Subtarget);
+  case AArch64ISD::SME_CALL_END:
+    return lowerSMECallEnd(N, DCI, *this, DAG, Subtarget);
   case ISD::INTRINSIC_VOID:
   case ISD::INTRINSIC_W_CHAIN:
     switch (N->getConstantOperandVal(1)) {
