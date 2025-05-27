@@ -9122,6 +9122,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   SMECallAttrs CallAttrs = getSMECallAttrs(MF.getFunction(), CLI);
 
   SDValue SMECallStart;
+  SDValue PStateSM;
   bool RequiresLazySave = CallAttrs.requiresLazySave();
   bool RequiresSaveAllZA = CallAttrs.requiresPreservingAllZAState();
   bool RequiresSMChange = CallAttrs.requiresSMChange();
@@ -9131,11 +9132,12 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
                    ShouldPreserveZT0 || DisableZA;
 
   if (IsSMECall) {
-    Chain = SMECallStart = DAG.getNode(
-        AArch64ISD::SME_CALL_START, DL, DAG.getVTList(MVT::Other), Chain,
+    PStateSM = DAG.getNode(
+        AArch64ISD::SME_CALL_START, DL, DAG.getVTList(MVT::i64, MVT::Other), Chain,
         DAG.getTargetConstant(unsigned(CallAttrs.caller()), DL, MVT::i32),
         DAG.getTargetConstant(unsigned(CallAttrs.callee()), DL, MVT::i32),
         DAG.getTargetConstant(unsigned(CallAttrs.callsite()), DL, MVT::i32));
+    Chain = SMECallStart = PStateSM.getValue(1);
   }
 
   // Adjust the stack pointer for the new arguments...
@@ -9405,14 +9407,12 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   SDValue InGlue;
   SDValue SMECallSMChange;
-  SDValue PStateSM;
   if (RequiresSMChange) {
     SMECallSMChange = DAG.getNode(
         AArch64ISD::SME_CALL_SM_CHANGE, DL,
-        DAG.getVTList(MVT::i64, MVT::Other, MVT::Glue), Chain, SMECallStart);
-    PStateSM = SMECallSMChange;
-    Chain = SMECallSMChange.getValue(1);
-    InGlue = SMECallSMChange.getValue(2);
+        DAG.getVTList(MVT::Other, MVT::Glue), Chain, SMECallStart, PStateSM);
+    Chain = SMECallSMChange;
+    InGlue = SMECallSMChange.getValue(1);
   }
 
   // Build a sequence of copy-to-reg nodes chained together with token chain
@@ -26564,6 +26564,19 @@ static SDValue lowerSMECallStart(SDNode *N,
                                     /*IsSave=*/true);
   }
 
+  SDValue PStateSM;
+  bool RequiresSMChange = CallAttrs.requiresSMChange();
+  if (RequiresSMChange) {
+    if (CallAttrs.caller().hasStreamingInterfaceOrBody())
+      PStateSM = DAG.getConstant(1, DL, MVT::i64);
+    else if (CallAttrs.caller().hasNonStreamingInterface())
+      PStateSM = DAG.getConstant(0, DL, MVT::i64);
+    else
+      PStateSM = TLI.getRuntimePStateSM(DAG, Chain, DL, MVT::i64);
+  } else {
+    PStateSM = DAG.getUNDEF(MVT::i64);
+  }
+
   SDValue ZTFrameIdx;
   bool ShouldPreserveZT0 = CallAttrs.requiresPreservingZT0();
 
@@ -26591,8 +26604,7 @@ static SDValue lowerSMECallStart(SDNode *N,
         AArch64ISD::SMSTOP, DL, DAG.getVTList(MVT::Other, MVT::Glue), Chain,
         DAG.getTargetConstant((int32_t)(AArch64SVCR::SVCRZA), DL, MVT::i32));
 
-  DAG.ReplaceAllUsesOfValueWith(SDValue(N, 0), Chain);
-  return SDValue();
+  return DAG.getMergeValues({PStateSM, Chain}, DL);
 }
 
 static SDValue lowerSMEStreamingModeChange(SDNode *N,
@@ -26606,18 +26618,8 @@ static SDValue lowerSMEStreamingModeChange(SDNode *N,
   SDLoc DL(N);
   SMECallAttrs CallAttrs = findSMECallAttrs(N);
   SDValue Chain = N->getOperand(0);
+  SDValue PStateSM = N->getOperand(2);
   SDValue InGlue;
-
-  SDValue PStateSM;
-  bool RequiresSMChange = CallAttrs.requiresSMChange();
-  if (RequiresSMChange) {
-    if (CallAttrs.caller().hasStreamingInterfaceOrBody())
-      PStateSM = DAG.getConstant(1, DL, MVT::i64);
-    else if (CallAttrs.caller().hasNonStreamingInterface())
-      PStateSM = DAG.getConstant(0, DL, MVT::i64);
-    else
-      PStateSM = TLI.getRuntimePStateSM(DAG, Chain, DL, MVT::i64);
-  }
 
   if (!Subtarget->isTargetDarwin() || Subtarget->hasSVE()) {
     Chain = DAG.getNode(AArch64ISD::VG_SAVE, DL,
@@ -26629,7 +26631,7 @@ static SDValue lowerSMEStreamingModeChange(SDNode *N,
       DAG, DL, CallAttrs.callee().hasStreamingInterface(), Chain, InGlue,
       getSMToggleCondition(CallAttrs), PStateSM);
 
-  return DAG.getMergeValues({PStateSM, NewChain, NewChain.getValue(1)}, DL);
+  return DAG.getMergeValues({NewChain, NewChain.getValue(1)}, DL);
 }
 
 static SDValue lowerSMECallEnd(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
