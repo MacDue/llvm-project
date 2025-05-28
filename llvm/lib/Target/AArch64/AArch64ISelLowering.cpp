@@ -26508,19 +26508,23 @@ static SDValue performSHLCombine(SDNode *N,
   return DAG.getNode(ISD::AND, DL, VT, NewShift, NewRHS);
 }
 
-static SMECallAttrs findSMECallAttrs(SDNode *N) {
+static SDNode *findSMECallStart(SDNode *N) {
   unsigned Opcode = N->getOpcode();
-  if (Opcode == AArch64ISD::SME_CALL_START) {
-    SMEAttrs CallerAttrs(N->getConstantOperandVal(1));
-    SMEAttrs CalleeAttrs(N->getConstantOperandVal(2));
-    SMEAttrs CallsiteAttrs(N->getConstantOperandVal(3));
-    return SMECallAttrs(CallerAttrs, CalleeAttrs, CallsiteAttrs);
-  }
+  if (Opcode == AArch64ISD::SME_CALL_START)
+    return N;
   if (Opcode == AArch64ISD::SME_CALL_SM_CHANGE)
-    return findSMECallAttrs(N->getOperand(1).getNode());
+    return findSMECallStart(N->getOperand(1).getNode());
   if (Opcode == AArch64ISD::SME_CALL_END)
-    return findSMECallAttrs(N->getOperand(1).getNode());
+    return findSMECallStart(N->getOperand(1).getNode());
   llvm_unreachable("Unexpected opcode!");
+}
+
+static SMECallAttrs findSMECallAttrs(SDNode *N) {
+  SDNode *Start = findSMECallStart(N);
+  SMEAttrs CallerAttrs(Start->getConstantOperandVal(1));
+  SMEAttrs CalleeAttrs(Start->getConstantOperandVal(2));
+  SMEAttrs CallsiteAttrs(Start->getConstantOperandVal(3));
+  return SMECallAttrs(CallerAttrs, CalleeAttrs, CallsiteAttrs);
 }
 
 static unsigned getOrCreateZT0SpillSlot(AArch64FunctionInfo *FuncInfo,
@@ -26531,6 +26535,57 @@ static unsigned getOrCreateZT0SpillSlot(AArch64FunctionInfo *FuncInfo,
     FuncInfo->setZT0Idx(ZTObj);
   }
   return ZTObj;
+}
+
+static bool performSMECallCombine(SDNode *SMECallEnd,
+                                  TargetLowering::DAGCombinerInfo &DCI,
+                                  SelectionDAG &DAG) {
+  if (!DCI.isBeforeLegalizeOps())
+    return false;
+
+  SDNode *SMECallStart = findSMECallStart(SMECallEnd);
+  SDValue StartOutGlue = SDValue(SMECallStart, 2);
+  if (!StartOutGlue.use_empty())
+    return false;
+
+  SDValue StartChain = SMECallStart->getOperand(0);
+  if (StartChain->getOpcode() != AArch64ISD::SME_CALL_END)
+    return false;
+
+  SDNode *PrevSMECallEnd = StartChain.getNode();
+  SDValue PrevCallChain = PrevSMECallEnd->getOperand(0);
+  if (PrevCallChain->getOpcode() != ISD::CALLSEQ_END)
+    return false;
+
+  SDNode *PrevSMECallStart = findSMECallStart(PrevSMECallEnd);
+  SMECallAttrs CallAttrs = findSMECallAttrs(SMECallStart);
+  SMECallAttrs PrevCallAttrs = findSMECallAttrs(PrevSMECallStart);
+
+  // TODO: Handle case where we're already in (e.g.) streaming mode and just
+  // need to enable ZA etc.
+  if (CallAttrs != PrevCallAttrs)
+    return false;
+
+  SDNode *MaybeSMSwitch = PrevSMECallEnd->getOperand(1).getNode();
+  if (MaybeSMSwitch->getOpcode() == AArch64ISD::SME_CALL_SM_CHANGE) {
+    SDNode *SMSwitch = SMECallEnd->getOperand(1).getNode();
+    // Remove duplicate SME_CALL_SM_CHANGE.
+    // FIXME: Can we avoid adding fake glue? This is needed as we need to remove
+    // this (duplicate) SME_CALL_SM_CHANGE, but it has been glued to another
+    // node so we need something to replace the glue.
+    SDValue FakeGlue = DAG.getUNDEF(MVT::Glue);
+    SDValue MergeValues = DAG.getMergeValues(
+        {SMSwitch->getOperand(0), FakeGlue}, SDLoc(SMECallEnd));
+    DAG.ReplaceAllUsesWith(SMSwitch, MergeValues.getNode());
+  }
+
+  DAG.UpdateNodeOperands(SMECallEnd, SMECallEnd->getOperand(0),
+                         PrevSMECallEnd->getOperand(1),
+                         SMECallEnd->getOperand(2), SMECallEnd->getOperand(3));
+  DAG.ReplaceAllUsesWith(PrevSMECallEnd, PrevCallChain.getNode());
+  DAG.ReplaceAllUsesOfValueWith(SDValue(SMECallStart, 1), PrevCallChain);
+  DAG.ReplaceAllUsesWith(SMECallStart, PrevSMECallStart);
+  return true;
 }
 
 static SDValue lowerSMECallStart(SDNode *N,
@@ -26891,6 +26946,8 @@ SDValue AArch64TargetLowering::PerformDAGCombine(SDNode *N,
   case AArch64ISD::SME_CALL_SM_CHANGE:
     return lowerSMEStreamingModeChange(N, DCI, *this, DAG, Subtarget);
   case AArch64ISD::SME_CALL_END:
+    if (performSMECallCombine(N, DCI, DAG))
+      return SDValue();
     return lowerSMECallEnd(N, DCI, *this, DAG, Subtarget);
   case ISD::INTRINSIC_VOID:
   case ISD::INTRINSIC_W_CHAIN:
