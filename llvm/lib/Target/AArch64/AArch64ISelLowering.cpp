@@ -9133,7 +9133,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   if (IsSMECall) {
     PStateSM = DAG.getNode(
-        AArch64ISD::SME_CALL_START, DL, DAG.getVTList(MVT::i64, MVT::Other), Chain,
+        AArch64ISD::SME_CALL_START, DL, DAG.getVTList(MVT::i64, MVT::Other, MVT::Glue), Chain,
         DAG.getTargetConstant(unsigned(CallAttrs.caller()), DL, MVT::i32),
         DAG.getTargetConstant(unsigned(CallAttrs.callee()), DL, MVT::i32),
         DAG.getTargetConstant(unsigned(CallAttrs.callsite()), DL, MVT::i32));
@@ -9595,7 +9595,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   if (IsSMECall) {
     Result =
-        DAG.getNode(AArch64ISD::SME_CALL_END, DL, DAG.getVTList(MVT::Other),
+        DAG.getNode(AArch64ISD::SME_CALL_END, DL, DAG.getVTList(MVT::Other, MVT::Glue),
                     Result, SMECallSMChange ? SMECallSMChange : SMECallStart,
                     PStateSM ? PStateSM : DAG.getUNDEF(MVT::i64), InGlue);
   }
@@ -26604,7 +26604,9 @@ static SDValue lowerSMECallStart(SDNode *N,
         AArch64ISD::SMSTOP, DL, DAG.getVTList(MVT::Other, MVT::Glue), Chain,
         DAG.getTargetConstant((int32_t)(AArch64SVCR::SVCRZA), DL, MVT::i32));
 
-  return DAG.getMergeValues({PStateSM, Chain}, DL);
+  DAG.ReplaceAllUsesOfValueWith(SDValue(N, 0), PStateSM);
+  DAG.ReplaceAllUsesOfValueWith(SDValue(N, 1), Chain);
+  return SDValue();
 }
 
 static SDValue lowerSMEStreamingModeChange(SDNode *N,
@@ -26718,6 +26720,7 @@ static SDValue lowerSMECallEnd(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
     Result = emitSMEStateSaveRestore(TLI, DAG, FuncInfo, DL, Result,
                                      /*IsSave=*/false);
   }
+
   DAG.ReplaceAllUsesOfValueWith(SDValue(N, 0), Result);
   return SDValue();
 }
