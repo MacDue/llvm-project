@@ -26720,6 +26720,7 @@ static SDValue performSHLCombine(SDNode *N,
 static SDValue performSMECallCombine(SDNode *SMECallEnd,
                                      TargetLowering::DAGCombinerInfo &DCI,
                                      SelectionDAG &DAG) {
+  SDLoc DL(SMECallEnd);
   SDNode *SMECallStart = findSMECallStart(SMECallEnd);
   SDValue StartOutGlue = SDValue(SMECallStart, 2);
   if (!StartOutGlue.use_empty())
@@ -26729,9 +26730,10 @@ static SDValue performSMECallCombine(SDNode *SMECallEnd,
   if (StartChain->getOpcode() != AArch64ISD::SME_CALL_END)
     return SDValue();
 
+  // TODO: This probably does not need to be a CALLSEQ_END.
   SDNode *PrevSMECallEnd = StartChain.getNode();
-  SDValue PrevCallChain = PrevSMECallEnd->getOperand(0);
-  if (PrevCallChain->getOpcode() != ISD::CALLSEQ_END)
+  SDValue PrevCallOutChain = PrevSMECallEnd->getOperand(0);
+  if (PrevCallOutChain->getOpcode() != ISD::CALLSEQ_END)
     return SDValue();
 
   SDNode *PrevSMECallStart = findSMECallStart(PrevSMECallEnd);
@@ -26751,17 +26753,26 @@ static SDValue performSMECallCombine(SDNode *SMECallEnd,
     // this (duplicate) SME_CALL_SM_CHANGE, but it has been glued to another
     // node so we need something to replace the glue.
     SDValue FakeGlue = DAG.getUNDEF(MVT::Glue);
-    SDValue MergeValues = DAG.getMergeValues(
+    SDValue NopSMESwitch = DAG.getMergeValues(
         {SMSwitch->getOperand(0), FakeGlue}, SDLoc(SMECallEnd));
-    DAG.ReplaceAllUsesWith(SMSwitch, MergeValues.getNode());
+    DAG.ReplaceAllUsesWith(SMSwitch, NopSMESwitch.getNode());
   }
 
-  DAG.UpdateNodeOperands(SMECallEnd, SMECallEnd->getOperand(0),
-                         PrevSMECallEnd->getOperand(1),
-                         SMECallEnd->getOperand(2), SMECallEnd->getOperand(3));
-  DAG.ReplaceAllUsesWith(PrevSMECallEnd, PrevCallChain.getNode());
-  DAG.ReplaceAllUsesOfValueWith(SDValue(SMECallStart, 1), PrevCallChain);
-  DAG.ReplaceAllUsesWith(SMECallStart, PrevSMECallStart);
+  // Update the last SME_CALL_END to point to the SME_CALL_START or
+  // SME_CALL_SM_CHANGE from the previous SME_CALL region:
+  DAG.UpdateNodeOperands(
+      SMECallEnd,
+      /*Chain=*/SMECallEnd->getOperand(0),
+      /*SMECallStart Or SMSwitch=*/PrevSMECallEnd->getOperand(1),
+      /*PStateSM=*/SMECallEnd->getOperand(2),
+      /*InGlue=*/SMECallEnd->getOperand(3));
+  // Remove the SME_CALL_END for the previous SME_CALL region:
+  DAG.ReplaceAllUsesWith(PrevSMECallEnd, PrevCallOutChain.getNode());
+  // Remove the SME_CALL_START for the current/next SME_CALL region:
+  SDValue NopSMECallStart = DAG.getMergeValues(
+      {SDValue(PrevSMECallStart, 0), PrevCallOutChain, DAG.getUNDEF(MVT::Glue)},
+      DL);
+  DAG.ReplaceAllUsesWith(SMECallStart, NopSMECallStart.getNode());
   return SDValue();
 }
 
