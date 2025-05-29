@@ -827,6 +827,9 @@ public:
   TargetLoweringBase::LegalizeTypeAction
   getPreferredVectorAction(MVT VT) const override;
 
+  TargetLoweringBase::LegalizeAction
+  getCustomOperationAction(SDNode &) const override;
+
   /// If the target has a standard location for the stack protector cookie,
   /// returns the address of that location. Otherwise, returns nullptr.
   Value *getIRStackGuard(IRBuilderBase &IRB) const override;
@@ -1220,6 +1223,9 @@ private:
   SDValue LowerWindowsDYNAMIC_STACKALLOC(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerInlineDYNAMIC_STACKALLOC(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerDYNAMIC_STACKALLOC(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerSME_CALL_START(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerSME_CALL_SM_CHANGE(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerSME_CALL_END(SDValue Op, SelectionDAG &DAG) const;
 
   SDValue LowerAVG(SDValue Op, SelectionDAG &DAG, unsigned NewOp) const;
 
