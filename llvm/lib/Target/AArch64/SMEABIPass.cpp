@@ -139,8 +139,8 @@ public:
   ZALiveness(Function *F, Type *ZaType) {
     unsigned NextInstructionId = 0;
     SetVector<const BasicBlock *> Worklist;
-    for (auto* Block : depth_first(F)) {
-      auto& Info = BlockInfoMap.try_emplace(Block, Block, ZaType).first->second;
+    for (auto *Block : depth_first(F)) {
+      auto &Info = BlockInfoMap.try_emplace(Block, Block, ZaType).first->second;
 
       if (Info.updateLiveIn()) {
         Worklist.insert(pred_begin(Block), pred_end(Block));
@@ -196,7 +196,8 @@ static void insertLazySaveAndRestores(Function *F) {
 
   auto defineOrUpdateValueLiveRange = [&](const Value *V,
                                           const Instruction *FirstUseOrDef,
-                                          ZALiveness::BlockInfo const &Info, bool Def = false) {
+                                          ZALiveness::BlockInfo const &Info,
+                                          bool Def = false) {
     // Find or create a live range for `value`.
     auto [It, _] = LiveRanges.try_emplace(V, LiveRangeAllocator);
     LiveRange &LiveRange = It->second;
@@ -280,6 +281,7 @@ static void insertLazySaveAndRestores(Function *F) {
       }
       SavePoints.push_back(SpillPoint);
 
+      SmallPtrSet<const Instruction *, 8> Reloads;
       for (auto *Cand : ReloadCands) {
         bool ReloadHere = true;
 
@@ -296,28 +298,37 @@ static void insertLazySaveAndRestores(Function *F) {
         // ClobberPoints.mark(ClobberPoint);
 
         auto *ReloadBefore = cast<Instruction>(Cand);
-        if (ReloadBefore->getParent() == Clobber->getParent()) {
-          ClobberPoints.mark(ClobberPoint,
-                             Liveness.InstructionOrder.at(ReloadBefore));
-        } else {
-          // TODO: do properly!!!
-          auto *ReloadBlock = ReloadBefore->getParent();
-          auto *ClobberBlock = Clobber->getParent();
-          ClobberPoints.mark(ClobberPoint, Liveness.InstructionOrder.at(
-                                               &ClobberBlock->back()));
-          for (auto &[Block, Info] : Liveness.BlockInfoMap) {
+        ReloadPoints.push_back(ReloadBefore);
+        Reloads.insert(ReloadBefore);
+      }
 
+      SmallPtrSet<const BasicBlock *, 8> MarkedBlocks;
+      bool MCB = false;
+      for (auto *Reload : Reloads) {
+        // TODO: do properly!!!
+        auto *ReloadBlock = Reload->getParent();
+        auto *ClobberBlock = Clobber->getParent();
+        if (ReloadBlock != ClobberBlock) {
+          if (!MCB) {
+            ClobberPoints.mark(ClobberPoint, Liveness.InstructionOrder.at(
+                                                 &ClobberBlock->back()));
+            MCB = true;
+          }
+          for (auto &[Block, Info] : Liveness.BlockInfoMap) {
             if (Block == ReloadBlock) {
               ClobberPoints.mark(Liveness.InstructionOrder.at(&Block->front()),
-                                 Liveness.InstructionOrder.at(ReloadBefore));
-            } else if (Block != ClobberBlock &&
+                                 Liveness.InstructionOrder.at(Reload));
+            } else if (!MarkedBlocks.contains(Block) && Block != ClobberBlock &&
                        DT.dominates(Block, ReloadBlock)) {
+              MarkedBlocks.insert(Block);
               ClobberPoints.mark(Liveness.InstructionOrder.at(&Block->front()),
                                  Liveness.InstructionOrder.at(&Block->back()));
             }
           }
+        } else {
+          ClobberPoints.mark(ClobberPoint,
+                             Liveness.InstructionOrder.at(Reload));
         }
-        ReloadPoints.push_back(ReloadBefore);
       }
 
       break;
