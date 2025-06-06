@@ -258,7 +258,8 @@ DecodeIITType(unsigned &NextElt, ArrayRef<unsigned char> Infos,
     OutputTable.push_back(IITDescriptor::get(IITDescriptor::AArch64Svcount, 0));
     return;
   case IIT_AARCH64_ZA_GENERATION:
-    OutputTable.push_back(IITDescriptor::get(IITDescriptor::AArch64ZaGeneration, 0));
+    OutputTable.push_back(
+        IITDescriptor::get(IITDescriptor::AArch64ZaGeneration, 0));
     return;
   case IIT_I8:
     OutputTable.push_back(IITDescriptor::get(IITDescriptor::Integer, 8));
