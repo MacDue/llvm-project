@@ -1338,11 +1338,11 @@ define <4 x i16> @test_extracts_inserts_varidx_extract(<8 x i16> %x, i32 %idx) {
 ; CHECK-SD:       // %bb.0:
 ; CHECK-SD-NEXT:    sub sp, sp, #16
 ; CHECK-SD-NEXT:    .cfi_def_cfa_offset 16
-; CHECK-SD-NEXT:    mov x8, sp
 ; CHECK-SD-NEXT:    // kill: def $w0 killed $w0 def $x0
+; CHECK-SD-NEXT:    mov x8, sp
 ; CHECK-SD-NEXT:    str q0, [sp]
-; CHECK-SD-NEXT:    bfi x8, x0, #1, #3
-; CHECK-SD-NEXT:    ldr h1, [x8]
+; CHECK-SD-NEXT:    and x9, x0, #0x7
+; CHECK-SD-NEXT:    ldr h1, [x8, x9, lsl #1]
 ; CHECK-SD-NEXT:    mov v1.h[1], v0.h[1]
 ; CHECK-SD-NEXT:    mov v1.h[2], v0.h[2]
 ; CHECK-SD-NEXT:    mov v1.h[3], v0.h[3]
@@ -1381,10 +1381,10 @@ define <4 x i16> @test_extracts_inserts_varidx_insert(<8 x i16> %x, i32 %idx) {
 ; CHECK-SD:       // %bb.0:
 ; CHECK-SD-NEXT:    sub sp, sp, #16
 ; CHECK-SD-NEXT:    .cfi_def_cfa_offset 16
-; CHECK-SD-NEXT:    add x8, sp, #8
 ; CHECK-SD-NEXT:    // kill: def $w0 killed $w0 def $x0
-; CHECK-SD-NEXT:    bfi x8, x0, #1, #2
-; CHECK-SD-NEXT:    str h0, [x8]
+; CHECK-SD-NEXT:    add x8, sp, #8
+; CHECK-SD-NEXT:    and x9, x0, #0x3
+; CHECK-SD-NEXT:    str h0, [x8, x9, lsl #1]
 ; CHECK-SD-NEXT:    ldr d1, [sp, #8]
 ; CHECK-SD-NEXT:    mov v1.h[1], v0.h[1]
 ; CHECK-SD-NEXT:    mov v1.h[2], v0.h[2]

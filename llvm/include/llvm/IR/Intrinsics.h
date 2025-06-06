@@ -167,6 +167,7 @@ namespace Intrinsic {
       AMX,
       PPCQuad,
       AArch64Svcount,
+      AArch64ZaGeneration,
     } Kind;
 
     union {
