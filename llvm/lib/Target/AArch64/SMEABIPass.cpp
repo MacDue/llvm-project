@@ -21,6 +21,7 @@
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Analysis/CFG.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -77,7 +78,9 @@ public:
 
       // TODO: Need to pre-process the IR to handle PHI nodes correctly
       // (as their uses don't make sense for live ranges -- really the
-      // arguments are copies in a predecessor).
+      // arguments are copies/uses in a predecessor).
+      // -> split cond blocks -> insert uses before branches
+      // (then ignore PHI users elsewhere)
       for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
         const Instruction &Inst = *It;
 
@@ -266,20 +269,16 @@ static void insertLazySaveAndRestores(Function *F) {
 
       SmallVector<const User *> Users(V->users());
 
-      // auto SpillPoint = DT.findNearestCommonDominator(
-      //   const_cast<Instruction*>(cast<Instruction>(V)), );
-      // SavePoints.push_back(SpillPoint);
-
-      // Ugh!
-
       Instruction *SpillPoint = const_cast<IntrinsicInst *>(Clobber);
 
       SmallVector<const User *> ReloadCands;
       for (auto *User : V->users()) {
-        if (DT.dominates(User, SpillPoint))
+        if (!isPotentiallyReachable(SpillPoint, cast<Instruction>(User),
+                                    nullptr, &DT))
           continue;
-        SpillPoint = DT.findNearestCommonDominator(
-            SpillPoint, const_cast<Instruction *>(cast<Instruction>(User)));
+        // Note: Think it's safe to only spill at the clober
+        // SpillPoint = DT.findNearestCommonDominator(
+        //     SpillPoint, const_cast<Instruction *>(cast<Instruction>(User)));
         ReloadCands.push_back(User);
       }
       SavePoints.push_back(SpillPoint);
@@ -288,6 +287,7 @@ static void insertLazySaveAndRestores(Function *F) {
       for (auto *Cand : ReloadCands) {
         bool ReloadHere = true;
 
+        // FIXME: Ugh! O(n2)
         for (auto *Other : ReloadCands) {
           if (Other == Cand)
             continue;
