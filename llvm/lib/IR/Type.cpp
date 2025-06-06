@@ -1023,7 +1023,8 @@ static TargetTypeInfo getTargetTypeInfo(const TargetExtType *Ty) {
 
   if (Name == "aarch64.za.generation")
     return TargetTypeInfo(IntegerType::getInt64Ty(C),
-                          TargetExtType::HasZeroInit, TargetExtType::CanBeLocal);
+                          TargetExtType::HasZeroInit,
+                          TargetExtType::CanBeLocal);
 
   // RISC-V vector tuple type. The layout is represented as the type that needs
   // the same number of vector registers(VREGS) as this tuple type, represented

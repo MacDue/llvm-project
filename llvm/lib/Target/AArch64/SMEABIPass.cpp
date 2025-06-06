@@ -14,9 +14,16 @@
 
 #include "AArch64.h"
 #include "Utils/AArch64SMEAttributes.h"
+#include "llvm/ADT/DepthFirstIterator.h"
+#include "llvm/ADT/IntervalMap.h"
+#include "llvm/ADT/PostOrderIterator.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetOperations.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -27,6 +34,226 @@ using namespace llvm;
 #define DEBUG_TYPE "aarch64-sme-abi"
 
 namespace {
+
+struct LiveRange {
+  using RangeSet = llvm::IntervalMap<uint64_t, uint8_t, 16,
+                                     llvm::IntervalMapHalfOpenInfo<unsigned>>;
+  using Allocator = RangeSet::Allocator;
+  static constexpr uint8_t kValidLiveRange = 0xff;
+
+  LiveRange(Allocator &allocator)
+      : Ranges(std::make_unique<RangeSet>(allocator)) {}
+
+  bool overlaps(LiveRange const &Other) const {
+    return llvm::IntervalMapOverlaps<RangeSet, RangeSet>(*Ranges, *Other.Ranges)
+        .valid();
+  }
+
+  bool overlaps(uint64_t Point) const {
+    return Ranges->lookup(Point) == kValidLiveRange;
+  }
+
+  void mark(unsigned Start, unsigned End) {
+    if (Start < End)
+      Ranges->insert(Start, End, kValidLiveRange);
+  }
+
+  bool empty() const { return Ranges->empty(); }
+  unsigned start() const { return Ranges->start(); }
+  unsigned end() const { return Ranges->stop(); }
+
+  std::unique_ptr<RangeSet> Ranges;
+};
+
+class ZALiveness {
+public:
+  struct BlockInfo {
+    using ValueSet = SmallPtrSet<const Value *, 8>;
+
+    BlockInfo() = default;
+
+    BlockInfo(const BasicBlock *Block, Type *ZaType) : Block(Block) {
+
+      for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
+        const Instruction &Inst = *It;
+
+        // Collect uses of ZA.
+        for (size_t I = 0, N = Inst.getNumOperands(); I < N; ++I) {
+          auto *Op = Inst.getOperand(I);
+          if (Op->getType() != ZaType)
+            continue;
+          ZaUseVals.insert(Op);
+        }
+
+        if (Inst.getType() != ZaType)
+          continue;
+
+        // Collect definitions of ZA.
+        auto *ZaDef = cast<Value>(&Inst);
+        ZaDefVals.insert(ZaDef);
+
+        // Collect out values for the current block.
+        for (auto *User : ZaDef->users()) {
+          auto UserInst = cast<Instruction>(User);
+          if (UserInst->getParent() != Block)
+            OutZa.insert(ZaDef);
+        }
+      }
+      set_subtract(ZaUseVals, ZaDefVals);
+    }
+
+    bool updateLiveIn() {
+      ValueSet NewIn = ZaUseVals;
+      set_union(NewIn, OutZa);
+      set_subtract(NewIn, ZaDefVals);
+
+      if (NewIn.size() == InZa.size())
+        return false;
+
+      InZa = std::move(NewIn);
+      return true;
+    }
+
+    void
+    updateLiveOut(const DenseMap<const BasicBlock *, BlockInfo> &BlockInfoMap) {
+      for (const BasicBlock *Succ : successors(Block)) {
+        const BlockInfo &Info = BlockInfoMap.at(Succ);
+        set_union(OutZa, Info.InZa);
+      }
+    }
+
+    const BasicBlock *Block{nullptr};
+    ValueSet InZa;
+    ValueSet OutZa;
+    ValueSet ZaDefVals;
+    ValueSet ZaUseVals;
+  };
+
+  DenseMap<const BasicBlock *, BlockInfo> BlockInfoMap;
+
+  // Order valid within basic blocks (arbitrary between basic blocks).
+  DenseMap<const Instruction *, unsigned> InstructionOrder;
+
+public:
+  ZALiveness(Function *F, Type *ZaType) {
+    unsigned NextInstructionId = 0;
+    SetVector<const BasicBlock *> Worklist;
+    for (auto It = F->begin(), E = F->end(); It != E; ++It) {
+      const BasicBlock *Block = &*It;
+      if (succ_empty(Block))
+        Worklist.insert(Block);
+
+      BlockInfoMap.try_emplace(Block, Block, ZaType);
+
+      for (auto It = Block->begin(), E = Block->end(); It != E; ++It)
+        InstructionOrder.try_emplace(&*It, NextInstructionId++);
+    }
+
+    while (!Worklist.empty()) {
+      const BasicBlock *Block = Worklist.pop_back_val();
+      BlockInfo &Info = const_cast<BlockInfo &>(BlockInfoMap.at(Block));
+      Info.updateLiveOut(BlockInfoMap);
+      if (Info.updateLiveIn()) {
+        Worklist.insert(pred_begin(Block), pred_end(Block));
+      }
+    }
+  }
+
+  const BlockInfo &getBlockLiveness(const BasicBlock *Block) const {
+    return BlockInfoMap.at(Block);
+  }
+
+  const Instruction *getEndInstruction(const BlockInfo &Info, const Value *V,
+                                       const Instruction *Start) {
+    if (Info.OutZa.contains(V))
+      return &Info.Block->back();
+
+    if (isa<Constant>(V))
+      return Start;
+
+    const Instruction *End = Start;
+    for (auto User : V->users()) {
+      auto &Inst = cast<Instruction>(*User);
+      if (Inst.getParent() == Info.Block &&
+          InstructionOrder.at(End) < InstructionOrder.at(&Inst))
+        End = &Inst;
+    }
+
+    return End;
+  }
+};
+
+static void insertLazySaveAndRestores(Function *F) {
+  Type *ZaType = TargetExtType::get(F->getContext(), "aarch64.za.generation");
+  ZALiveness Liveness(F, ZaType);
+  DenseMap<const Value *, LiveRange> LiveRanges;
+  LiveRange::Allocator LiveRangeAllocator;
+  SmallVector<Instruction*> Clobbers;
+
+  auto defineOrUpdateValueLiveRange = [&](const Value *V,
+                                          const Instruction *FirstUseOrDef,
+                                          ZALiveness::BlockInfo const &Info) {
+    // Find or create a live range for `value`.
+    auto [It, _] = LiveRanges.try_emplace(V, LiveRangeAllocator);
+    LiveRange &LiveRange = It->second;
+    auto LastUseInBlock = Liveness.getEndInstruction(Info, V, FirstUseOrDef);
+    unsigned Start = Liveness.InstructionOrder.at(FirstUseOrDef);
+    unsigned End = Liveness.InstructionOrder.at(LastUseInBlock);
+    LiveRange.mark(Start + 1, End);
+  };
+
+  for (auto It = F->begin(), E = F->end(); It != E; ++It) {
+    const BasicBlock *Block = &*It;
+
+    auto &Info = Liveness.getBlockLiveness(Block);
+    for (const Value *LiveIn : Info.InZa)
+      defineOrUpdateValueLiveRange(LiveIn, &Block->front(), Info);
+
+    for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
+      const Instruction *Inst = &*It;
+
+      // if (auto* Intr = dyn_cast<IntrinsicInst>(*Inst)) {
+
+      // }
+
+      if (Inst->getType() != ZaType)
+        continue;
+
+      const Value *Def = cast<Value>(Inst);
+      defineOrUpdateValueLiveRange(Def, Inst, Info);
+    }
+  }
+
+  // Debug print.
+  unsigned BlockIdx = 0;
+  for (auto It = F->begin(), E = F->end(); It != E; ++It) {
+    const BasicBlock *Block = &*It;
+    llvm::errs() << "^bb" << BlockIdx++ << ":\n";
+    for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
+      const Instruction *Inst = &*It;
+      unsigned Index = Liveness.InstructionOrder.at(Inst);
+      for (auto& [V, Range] : LiveRanges) {
+        char liveness = ' ';
+        for (auto it = Range.Ranges->begin(); it != Range.Ranges->end();
+             ++it) {
+          if (it.start() == Index)
+            liveness = (liveness == 'E' ? '|' : 'S');
+          else if (it.stop() == Index)
+            liveness = (liveness == 'S' ? '|' : 'E');
+          else if (Index >= it.start() && Index < it.stop())
+            liveness = '|';
+        }
+        llvm::errs() << liveness;
+      }
+      llvm::errs() << ' ';
+      Inst->dump();
+    }
+    llvm::errs() << "==========\n";
+  }
+
+
+}
+
 struct SMEABI : public FunctionPass {
   static char ID; // Pass identification, replacement for typeid
   SMEABI() : FunctionPass(ID) {}
@@ -172,10 +399,12 @@ bool SMEABI::runOnFunction(Function &F) {
   if (F.isDeclaration() || F.hasFnAttribute("aarch64_expanded_pstate_za"))
     return false;
 
+  insertLazySaveAndRestores(&F);
+
   bool Changed = false;
-  SMEAttrs FnAttrs(F);
-  if (FnAttrs.isNewZA() || FnAttrs.isNewZT0())
-    Changed |= updateNewStateFunctions(M, &F, Builder, FnAttrs);
+  // SMEAttrs FnAttrs(F);
+  // if (FnAttrs.isNewZA() || FnAttrs.isNewZT0())
+  //   Changed |= updateNewStateFunctions(M, &F, Builder, FnAttrs);
 
   return Changed;
 }
