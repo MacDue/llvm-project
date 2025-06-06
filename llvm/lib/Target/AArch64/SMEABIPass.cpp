@@ -139,12 +139,12 @@ public:
   ZALiveness(Function *F, Type *ZaType) {
     unsigned NextInstructionId = 0;
     SetVector<const BasicBlock *> Worklist;
-    for (auto It = F->begin(), E = F->end(); It != E; ++It) {
-      const BasicBlock *Block = &*It;
-      if (succ_empty(Block))
-        Worklist.insert(Block);
+    for (auto* Block : depth_first(F)) {
+      auto& Info = BlockInfoMap.try_emplace(Block, Block, ZaType).first->second;
 
-      BlockInfoMap.try_emplace(Block, Block, ZaType);
+      if (Info.updateLiveIn()) {
+        Worklist.insert(pred_begin(Block), pred_end(Block));
+      }
 
       for (auto It = Block->begin(), E = Block->end(); It != E; ++It)
         InstructionOrder.try_emplace(&*It, NextInstructionId++);
@@ -196,22 +196,23 @@ static void insertLazySaveAndRestores(Function *F) {
 
   auto defineOrUpdateValueLiveRange = [&](const Value *V,
                                           const Instruction *FirstUseOrDef,
-                                          ZALiveness::BlockInfo const &Info) {
+                                          ZALiveness::BlockInfo const &Info, bool Def = false) {
     // Find or create a live range for `value`.
     auto [It, _] = LiveRanges.try_emplace(V, LiveRangeAllocator);
     LiveRange &LiveRange = It->second;
     auto LastUseInBlock = Liveness.getEndInstruction(Info, V, FirstUseOrDef);
     unsigned Start = Liveness.InstructionOrder.at(FirstUseOrDef);
     unsigned End = Liveness.InstructionOrder.at(LastUseInBlock);
-    LiveRange.mark(Start + 1, End);
+    LiveRange.mark(Start + (Def ? 1 : 0), End);
   };
 
   for (auto It = F->begin(), E = F->end(); It != E; ++It) {
     const BasicBlock *Block = &*It;
 
     auto &Info = Liveness.getBlockLiveness(Block);
-    for (const Value *LiveIn : Info.InZa)
+    for (const Value *LiveIn : Info.InZa) {
       defineOrUpdateValueLiveRange(LiveIn, &Block->front(), Info);
+    }
 
     for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
       const Instruction *Inst = &*It;
@@ -226,7 +227,7 @@ static void insertLazySaveAndRestores(Function *F) {
         continue;
 
       const Value *Def = cast<Value>(Inst);
-      defineOrUpdateValueLiveRange(Def, Inst, Info);
+      defineOrUpdateValueLiveRange(Def, Inst, Info, true);
     }
   }
 
@@ -239,15 +240,7 @@ static void insertLazySaveAndRestores(Function *F) {
       const Instruction *Inst = &*It;
       unsigned Index = Liveness.InstructionOrder.at(Inst);
       for (auto &[V, Range] : LiveRanges) {
-        char liveness = ' ';
-        for (auto it = Range.Ranges->begin(); it != Range.Ranges->end(); ++it) {
-          if (it.start() == Index)
-            liveness = (liveness == 'E' ? '|' : 'S');
-          else if (it.stop() == Index)
-            liveness = (liveness == 'S' ? '|' : 'E');
-          else if (Index >= it.start() && Index < it.stop())
-            liveness = '|';
-        }
+        char liveness = Range.overlaps(Index) ? '|' : ' ';
         llvm::errs() << liveness;
       }
       llvm::errs() << ' ';
