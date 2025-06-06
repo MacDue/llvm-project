@@ -21,6 +21,7 @@
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -188,7 +189,10 @@ static void insertLazySaveAndRestores(Function *F) {
   ZALiveness Liveness(F, ZaType);
   DenseMap<const Value *, LiveRange> LiveRanges;
   LiveRange::Allocator LiveRangeAllocator;
-  SmallVector<Instruction*> Clobbers;
+
+  LiveRange ClobberPoints(LiveRangeAllocator);
+
+  SmallVector<const IntrinsicInst *> Clobbers;
 
   auto defineOrUpdateValueLiveRange = [&](const Value *V,
                                           const Instruction *FirstUseOrDef,
@@ -212,9 +216,11 @@ static void insertLazySaveAndRestores(Function *F) {
     for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
       const Instruction *Inst = &*It;
 
-      // if (auto* Intr = dyn_cast<IntrinsicInst>(*Inst)) {
-
-      // }
+      if (auto *Intr = dyn_cast<IntrinsicInst>(Inst)) {
+        if (Intr->getIntrinsicID() == Intrinsic::aarch64_sme_clobber_za_state) {
+          Clobbers.push_back(Intr);
+        }
+      }
 
       if (Inst->getType() != ZaType)
         continue;
@@ -232,10 +238,9 @@ static void insertLazySaveAndRestores(Function *F) {
     for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
       const Instruction *Inst = &*It;
       unsigned Index = Liveness.InstructionOrder.at(Inst);
-      for (auto& [V, Range] : LiveRanges) {
+      for (auto &[V, Range] : LiveRanges) {
         char liveness = ' ';
-        for (auto it = Range.Ranges->begin(); it != Range.Ranges->end();
-             ++it) {
+        for (auto it = Range.Ranges->begin(); it != Range.Ranges->end(); ++it) {
           if (it.start() == Index)
             liveness = (liveness == 'E' ? '|' : 'S');
           else if (it.stop() == Index)
@@ -251,7 +256,104 @@ static void insertLazySaveAndRestores(Function *F) {
     llvm::errs() << "==========\n";
   }
 
+  DominatorTree DT(*F);
+  SmallVector<const Instruction *> SavePoints;
+  SmallVector<const Instruction *> ReloadPoints;
 
+  for (auto &[V, Range] : LiveRanges) {
+    for (auto *Clobber : Clobbers) {
+      unsigned ClobberPoint = Liveness.InstructionOrder.at(Clobber);
+
+      if (ClobberPoints.overlaps(ClobberPoint) || !Range.overlaps(ClobberPoint))
+        continue;
+
+      SmallVector<const User *> Users(V->users());
+
+      // auto SpillPoint = DT.findNearestCommonDominator(
+      //   const_cast<Instruction*>(cast<Instruction>(V)), );
+      // SavePoints.push_back(SpillPoint);
+
+      // Ugh!
+
+      Instruction *SpillPoint = const_cast<IntrinsicInst *>(Clobber);
+
+      SmallVector<const User *> ReloadCands;
+      for (auto *User : V->users()) {
+        if (DT.dominates(User, SpillPoint))
+          continue;
+        SpillPoint = DT.findNearestCommonDominator(
+            SpillPoint, const_cast<Instruction *>(cast<Instruction>(User)));
+        ReloadCands.push_back(User);
+      }
+      SavePoints.push_back(SpillPoint);
+
+      for (auto *Cand : ReloadCands) {
+        bool ReloadHere = true;
+
+        for (auto *Other : ReloadCands) {
+          if (Other == Cand)
+            continue;
+          if (DT.dominates(cast<Value>(Other), cast<Instruction>(Cand))) {
+            ReloadHere = false;
+            break;
+          }
+        }
+        if (!ReloadHere)
+          continue;
+        // ClobberPoints.mark(ClobberPoint);
+
+        auto *ReloadBefore = cast<Instruction>(Cand);
+        if (ReloadBefore->getParent() == Clobber->getParent()) {
+          ClobberPoints.mark(ClobberPoint,
+                             Liveness.InstructionOrder.at(ReloadBefore));
+        } else {
+          // TODO: do properly!!!
+          auto *ReloadBlock = ReloadBefore->getParent();
+          auto *ClobberBlock = Clobber->getParent();
+          ClobberPoints.mark(ClobberPoint, Liveness.InstructionOrder.at(
+                                               &ClobberBlock->back()));
+          for (auto &[Block, Info] : Liveness.BlockInfoMap) {
+
+            if (Block == ReloadBlock) {
+              ClobberPoints.mark(Liveness.InstructionOrder.at(&Block->front()),
+                                 Liveness.InstructionOrder.at(ReloadBefore));
+            } else if (Block != ClobberBlock &&
+                       DT.dominates(Block, ReloadBlock)) {
+              ClobberPoints.mark(Liveness.InstructionOrder.at(&Block->front()),
+                                 Liveness.InstructionOrder.at(&Block->back()));
+            }
+          }
+        }
+        ReloadPoints.push_back(ReloadBefore);
+      }
+
+      break;
+    }
+  }
+
+  //   def int_aarch64_sme_lazy_save_za_state : DefaultAttrsIntrinsic<[],
+  //   [], [IntrInaccessibleMemOrArgMemOnly]>;
+
+  // def int_aarch64_sme_restore_za_state : DefaultAttrsIntrinsic<[],
+  //   [], [IntrInaccessibleMemOrArgMemOnly]>;
+
+  IRBuilder<> Builder(F->getContext());
+  Module *M = F->getParent();
+
+  Function *LazySaveIntr = Intrinsic::getOrInsertDeclaration(
+      M, Intrinsic::aarch64_sme_lazy_save_za_state);
+  Function *RestoreIntr = Intrinsic::getOrInsertDeclaration(
+      M, Intrinsic::aarch64_sme_restore_za_state);
+
+  for (auto *SavePoint : SavePoints) {
+    Builder.SetInsertPoint(const_cast<Instruction *>(SavePoint));
+    Builder.CreateCall(LazySaveIntr->getFunctionType(), LazySaveIntr);
+  }
+
+  for (auto *Restore : ReloadPoints) {
+    Builder.SetInsertPoint(const_cast<Instruction *>(Restore));
+    Builder.CreateCall(LazySaveIntr->getFunctionType(), RestoreIntr);
+  }
 }
 
 struct SMEABI : public FunctionPass {
