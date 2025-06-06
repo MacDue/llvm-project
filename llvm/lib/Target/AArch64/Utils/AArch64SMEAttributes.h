@@ -179,6 +179,7 @@ public:
   bool requiresSMChange() const;
 
   bool requiresLazySave() const {
+    return false;
     return caller().hasZAState() && callee().hasPrivateZAInterface() &&
            !callee().isSMEABIRoutine();
   }
