@@ -319,7 +319,9 @@ static void insertLazySaveAndRestores(Function *F) {
               ClobberPoints.mark(Liveness.InstructionOrder.at(&Block->front()),
                                  Liveness.InstructionOrder.at(Reload));
             } else if (!MarkedBlocks.contains(Block) && Block != ClobberBlock &&
+                       DT.dominates(ClobberBlock, Block) &&
                        DT.dominates(Block, ReloadBlock)) {
+              // in this case the load value must be livein/out
               MarkedBlocks.insert(Block);
               ClobberPoints.mark(Liveness.InstructionOrder.at(&Block->front()),
                                  Liveness.InstructionOrder.at(&Block->back()));
