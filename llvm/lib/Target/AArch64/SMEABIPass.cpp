@@ -75,6 +75,9 @@ public:
 
     BlockInfo(const BasicBlock *Block, Type *ZaType) : Block(Block) {
 
+      // TODO: Need to pre-process the IR to handle PHI nodes correctly
+      // (as their uses don't make sense for live ranges -- really the
+      // arguments are copies in a predecessor).
       for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
         const Instruction &Inst = *It;
 
