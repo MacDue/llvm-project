@@ -197,10 +197,15 @@ public:
   }
 };
 
-static void preprocessForLazySaves(Function *F) {}
+static void preprocessForLazySaves(Function *F, Type* ZaType) {
+  // TODO: Implement!
+}
 
 static void insertLazySaveAndRestores(Function *F) {
   Type *ZaType = TargetExtType::get(F->getContext(), "aarch64.za.generation");
+
+  preprocessForLazySaves(F, ZaType);
+
   ZALiveness Liveness(F, ZaType);
   LiveRange::Allocator LiveRangeAllocator;
   DenseMap<const Value *, LiveRange> LiveRanges;
@@ -255,10 +260,10 @@ static void insertLazySaveAndRestores(Function *F) {
       if (ClobberRange.overlaps(ClobberPoint) || !Range.overlaps(ClobberPoint))
         continue;
 
-      // Conservatively collect reload candidates and determine a spill point.
+      // Conservatively collect reload candidates and determine a save point.
       // The outer loop (SavePoint != PrevSavePoint) is to handle the case
-      // that clobber point does not dominate all users, so we moved the spill
-      // earlier. Since we mark all live ranges from the spill point to the
+      // that clobber point does not dominate all users, so we moved the save
+      // earlier. Since we mark all live ranges from the save point to the
       // reloads as "clobbered" (meaning we won't handle additional clobbers in
       // those ranges), we need to check if there's now any additional users
       // reachable from the SavePoint where we should conservatively place a
@@ -280,7 +285,7 @@ static void insertLazySaveAndRestores(Function *F) {
                                       /*ExclusionSet=*/nullptr, &DT)) {
             continue;
           }
-          // Find a common dominator of all reload points as the spill (save)
+          // Find a common dominator of all reload points as the save (save)
           // point. It dominating all users means that it's safe to mark the
           // paths to the users as "clobbered" (preventing additional
           // saves/reloads).
@@ -295,7 +300,7 @@ static void insertLazySaveAndRestores(Function *F) {
       } while (SavePoint != PrevSavePoint);
       SavePoints.push_back(SavePoint);
 
-      auto *SpillBlock = SavePoint->getParent();
+      auto *SaveBlock = SavePoint->getParent();
       SmallPtrSet<const BasicBlock *, 8> ClobberedBlocks;
       for (auto *Candidate : ReloadCandidates) {
         bool IsDominatedByReload = false;
@@ -317,7 +322,7 @@ static void insertLazySaveAndRestores(Function *F) {
             }
           }
           ClobberPath.push_back(Block);
-          if (Block == SpillBlock)
+          if (Block == SaveBlock)
             break;
           auto *DomNode = DT.getNode(Block);
           if (!DomNode)
@@ -339,7 +344,7 @@ static void insertLazySaveAndRestores(Function *F) {
         unsigned BlockEndIndex = Liveness.InstructionOrder.at(&Block->back());
         unsigned ClobberEndIndex =
             BlockToMinReloadIndex.lookup_or(Block, BlockEndIndex);
-        if (Block == SpillBlock) {
+        if (Block == SaveBlock) {
           ClobberRange.mark(SaveIndex, ClobberEndIndex);
         } else {
           unsigned BlockStartIndex =
