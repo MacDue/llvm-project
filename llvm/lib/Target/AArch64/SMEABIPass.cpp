@@ -20,6 +20,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/IR/Dominators.h"
@@ -38,8 +39,8 @@ using namespace llvm;
 namespace {
 
 struct LiveRange {
-  using RangeSet = llvm::IntervalMap<uint64_t, uint8_t, 16,
-                                     llvm::IntervalMapInfo<unsigned>>;
+  using RangeSet =
+      llvm::IntervalMap<uint64_t, uint8_t, 16, llvm::IntervalMapInfo<unsigned>>;
   using Allocator = RangeSet::Allocator;
   static constexpr uint8_t kValidLiveRange = 0xff;
 
@@ -86,12 +87,12 @@ public:
 
         // Collect uses of ZA.
         if (!isa<PHINode>(Inst)) {
-        for (size_t I = 0, N = Inst.getNumOperands(); I < N; ++I) {
-          auto *Op = Inst.getOperand(I);
-          if (Op->getType() != ZaType)
-            continue;
-          ZaUseVals.insert(Op);
-        }
+          for (size_t I = 0, N = Inst.getNumOperands(); I < N; ++I) {
+            auto *Op = Inst.getOperand(I);
+            if (Op->getType() != ZaType)
+              continue;
+            ZaUseVals.insert(Op);
+          }
         }
 
         if (Inst.getType() != ZaType)
@@ -199,12 +200,8 @@ public:
 static void insertLazySaveAndRestores(Function *F) {
   Type *ZaType = TargetExtType::get(F->getContext(), "aarch64.za.generation");
   ZALiveness Liveness(F, ZaType);
-  DenseMap<const Value *, LiveRange> LiveRanges;
   LiveRange::Allocator LiveRangeAllocator;
-
-  LiveRange ClobberPoints(LiveRangeAllocator);
-
-  SmallVector<const IntrinsicInst *> Clobbers;
+  DenseMap<const Value *, LiveRange> LiveRanges;
 
   auto defineOrUpdateValueLiveRange = [&](const Value *V,
                                           const Instruction *FirstUseOrDef,
@@ -219,32 +216,118 @@ static void insertLazySaveAndRestores(Function *F) {
     LiveRange.mark(Start + (Def ? 1 : 0), End);
   };
 
+  // Compute live ranges for ZA state and collect clobbers.
+  SmallVector<const IntrinsicInst *> Clobbers;
   for (auto It = F->begin(), E = F->end(); It != E; ++It) {
     const BasicBlock *Block = &*It;
-
     auto &Info = Liveness.getBlockLiveness(Block);
-    for (const Value *LiveIn : Info.InZa) {
+    for (const Value *LiveIn : Info.InZa)
       defineOrUpdateValueLiveRange(LiveIn, &Block->front(), Info);
-    }
 
     for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
       const Instruction *Inst = &*It;
-
       if (auto *Intr = dyn_cast<IntrinsicInst>(Inst)) {
-        if (Intr->getIntrinsicID() == Intrinsic::aarch64_sme_clobber_za_state) {
+        if (Intr->getIntrinsicID() == Intrinsic::aarch64_sme_clobber_za_state)
           Clobbers.push_back(Intr);
-        }
       }
-
       if (Inst->getType() != ZaType)
         continue;
-
       const Value *Def = cast<Value>(Inst);
       defineOrUpdateValueLiveRange(Def, Inst, Info, true);
     }
   }
 
+  DominatorTree DT(*F);
+  SmallVector<const Instruction *> SavePoints;
+  SmallVector<const Instruction *> ReloadPoints;
+  LiveRange ClobberPoints(LiveRangeAllocator);
+  for (auto &[V, Range] : LiveRanges) {
+    for (auto *Clobber : Clobbers) {
+      unsigned ClobberPoint = Liveness.InstructionOrder.at(Clobber);
+      if (ClobberPoints.overlaps(ClobberPoint) || !Range.overlaps(ClobberPoint))
+        continue;
+
+      Instruction *SpillPoint = const_cast<IntrinsicInst *>(Clobber);
+      DenseMap<const BasicBlock *, unsigned> BlockToMinReloadIndex;
+      SmallPtrSet<const Instruction *, 8> ReloadCandidates;
+      for (auto *User : V->users()) {
+        if (isa<PHINode>(User))
+          continue;
+        if (!isPotentiallyReachable(SpillPoint, cast<Instruction>(User),
+                                    nullptr, &DT))
+          continue;
+        // Find a common dominator of all reload points as the spill (save)
+        // point. It dominating all users means that it's safe to mark the paths
+        // to the users as "clobbered" (preventing additional saves/reloads).
+        auto *Inst = const_cast<Instruction *>(cast<Instruction>(User));
+        SpillPoint = DT.findNearestCommonDominator(SpillPoint, Inst);
+        unsigned ReloadIndex = Liveness.InstructionOrder.at(Inst);
+        auto [It, Inserted] = BlockToMinReloadIndex.insert(
+            std::make_pair(Inst->getParent(), ReloadIndex));
+        if (!Inserted)
+          It->second = std::min(It->second, ReloadIndex);
+        ReloadCandidates.insert(Inst);
+      }
+      SavePoints.push_back(SpillPoint);
+
+      auto *SpillBlock = SpillPoint->getParent();
+      SmallPtrSet<const BasicBlock *, 8> ClobberedBlocks;
+      for (auto *Candidate : ReloadCandidates) {
+        bool IsDominatedByReload = false;
+        SmallVector<const BasicBlock *> ClobberPath;
+        const BasicBlock *CandidateBlock = Candidate->getParent();
+        const BasicBlock *Block = CandidateBlock;
+        unsigned ReloadIndex = Liveness.InstructionOrder.at(Candidate);
+        while (true) {
+          // Check for any other reloads that might dominate this reload. If
+          // this reload is dominated by another, we can ignore this candidate
+          // (and not clobber its second of the live range). If another clobber
+          // exists before this reload point an additional save/restore will
+          // still be inserted.
+          auto It = BlockToMinReloadIndex.find(Block);
+          if (It != BlockToMinReloadIndex.end()) {
+            if (CandidateBlock != Block || ReloadIndex > It->second) {
+              IsDominatedByReload = true;
+              break;
+            }
+          }
+          ClobberPath.push_back(Block);
+          if (Block == SpillBlock)
+            break;
+          auto *DomNode = DT.getNode(Block);
+          if (!DomNode)
+            break;
+          auto *IDomBlock = DomNode->getIDom()->getBlock();
+          Block = IDomBlock;
+        }
+        if (!IsDominatedByReload) {
+          ReloadPoints.push_back(Candidate);
+          ClobberedBlocks.insert_range(ClobberPath);
+        }
+      }
+
+      // Mark the ranges of ZA that are 'clobbered'. Any additional clobbers in
+      // in these ranges will not incur additional save/reloads.
+      unsigned SpillIndex = Liveness.InstructionOrder.at(SpillPoint);
+      for (auto *Block : ClobberedBlocks) {
+        unsigned BlockEndIndex = Liveness.InstructionOrder.at(&Block->back());
+        unsigned ClobberEndIndex =
+            BlockToMinReloadIndex.lookup_or(Block, BlockEndIndex);
+        if (Block == SpillBlock) {
+          ClobberPoints.mark(SpillIndex, ClobberEndIndex);
+        } else {
+          unsigned BlockStartIndex =
+              Liveness.InstructionOrder.at(&Block->front());
+          ClobberPoints.mark(BlockStartIndex, ClobberEndIndex);
+        }
+      }
+    }
+  }
+
+#ifndef NDEBUG
   // Debug print.
+  llvm::dbgs() << "========== ZA liveness and clobers:\n";
+  LiveRanges.try_emplace(nullptr, std::move(ClobberPoints));
   unsigned BlockIdx = 0;
   for (auto It = F->begin(), E = F->end(); It != E; ++It) {
     const BasicBlock *Block = &*It;
@@ -253,7 +336,15 @@ static void insertLazySaveAndRestores(Function *F) {
       const Instruction *Inst = &*It;
       unsigned Index = Liveness.InstructionOrder.at(Inst);
       for (auto &[V, Range] : LiveRanges) {
-        char liveness = Range.overlaps(Index) ? '|' : ' ';
+        char liveness = [Index, V = V, &Range = Range] {
+          bool InRange = Range.overlaps(Index);
+          // ZA value:
+          if (V)
+            return InRange ? '|' : ' ';
+          // ZA clobber:
+          return InRange ? 'x' : ' ';
+        }();
+
         llvm::errs() << liveness;
       }
       llvm::errs() << ' ';
@@ -261,99 +352,7 @@ static void insertLazySaveAndRestores(Function *F) {
     }
     llvm::errs() << "==========\n";
   }
-
-  DominatorTree DT(*F);
-  SmallVector<const Instruction *> SavePoints;
-  SmallVector<const Instruction *> ReloadPoints;
-
-  for (auto &[V, Range] : LiveRanges) {
-    V->dump();
-    for (auto *Clobber : Clobbers) {
-      unsigned ClobberPoint = Liveness.InstructionOrder.at(Clobber);
-
-      if (ClobberPoints.overlaps(ClobberPoint) || !Range.overlaps(ClobberPoint))
-        continue;
-
-      SmallVector<const User *> Users(V->users());
-
-      Instruction *SpillPoint = const_cast<IntrinsicInst *>(Clobber);
-
-      SmallVector<const User *> ReloadCands;
-      for (auto *User : V->users()) {
-        if (isa<PHINode>(User))
-          continue;
-        if (!isPotentiallyReachable(SpillPoint, cast<Instruction>(User),
-                                    nullptr, &DT))
-          continue;
-        // Note: Think it's safe to only spill at the clober
-        // SpillPoint = DT.findNearestCommonDominator(
-        //     SpillPoint, const_cast<Instruction *>(cast<Instruction>(User)));
-        ReloadCands.push_back(User);
-      }
-      SavePoints.push_back(SpillPoint);
-
-      SmallPtrSet<const Instruction *, 8> Reloads;
-      for (auto *Cand : ReloadCands) {
-        bool ReloadHere = true;
-
-        // FIXME: Ugh! O(n2)
-        for (auto *Other : ReloadCands) {
-          if (Other == Cand)
-            continue;
-          if (DT.dominates(cast<Value>(Other), cast<Instruction>(Cand))) {
-            ReloadHere = false;
-            break;
-          }
-        }
-        if (!ReloadHere)
-          continue;
-        // ClobberPoints.mark(ClobberPoint);
-
-        auto *ReloadBefore = cast<Instruction>(Cand);
-        ReloadPoints.push_back(ReloadBefore);
-        Reloads.insert(ReloadBefore);
-      }
-
-      SmallPtrSet<const BasicBlock *, 8> MarkedBlocks;
-      bool MCB = false;
-      for (auto *Reload : Reloads) {
-        // TODO: do properly!!!
-        auto *ReloadBlock = Reload->getParent();
-        auto *ClobberBlock = Clobber->getParent();
-        if (ReloadBlock != ClobberBlock) {
-          if (!MCB) {
-            ClobberPoints.mark(ClobberPoint, Liveness.InstructionOrder.at(
-                                                 &ClobberBlock->back()));
-            MCB = true;
-          }
-          for (auto &[Block, Info] : Liveness.BlockInfoMap) {
-            if (Block == ReloadBlock) {
-              ClobberPoints.mark(Liveness.InstructionOrder.at(&Block->front()),
-                                 Liveness.InstructionOrder.at(Reload));
-            } else if (!MarkedBlocks.contains(Block) && Block != ClobberBlock &&
-                       DT.dominates(ClobberBlock, Block) &&
-                       DT.dominates(Block, ReloadBlock)) {
-              // in this case the load value must be livein/out
-              MarkedBlocks.insert(Block);
-              ClobberPoints.mark(Liveness.InstructionOrder.at(&Block->front()),
-                                 Liveness.InstructionOrder.at(&Block->back()));
-            }
-          }
-        } else {
-          ClobberPoints.mark(ClobberPoint,
-                             Liveness.InstructionOrder.at(Reload));
-        }
-      }
-
-      break;
-    }
-  }
-
-  //   def int_aarch64_sme_lazy_save_za_state : DefaultAttrsIntrinsic<[],
-  //   [], [IntrInaccessibleMemOrArgMemOnly]>;
-
-  // def int_aarch64_sme_restore_za_state : DefaultAttrsIntrinsic<[],
-  //   [], [IntrInaccessibleMemOrArgMemOnly]>;
+#endif
 
   IRBuilder<> Builder(F->getContext());
   Module *M = F->getParent();
