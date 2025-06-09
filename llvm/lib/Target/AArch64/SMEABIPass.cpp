@@ -256,27 +256,27 @@ static void insertLazySaveAndRestores(Function *F) {
         continue;
 
       // Conservatively collect reload candidates and determine a spill point.
-      // The outer loop (SpillPoint != PrevSpillPoint) is to handle the case
+      // The outer loop (SavePoint != PrevSavePoint) is to handle the case
       // that clobber point does not dominate all users, so we moved the spill
       // earlier. Since we mark all live ranges from the spill point to the
       // reloads as "clobbered" (meaning we won't handle additional clobbers in
       // those ranges), we need to check if there's now any additional users
-      // reachable from the SpillPoint where we should conservatively place a
+      // reachable from the SavePoint where we should conservatively place a
       // reload. Note: These additional conservative reloads may not be needed
       // (but it's a little simpler than determining if another clobber requires
       // them -- TODO: improve this!).
-      Instruction *PrevSpillPoint;
-      Instruction *SpillPoint = const_cast<IntrinsicInst *>(Clobber);
+      Instruction *PrevSavePoint;
+      Instruction *SavePoint = const_cast<IntrinsicInst *>(Clobber);
       DenseMap<const BasicBlock *, unsigned> BlockToMinReloadIndex;
       SmallPtrSet<const Instruction *, 8> ReloadCandidates;
       do {
-        PrevSpillPoint = SpillPoint;
+        PrevSavePoint = SavePoint;
         for (auto *User : V->users()) {
           if (isa<PHINode>(User))
             continue;
           auto *Inst = const_cast<Instruction *>(cast<Instruction>(User));
           if (ReloadCandidates.contains(Inst) ||
-              !isPotentiallyReachable(PrevSpillPoint, Inst,
+              !isPotentiallyReachable(PrevSavePoint, Inst,
                                       /*ExclusionSet=*/nullptr, &DT)) {
             continue;
           }
@@ -284,7 +284,7 @@ static void insertLazySaveAndRestores(Function *F) {
           // point. It dominating all users means that it's safe to mark the
           // paths to the users as "clobbered" (preventing additional
           // saves/reloads).
-          SpillPoint = DT.findNearestCommonDominator(SpillPoint, Inst);
+          SavePoint = DT.findNearestCommonDominator(SavePoint, Inst);
           unsigned ReloadIndex = Liveness.InstructionOrder.at(Inst);
           auto [It, Inserted] = BlockToMinReloadIndex.insert(
               std::make_pair(Inst->getParent(), ReloadIndex));
@@ -292,10 +292,10 @@ static void insertLazySaveAndRestores(Function *F) {
             It->second = std::min(It->second, ReloadIndex);
           ReloadCandidates.insert(Inst);
         }
-      } while (SpillPoint != PrevSpillPoint);
-      SavePoints.push_back(SpillPoint);
+      } while (SavePoint != PrevSavePoint);
+      SavePoints.push_back(SavePoint);
 
-      auto *SpillBlock = SpillPoint->getParent();
+      auto *SpillBlock = SavePoint->getParent();
       SmallPtrSet<const BasicBlock *, 8> ClobberedBlocks;
       for (auto *Candidate : ReloadCandidates) {
         bool IsDominatedByReload = false;
@@ -334,13 +334,13 @@ static void insertLazySaveAndRestores(Function *F) {
       // Mark the ranges of ZA that are 'clobbered'. Any additional clobbers in
       // in these ranges will not incur additional save/reloads.
       // TODO: Verify we don't need to check for interval overlaps here.
-      unsigned SpillIndex = Liveness.InstructionOrder.at(SpillPoint);
+      unsigned SaveIndex = Liveness.InstructionOrder.at(SavePoint);
       for (auto *Block : ClobberedBlocks) {
         unsigned BlockEndIndex = Liveness.InstructionOrder.at(&Block->back());
         unsigned ClobberEndIndex =
             BlockToMinReloadIndex.lookup_or(Block, BlockEndIndex);
         if (Block == SpillBlock) {
-          ClobberRange.mark(SpillIndex, ClobberEndIndex);
+          ClobberRange.mark(SaveIndex, ClobberEndIndex);
         } else {
           unsigned BlockStartIndex =
               Liveness.InstructionOrder.at(&Block->front());
