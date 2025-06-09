@@ -240,11 +240,11 @@ static void insertLazySaveAndRestores(Function *F) {
   DominatorTree DT(*F);
   SmallVector<const Instruction *> SavePoints;
   SmallVector<const Instruction *> ReloadPoints;
-  LiveRange ClobberPoints(LiveRangeAllocator);
+  LiveRange ClobberRange(LiveRangeAllocator);
   for (auto &[V, Range] : LiveRanges) {
     for (auto *Clobber : Clobbers) {
       unsigned ClobberPoint = Liveness.InstructionOrder.at(Clobber);
-      if (ClobberPoints.overlaps(ClobberPoint) || !Range.overlaps(ClobberPoint))
+      if (ClobberRange.overlaps(ClobberPoint) || !Range.overlaps(ClobberPoint))
         continue;
 
       Instruction *SpillPoint = const_cast<IntrinsicInst *>(Clobber);
@@ -308,17 +308,18 @@ static void insertLazySaveAndRestores(Function *F) {
 
       // Mark the ranges of ZA that are 'clobbered'. Any additional clobbers in
       // in these ranges will not incur additional save/reloads.
+      // TODO: Verify we don't need to check for interval overlaps here.
       unsigned SpillIndex = Liveness.InstructionOrder.at(SpillPoint);
       for (auto *Block : ClobberedBlocks) {
         unsigned BlockEndIndex = Liveness.InstructionOrder.at(&Block->back());
         unsigned ClobberEndIndex =
             BlockToMinReloadIndex.lookup_or(Block, BlockEndIndex);
         if (Block == SpillBlock) {
-          ClobberPoints.mark(SpillIndex, ClobberEndIndex);
+          ClobberRange.mark(SpillIndex, ClobberEndIndex);
         } else {
           unsigned BlockStartIndex =
               Liveness.InstructionOrder.at(&Block->front());
-          ClobberPoints.mark(BlockStartIndex, ClobberEndIndex);
+          ClobberRange.mark(BlockStartIndex, ClobberEndIndex);
         }
       }
     }
@@ -327,7 +328,7 @@ static void insertLazySaveAndRestores(Function *F) {
 #ifndef NDEBUG
   // Debug print.
   llvm::dbgs() << "========== ZA liveness and clobers:\n";
-  LiveRanges.try_emplace(nullptr, std::move(ClobberPoints));
+  LiveRanges.try_emplace(nullptr, std::move(ClobberRange));
   unsigned BlockIdx = 0;
   for (auto It = F->begin(), E = F->end(); It != E; ++It) {
     const BasicBlock *Block = &*It;
