@@ -39,7 +39,7 @@ namespace {
 
 struct LiveRange {
   using RangeSet = llvm::IntervalMap<uint64_t, uint8_t, 16,
-                                     llvm::IntervalMapHalfOpenInfo<unsigned>>;
+                                     llvm::IntervalMapInfo<unsigned>>;
   using Allocator = RangeSet::Allocator;
   static constexpr uint8_t kValidLiveRange = 0xff;
 
@@ -85,11 +85,13 @@ public:
         const Instruction &Inst = *It;
 
         // Collect uses of ZA.
+        if (!isa<PHINode>(Inst)) {
         for (size_t I = 0, N = Inst.getNumOperands(); I < N; ++I) {
           auto *Op = Inst.getOperand(I);
           if (Op->getType() != ZaType)
             continue;
           ZaUseVals.insert(Op);
+        }
         }
 
         if (Inst.getType() != ZaType)
@@ -101,6 +103,8 @@ public:
 
         // Collect out values for the current block.
         for (auto *User : ZaDef->users()) {
+          if (isa<PHINode>(User))
+            continue;
           auto UserInst = cast<Instruction>(User);
           if (UserInst->getParent() != Block)
             OutZa.insert(ZaDef);
@@ -180,6 +184,8 @@ public:
 
     const Instruction *End = Start;
     for (auto User : V->users()) {
+      if (isa<PHINode>(User))
+        continue;
       auto &Inst = cast<Instruction>(*User);
       if (Inst.getParent() == Info.Block &&
           InstructionOrder.at(End) < InstructionOrder.at(&Inst))
@@ -261,6 +267,7 @@ static void insertLazySaveAndRestores(Function *F) {
   SmallVector<const Instruction *> ReloadPoints;
 
   for (auto &[V, Range] : LiveRanges) {
+    V->dump();
     for (auto *Clobber : Clobbers) {
       unsigned ClobberPoint = Liveness.InstructionOrder.at(Clobber);
 
@@ -273,6 +280,8 @@ static void insertLazySaveAndRestores(Function *F) {
 
       SmallVector<const User *> ReloadCands;
       for (auto *User : V->users()) {
+        if (isa<PHINode>(User))
+          continue;
         if (!isPotentiallyReachable(SpillPoint, cast<Instruction>(User),
                                     nullptr, &DT))
           continue;
