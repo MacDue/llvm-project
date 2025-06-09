@@ -241,35 +241,58 @@ static void insertLazySaveAndRestores(Function *F) {
 
   DominatorTree DT(*F);
   SmallVector<const Instruction *> SavePoints;
-  SmallVector<const Instruction *> ReloadPoints;
+  SmallVector<const Instruction *, 8> ReloadPoints;
   LiveRange ClobberRange(LiveRangeAllocator);
+
+  // Sort clobbers by dominance.
+  sort(Clobbers, [&](auto *A, auto *B) {
+    return Liveness.InstructionOrder.at(A) < Liveness.InstructionOrder.at(B);
+  });
+
   for (auto &[V, Range] : LiveRanges) {
     for (auto *Clobber : Clobbers) {
       unsigned ClobberPoint = Liveness.InstructionOrder.at(Clobber);
       if (ClobberRange.overlaps(ClobberPoint) || !Range.overlaps(ClobberPoint))
         continue;
 
+      // Conservatively collect reload candidates and determine a spill point.
+      // The outer loop (SpillPoint != PrevSpillPoint) is to handle the case
+      // that clobber point does not dominate all users, so we moved the spill
+      // earlier. Since we mark all live ranges from the spill point to the
+      // reloads as "clobbered" (meaning we won't handle additional clobbers in
+      // those ranges), we need to check if there's now any additional users
+      // reachable from the SpillPoint where we should conservatively place a
+      // reload. Note: These additional conservative reloads may not be needed
+      // (but it's a little simpler than determining if another clobber requires
+      // them -- TODO: improve this!).
+      Instruction *PrevSpillPoint;
       Instruction *SpillPoint = const_cast<IntrinsicInst *>(Clobber);
       DenseMap<const BasicBlock *, unsigned> BlockToMinReloadIndex;
       SmallPtrSet<const Instruction *, 8> ReloadCandidates;
-      for (auto *User : V->users()) {
-        if (isa<PHINode>(User))
-          continue;
-        if (!isPotentiallyReachable(SpillPoint, cast<Instruction>(User),
-                                    /*ExclusionSet=*/nullptr, &DT))
-          continue;
-        // Find a common dominator of all reload points as the spill (save)
-        // point. It dominating all users means that it's safe to mark the paths
-        // to the users as "clobbered" (preventing additional saves/reloads).
-        auto *Inst = const_cast<Instruction *>(cast<Instruction>(User));
-        SpillPoint = DT.findNearestCommonDominator(SpillPoint, Inst);
-        unsigned ReloadIndex = Liveness.InstructionOrder.at(Inst);
-        auto [It, Inserted] = BlockToMinReloadIndex.insert(
-            std::make_pair(Inst->getParent(), ReloadIndex));
-        if (!Inserted)
-          It->second = std::min(It->second, ReloadIndex);
-        ReloadCandidates.insert(Inst);
-      }
+      do {
+        PrevSpillPoint = SpillPoint;
+        for (auto *User : V->users()) {
+          if (isa<PHINode>(User))
+            continue;
+          auto *Inst = const_cast<Instruction *>(cast<Instruction>(User));
+          if (ReloadCandidates.contains(Inst) ||
+              !isPotentiallyReachable(PrevSpillPoint, Inst,
+                                      /*ExclusionSet=*/nullptr, &DT)) {
+            continue;
+          }
+          // Find a common dominator of all reload points as the spill (save)
+          // point. It dominating all users means that it's safe to mark the
+          // paths to the users as "clobbered" (preventing additional
+          // saves/reloads).
+          SpillPoint = DT.findNearestCommonDominator(SpillPoint, Inst);
+          unsigned ReloadIndex = Liveness.InstructionOrder.at(Inst);
+          auto [It, Inserted] = BlockToMinReloadIndex.insert(
+              std::make_pair(Inst->getParent(), ReloadIndex));
+          if (!Inserted)
+            It->second = std::min(It->second, ReloadIndex);
+          ReloadCandidates.insert(Inst);
+        }
+      } while (SpillPoint != PrevSpillPoint);
       SavePoints.push_back(SpillPoint);
 
       auto *SpillBlock = SpillPoint->getParent();
