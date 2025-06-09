@@ -197,6 +197,8 @@ public:
   }
 };
 
+static void preprocessForLazySaves(Function *F) {}
+
 static void insertLazySaveAndRestores(Function *F) {
   Type *ZaType = TargetExtType::get(F->getContext(), "aarch64.za.generation");
   ZALiveness Liveness(F, ZaType);
@@ -254,7 +256,7 @@ static void insertLazySaveAndRestores(Function *F) {
         if (isa<PHINode>(User))
           continue;
         if (!isPotentiallyReachable(SpillPoint, cast<Instruction>(User),
-                                    nullptr, &DT))
+                                    /*ExclusionSet=*/nullptr, &DT))
           continue;
         // Find a common dominator of all reload points as the spill (save)
         // point. It dominating all users means that it's safe to mark the paths
@@ -325,35 +327,35 @@ static void insertLazySaveAndRestores(Function *F) {
     }
   }
 
-#ifndef NDEBUG
-  // Debug print.
-  llvm::dbgs() << "========== ZA liveness and clobers:\n";
-  LiveRanges.try_emplace(nullptr, std::move(ClobberRange));
-  unsigned BlockIdx = 0;
-  for (auto It = F->begin(), E = F->end(); It != E; ++It) {
-    const BasicBlock *Block = &*It;
-    llvm::errs() << "^bb" << BlockIdx++ << ":\n";
-    for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
-      const Instruction *Inst = &*It;
-      unsigned Index = Liveness.InstructionOrder.at(Inst);
-      for (auto &[V, Range] : LiveRanges) {
-        char liveness = [Index, V = V, &Range = Range] {
-          bool InRange = Range.overlaps(Index);
-          // ZA value:
-          if (V)
-            return InRange ? '|' : ' ';
-          // ZA clobber:
-          return InRange ? 'x' : ' ';
-        }();
-
-        llvm::errs() << liveness;
+  LLVM_DEBUG({
+    dbgs() << "========== @" << F->getName() << ": ZA Liveness/Clobbers\n"
+           << "Key:\n"
+           << "| - Live ZA value\n"
+           << "x - Clobbered ZA value\n\n";
+    LiveRanges.try_emplace(nullptr, std::move(ClobberRange));
+    for (auto It = F->begin(), E = F->end(); It != E; ++It) {
+      const BasicBlock *Block = &*It;
+      dbgs() << Block->getNameOrAsOperand() << ":\n";
+      for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
+        const Instruction *Inst = &*It;
+        unsigned Index = Liveness.InstructionOrder.at(Inst);
+        for (auto &[V, Range] : LiveRanges) {
+          char Marker = [Index, V = V, &Range = Range] {
+            bool InRange = Range.overlaps(Index);
+            // ZA value:
+            if (V)
+              return InRange ? '|' : ' ';
+            // ZA clobber:
+            return InRange ? 'x' : ' ';
+          }();
+          dbgs() << Marker;
+        }
+        dbgs() << ' ';
+        Inst->dump();
       }
-      llvm::errs() << ' ';
-      Inst->dump();
+      dbgs() << "==========\n";
     }
-    llvm::errs() << "==========\n";
-  }
-#endif
+  });
 
   IRBuilder<> Builder(F->getContext());
   Module *M = F->getParent();
