@@ -398,8 +398,9 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
             break;
           Block = IDom->getBlock();
         }
-        if (!IsDominatedByReload)
-          ReloadPoints.insert(Candidate);
+        if (IsDominatedByReload)
+          continue;
+        ReloadPoints.insert(Candidate);
         if (IsDominatedByClobber)
           ClobberedBlocks.insert_range(ClobberPath);
       }
