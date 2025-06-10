@@ -233,6 +233,7 @@ static void preprocessForLazySaves(Module *M, Function *F, Type *ZaType,
 
 static bool insertLazySaveAndRestores(Module *M, Function *F,
                                       IRBuilder<> &Builder) {
+  // TODO: Exit early if there are no clobbers.
   Type *ZaType = TargetExtType::get(F->getContext(), "aarch64.za.generation");
 
   // We need to pre-process phis to correctly compute their liveness, since a
@@ -243,7 +244,6 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
   TypeLiveness Liveness(F, ZaType);
   LiveRange::Allocator LiveRangeAllocator;
   DenseMap<const Value *, LiveRange> LiveRanges;
-
   auto defineOrUpdateValueLiveRange = [&](const Value *V,
                                           const Instruction *FirstUseOrDef,
                                           TypeLiveness::BlockInfo const &Info,
@@ -448,6 +448,26 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
   for (auto *Restore : ReloadPoints) {
     Builder.SetInsertPoint(const_cast<Instruction *>(Restore));
     Builder.CreateCall(LazySaveIntr->getFunctionType(), RestoreIntr);
+  }
+
+  // Remove ZA liveness annotations from the function.
+  {
+    auto *UndefZA = UndefValue::get(ZaType);
+    SmallPtrSet<Instruction *, 8> ToErase;
+    for (auto &[V, _] : LiveRanges) {
+      if (!V || isa<Constant>(V))
+        continue;
+      Value *ZaVal = const_cast<Value *>(V);
+      ToErase.insert(cast<Instruction>(ZaVal));
+      for (Use &U : make_early_inc_range(ZaVal->uses())) {
+        U.set(UndefZA);
+        ToErase.insert(cast<Instruction>(U.getUser()));
+      }
+    }
+    for (auto *Inst : ToErase)
+      Inst->eraseFromParent();
+    for (auto *Clobber : Clobbers)
+      const_cast<IntrinsicInst *>(Clobber)->eraseFromParent();
   }
 
   return true;
