@@ -23,6 +23,7 @@
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/CFG.h"
+#include "llvm/Analysis/DomTreeUpdater.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -31,6 +32,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
 using namespace llvm;
 
@@ -199,8 +201,8 @@ public:
 // to use the ssa.copy (and we then ignore phi uses for live range calculation).
 // After this pass, the "za.phi" blocks will either be empty (and optimize
 // away), or contain a ZA restore.
-static void preprocessForLazySaves(Module *M, Function *F, Type *ZaType,
-                                   IRBuilder<> &Builder) {
+static void preprocessForLazySaves(DominatorTree &DT, Module *M, Function *F,
+                                   Type *ZaType, IRBuilder<> &Builder) {
   SmallVector<PHINode *> Worklist;
   for (auto It = F->begin(), E = F->end(); It != E; ++It) {
     BasicBlock *Block = &*It;
@@ -214,32 +216,60 @@ static void preprocessForLazySaves(Module *M, Function *F, Type *ZaType,
   }
   Function *SSACopy =
       Intrinsic::getOrInsertDeclaration(M, Intrinsic::ssa_copy, ZaType);
+  DomTreeUpdater DTU(&DT, DomTreeUpdater::UpdateStrategy::Eager);
   for (PHINode *Phi : Worklist) {
     auto *PhiBlock = Phi->getParent();
     unsigned OpIdx = 0;
-    for (auto [Pred, V] : zip_equal(Phi->blocks(), Phi->incoming_values())) {
-      auto *CopyBB = BasicBlock::Create(F->getContext(), "za.phi", F, PhiBlock);
-      Builder.SetInsertPoint(CopyBB);
+    for (auto [Predecessor, V] :
+         zip_equal(Phi->blocks(), Phi->incoming_values())) {
+      auto *PredBlock = Predecessor;
+      // Update IR:
+      auto *CopyBlock =
+          BasicBlock::Create(F->getContext(), "za.phi", F, PhiBlock);
+      Builder.SetInsertPoint(CopyBlock);
       auto *Copy =
           Builder.CreateCall(SSACopy->getFunctionType(), SSACopy, V.get());
       Builder.CreateBr(PhiBlock);
-      Pred->getTerminator()->replaceSuccessorWith(PhiBlock, CopyBB);
-      PhiBlock->replacePhiUsesWith(Pred, CopyBB);
+      PredBlock->getTerminator()->replaceSuccessorWith(PhiBlock, CopyBlock);
+      PhiBlock->replacePhiUsesWith(PredBlock, CopyBlock);
       Phi->setOperand(OpIdx, Copy);
+      // Update dominator tree:
+      DTU.applyUpdates({{DominatorTree::Delete, PredBlock, PhiBlock},
+                        {DominatorTree::Insert, PredBlock, CopyBlock},
+                        {DominatorTree::Insert, CopyBlock, PhiBlock}});
       ++OpIdx;
     }
   }
+  assert(DT.verify());
 }
 
 static bool insertLazySaveAndRestores(Module *M, Function *F,
                                       IRBuilder<> &Builder) {
   // TODO: Exit early if there are no clobbers.
   Type *ZaType = TargetExtType::get(F->getContext(), "aarch64.za.generation");
+  // TODO: Look up existing dominator tree?
+  DominatorTree DT(*F);
+
+  {
+    // Eliminate any allocas of ZA annotations at this point. For -O1 and above
+    // this will have already been done by now, but we still need to do this for
+    // the -O0 case.
+    SmallVector<AllocaInst *> ZaAllocas;
+    auto &EntryBlock = F->getEntryBlock();
+    for (BasicBlock::iterator I = EntryBlock.begin(), E = EntryBlock.end();
+         I != E; ++I) {
+      if (AllocaInst *AI = dyn_cast<AllocaInst>(I))
+        ZaAllocas.push_back(AI);
+    }
+
+    if (!ZaAllocas.empty())
+      PromoteMemToReg(ZaAllocas, DT);
+  }
 
   // We need to pre-process phis to correctly compute their liveness, since a
   // phi is really a copy in a predecessor, its uses cannot be considered
   // live-in.
-  preprocessForLazySaves(M, F, ZaType, Builder);
+  preprocessForLazySaves(DT, M, F, ZaType, Builder);
 
   TypeLiveness Liveness(F, ZaType);
   LiveRange::Allocator LiveRangeAllocator;
@@ -290,7 +320,6 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
   }
 #endif
 
-  DominatorTree DT(*F);
   SmallVector<const Instruction *> SavePoints;
   SmallVector<const Instruction *, 8> ReloadPoints;
   LiveRange ClobberRange(LiveRangeAllocator);
