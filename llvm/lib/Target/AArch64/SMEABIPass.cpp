@@ -385,7 +385,9 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
               break;
             }
           }
-          ClobberPath.push_back(Block);
+          // Record the "clobber path" up to and including the SaveBlock.
+          if (!IsDominatedByClobber)
+            ClobberPath.push_back(Block);
           if (Block == SaveBlock &&
               (SaveBlock != CandidateBlock || SaveIndex < ReloadIndex)) {
             IsDominatedByClobber = true;
