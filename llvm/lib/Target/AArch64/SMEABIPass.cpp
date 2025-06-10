@@ -321,7 +321,7 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
 #endif
 
   SmallVector<const Instruction *> SavePoints;
-  SmallVector<const Instruction *, 8> ReloadPoints;
+  SmallPtrSet<const Instruction *, 8> ReloadPoints;
   LiveRange ClobberRange(LiveRangeAllocator);
 
   // Sort clobbers by dominance.
@@ -335,64 +335,49 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
       if (ClobberRange.overlaps(ClobberPoint) || !Range.overlaps(ClobberPoint))
         continue;
 
-      // Conservatively collect reload candidates and determine a save point.
-      // The outer loop (SavePoint != PrevSavePoint) is to handle the case
-      // that clobber point does not dominate all users, so we moved the save
-      // earlier. Since we mark all live ranges from the save point to the
-      // reloads as "clobbered" (meaning we won't handle additional clobbers in
-      // those ranges), we need to check if there's now any additional users
-      // reachable from the SavePoint where we should conservatively place a
-      // reload. Note: These additional conservative reloads may not be needed
-      // (but it's a little simpler than determining if another clobber requires
-      // them -- TODO: improve this!).
-      Instruction *PrevSavePoint;
       Instruction *SavePoint = const_cast<IntrinsicInst *>(Clobber);
+      auto *SaveBlock = SavePoint->getParent();
       DenseMap<const BasicBlock *, unsigned> BlockToMinReloadIndex;
-      SmallPtrSet<const Instruction *, 8> ReloadCandidates;
-      do {
-        PrevSavePoint = SavePoint;
-        for (auto *User : V->users()) {
-          auto *Inst = const_cast<Instruction *>(cast<Instruction>(User));
-          if (ReloadCandidates.contains(Inst) ||
-              !isPotentiallyReachable(PrevSavePoint, Inst,
-                                      /*ExclusionSet=*/nullptr, &DT)) {
-            continue;
-          }
-          // Phi's only use llvm.ssa.copy's of ZA which are live between the
-          // "za.phi" blocks and the phi. It should not be possible for a
-          // clobber to occur for a phi operand.
-          assert(!isa<PHINode>(Inst) &&
-                 "Did not expect phi's operand to be clobbered");
-
-          // Find a common dominator of all reload points as the save (save)
-          // point. It dominating all users means that it's safe to mark the
-          // paths to the users as "clobbered" (preventing additional
-          // saves/reloads).
-          SavePoint = DT.findNearestCommonDominator(SavePoint, Inst);
-          unsigned ReloadIndex = Liveness.InstructionOrder.at(Inst);
-          auto [It, Inserted] = BlockToMinReloadIndex.insert(
-              std::make_pair(Inst->getParent(), ReloadIndex));
-          if (!Inserted)
-            It->second = std::min(It->second, ReloadIndex);
-          ReloadCandidates.insert(Inst);
+      SmallVector<const Instruction *> ReloadCandidates;
+      unsigned MinDomLevel = DT.getNode(SaveBlock)->getLevel();
+      for (auto *User : V->users()) {
+        auto *Inst = const_cast<Instruction *>(cast<Instruction>(User));
+        if (!isPotentiallyReachable(Clobber, Inst,
+                                    /*ExclusionSet=*/nullptr, &DT)) {
+          continue;
         }
-      } while (SavePoint != PrevSavePoint);
+        // Phi's only use llvm.ssa.copy's of ZA which are live between the
+        // "za.phi" blocks and the phi. It should not be possible for a
+        // clobber to occur for a phi operand.
+        assert(!isa<PHINode>(Inst) &&
+               "Did not expect phi's operand to be clobbered");
+        unsigned ReloadIndex = Liveness.InstructionOrder.at(Inst);
+        auto *ReloadBlock = Inst->getParent();
+        auto [It, Inserted] = BlockToMinReloadIndex.insert(
+            std::make_pair(ReloadBlock, ReloadIndex));
+        if (!Inserted)
+          It->second = std::min(It->second, ReloadIndex);
+        ReloadCandidates.push_back(Inst);
+        MinDomLevel =
+            std::min(MinDomLevel, DT.getNode(ReloadBlock)->getLevel());
+      }
       SavePoints.push_back(SavePoint);
 
-      auto *SaveBlock = SavePoint->getParent();
+      unsigned SaveIndex = Liveness.InstructionOrder.at(SavePoint);
       SmallPtrSet<const BasicBlock *, 8> ClobberedBlocks;
       for (auto *Candidate : ReloadCandidates) {
         bool IsDominatedByReload = false;
+        bool IsDominatedByClobber = false;
         SmallVector<const BasicBlock *> ClobberPath;
         const BasicBlock *CandidateBlock = Candidate->getParent();
         const BasicBlock *Block = CandidateBlock;
         unsigned ReloadIndex = Liveness.InstructionOrder.at(Candidate);
-        while (true) {
+        while (Block) {
           // Check for any other reloads that might dominate this reload. If
           // this reload is dominated by another, we can ignore this candidate
           // (and not clobber its second of the live range). If another clobber
-          // exists before this reload point an additional save/restore will
-          // still be inserted.
+          // exists before/after this reload point an additional save/restore
+          // will still be inserted.
           auto It = BlockToMinReloadIndex.find(Block);
           if (It != BlockToMinReloadIndex.end()) {
             if (CandidateBlock != Block || ReloadIndex > It->second) {
@@ -401,24 +386,25 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
             }
           }
           ClobberPath.push_back(Block);
-          if (Block == SaveBlock)
-            break;
+          if (Block == SaveBlock &&
+              (SaveBlock != CandidateBlock || SaveIndex < ReloadIndex)) {
+            IsDominatedByClobber = true;
+          }
           auto *DomNode = DT.getNode(Block);
-          if (!DomNode)
+          auto *IDom = DomNode->getIDom();
+          if (!IDom || IDom->getLevel() < MinDomLevel)
             break;
-          auto *IDomBlock = DomNode->getIDom()->getBlock();
-          Block = IDomBlock;
+          Block = IDom->getBlock();
         }
-        if (!IsDominatedByReload) {
-          ReloadPoints.push_back(Candidate);
+        if (!IsDominatedByReload)
+          ReloadPoints.insert(Candidate);
+        if (IsDominatedByClobber)
           ClobberedBlocks.insert_range(ClobberPath);
-        }
       }
 
       // Mark the ranges of ZA that are 'clobbered'. Any additional clobbers in
       // in these ranges will not incur additional save/reloads.
       // TODO: Verify we don't need to check for interval overlaps here.
-      unsigned SaveIndex = Liveness.InstructionOrder.at(SavePoint);
       for (auto *Block : ClobberedBlocks) {
         unsigned BlockEndIndex = Liveness.InstructionOrder.at(&Block->back());
         unsigned ClobberEndIndex =
