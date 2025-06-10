@@ -47,6 +47,11 @@ struct LiveRange {
   LiveRange(Allocator &allocator)
       : Ranges(std::make_unique<RangeSet>(allocator)) {}
 
+  void unionWith(LiveRange const &Other) {
+    for (auto it = Other.Ranges->begin(); it != Other.Ranges->end(); ++it)
+      Ranges->insert(it.start(), it.stop(), kValidLiveRange);
+  }
+
   bool overlaps(LiveRange const &Other) const {
     return llvm::IntervalMapOverlaps<RangeSet, RangeSet>(*Ranges, *Other.Ranges)
         .valid();
@@ -57,7 +62,7 @@ struct LiveRange {
   }
 
   void mark(unsigned Start, unsigned End) {
-    if (Start < End)
+    if (Start <= End)
       Ranges->insert(Start, End, kValidLiveRange);
   }
 
@@ -68,15 +73,14 @@ struct LiveRange {
   std::unique_ptr<RangeSet> Ranges;
 };
 
-class ZALiveness {
+class TypeLiveness {
 public:
   struct BlockInfo {
     using ValueSet = SmallPtrSet<const Value *, 8>;
 
     BlockInfo() = default;
 
-    BlockInfo(const BasicBlock *Block, Type *ZaType) : Block(Block) {
-
+    BlockInfo(const BasicBlock *Block, Type *Type) : Block(Block) {
       // TODO: Need to pre-process the IR to handle PHI nodes correctly
       // (as their uses don't make sense for live ranges -- really the
       // arguments are copies/uses in a predecessor).
@@ -85,44 +89,44 @@ public:
       for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
         const Instruction &Inst = *It;
 
-        // Collect uses of ZA.
+        // Collect uses of `Type`.
+        // Note: We ignore phi uses -- these require preprocessing as they are
+        // not dominated by the definition.
         if (!isa<PHINode>(Inst)) {
           for (size_t I = 0, N = Inst.getNumOperands(); I < N; ++I) {
             auto *Op = Inst.getOperand(I);
-            if (Op->getType() != ZaType)
+            if (Op->getType() != Type)
               continue;
-            ZaUseVals.insert(Op);
+            UseVals.insert(Op);
           }
         }
 
-        if (Inst.getType() != ZaType)
+        if (Inst.getType() != Type)
           continue;
 
-        // Collect definitions of ZA.
-        auto *ZaDef = cast<Value>(&Inst);
-        ZaDefVals.insert(ZaDef);
+        // Collect definitions of `Type`.
+        auto *Def = cast<Value>(&Inst);
+        DefVals.insert(Def);
 
         // Collect out values for the current block.
-        for (auto *User : ZaDef->users()) {
-          if (isa<PHINode>(User))
-            continue;
+        for (auto *User : Def->users()) {
           auto UserInst = cast<Instruction>(User);
-          if (UserInst->getParent() != Block)
-            OutZa.insert(ZaDef);
+          if (!isa<PHINode>(UserInst) && UserInst->getParent() != Block)
+            LiveOut.insert(Def);
         }
       }
-      set_subtract(ZaUseVals, ZaDefVals);
+      set_subtract(UseVals, DefVals);
     }
 
     bool updateLiveIn() {
-      ValueSet NewIn = ZaUseVals;
-      set_union(NewIn, OutZa);
-      set_subtract(NewIn, ZaDefVals);
+      ValueSet NewIn = UseVals;
+      set_union(NewIn, LiveOut);
+      set_subtract(NewIn, DefVals);
 
-      if (NewIn.size() == InZa.size())
+      if (NewIn.size() == LiveIn.size())
         return false;
 
-      InZa = std::move(NewIn);
+      LiveIn = std::move(NewIn);
       return true;
     }
 
@@ -130,37 +134,33 @@ public:
     updateLiveOut(const DenseMap<const BasicBlock *, BlockInfo> &BlockInfoMap) {
       for (const BasicBlock *Succ : successors(Block)) {
         const BlockInfo &Info = BlockInfoMap.at(Succ);
-        set_union(OutZa, Info.InZa);
+        set_union(LiveOut, Info.LiveIn);
       }
     }
 
     const BasicBlock *Block{nullptr};
-    ValueSet InZa;
-    ValueSet OutZa;
-    ValueSet ZaDefVals;
-    ValueSet ZaUseVals;
+    ValueSet LiveIn;
+    ValueSet LiveOut;
+    ValueSet DefVals;
+    ValueSet UseVals;
   };
 
+  // A map of basic block to liveness information.
   DenseMap<const BasicBlock *, BlockInfo> BlockInfoMap;
-
-  // Order valid within basic blocks (arbitrary between basic blocks).
+  // An order for instructions based on dominance.
   DenseMap<const Instruction *, unsigned> InstructionOrder;
 
 public:
-  ZALiveness(Function *F, Type *ZaType) {
+  TypeLiveness(Function *F, Type *Type) {
     unsigned NextInstructionId = 0;
     SetVector<const BasicBlock *> Worklist;
     for (auto *Block : depth_first(F)) {
-      auto &Info = BlockInfoMap.try_emplace(Block, Block, ZaType).first->second;
-
-      if (Info.updateLiveIn()) {
+      auto &Info = BlockInfoMap.try_emplace(Block, Block, Type).first->second;
+      if (Info.updateLiveIn())
         Worklist.insert(pred_begin(Block), pred_end(Block));
-      }
-
       for (auto It = Block->begin(), E = Block->end(); It != E; ++It)
         InstructionOrder.try_emplace(&*It, NextInstructionId++);
     }
-
     while (!Worklist.empty()) {
       const BasicBlock *Block = Worklist.pop_back_val();
       BlockInfo &Info = const_cast<BlockInfo &>(BlockInfoMap.at(Block));
@@ -177,42 +177,76 @@ public:
 
   const Instruction *getEndInstruction(const BlockInfo &Info, const Value *V,
                                        const Instruction *Start) {
-    if (Info.OutZa.contains(V))
+    if (Info.LiveOut.contains(V))
       return &Info.Block->back();
-
     if (isa<Constant>(V))
       return Start;
-
     const Instruction *End = Start;
     for (auto User : V->users()) {
-      if (isa<PHINode>(User))
-        continue;
       auto &Inst = cast<Instruction>(*User);
-      if (Inst.getParent() == Info.Block &&
+      if (!isa<PHINode>(Inst) && Inst.getParent() == Info.Block &&
           InstructionOrder.at(End) < InstructionOrder.at(&Inst))
         End = &Inst;
     }
-
     return End;
   }
 };
 
-static void preprocessForLazySaves(Function *F, Type* ZaType) {
-  // TODO: Implement!
+// We cannot compute live ranges of phi uses directly as the operands of phi
+// nodes do not necessarily dominate the phi. Instead, we model ZA phi's by
+// inserting "za.phi" blocks along predecessor edges. These blocks contain a
+// single ssa.copy instruction of the phi's operand -- the phi is then updated
+// to use the ssa.copy (and we then ignore phi uses for live range calculation).
+// After this pass, the "za.phi" blocks will either be empty (and optimize
+// away), or contain a ZA restore.
+static void preprocessForLazySaves(Module *M, Function *F, Type *ZaType,
+                                   IRBuilder<> &Builder) {
+  SmallVector<PHINode *> Worklist;
+  for (auto It = F->begin(), E = F->end(); It != E; ++It) {
+    BasicBlock *Block = &*It;
+    if (Block->phis().empty())
+      continue;
+    for (PHINode &Phi : Block->phis()) {
+      if (Phi.getType() != ZaType)
+        continue;
+      Worklist.push_back(&Phi);
+    }
+  }
+  Function *SSACopy =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::ssa_copy, ZaType);
+  for (PHINode *Phi : Worklist) {
+    auto *PhiBlock = Phi->getParent();
+    unsigned OpIdx = 0;
+    for (auto [Pred, V] : zip_equal(Phi->blocks(), Phi->incoming_values())) {
+      auto *CopyBB = BasicBlock::Create(F->getContext(), "za.phi", F, PhiBlock);
+      Builder.SetInsertPoint(CopyBB);
+      auto *Copy =
+          Builder.CreateCall(SSACopy->getFunctionType(), SSACopy, V.get());
+      Builder.CreateBr(PhiBlock);
+      Pred->getTerminator()->replaceSuccessorWith(PhiBlock, CopyBB);
+      PhiBlock->replacePhiUsesWith(Pred, CopyBB);
+      Phi->setOperand(OpIdx, Copy);
+      ++OpIdx;
+    }
+  }
 }
 
-static void insertLazySaveAndRestores(Function *F) {
+static bool insertLazySaveAndRestores(Module *M, Function *F,
+                                      IRBuilder<> &Builder) {
   Type *ZaType = TargetExtType::get(F->getContext(), "aarch64.za.generation");
 
-  preprocessForLazySaves(F, ZaType);
+  // We need to pre-process phis to correctly compute their liveness, since a
+  // phi is really a copy in a predecessor, its uses cannot be considered
+  // live-in.
+  preprocessForLazySaves(M, F, ZaType, Builder);
 
-  ZALiveness Liveness(F, ZaType);
+  TypeLiveness Liveness(F, ZaType);
   LiveRange::Allocator LiveRangeAllocator;
   DenseMap<const Value *, LiveRange> LiveRanges;
 
   auto defineOrUpdateValueLiveRange = [&](const Value *V,
                                           const Instruction *FirstUseOrDef,
-                                          ZALiveness::BlockInfo const &Info,
+                                          TypeLiveness::BlockInfo const &Info,
                                           bool Def = false) {
     // Find or create a live range for `value`.
     auto [It, _] = LiveRanges.try_emplace(V, LiveRangeAllocator);
@@ -228,7 +262,7 @@ static void insertLazySaveAndRestores(Function *F) {
   for (auto It = F->begin(), E = F->end(); It != E; ++It) {
     const BasicBlock *Block = &*It;
     auto &Info = Liveness.getBlockLiveness(Block);
-    for (const Value *LiveIn : Info.InZa)
+    for (const Value *LiveIn : Info.LiveIn)
       defineOrUpdateValueLiveRange(LiveIn, &Block->front(), Info);
 
     for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
@@ -243,6 +277,18 @@ static void insertLazySaveAndRestores(Function *F) {
       defineOrUpdateValueLiveRange(Def, Inst, Info, true);
     }
   }
+
+#ifndef NDEBUG
+  {
+    LiveRange ZALiveness(LiveRangeAllocator);
+    for (auto &[_, LiveRange] : LiveRanges) {
+      if (ZALiveness.overlaps(LiveRange))
+        report_fatal_error(
+            "Expected at most one live AArch64 SME ZA value at any point!");
+      ZALiveness.unionWith(LiveRange);
+    }
+  }
+#endif
 
   DominatorTree DT(*F);
   SmallVector<const Instruction *> SavePoints;
@@ -277,14 +323,18 @@ static void insertLazySaveAndRestores(Function *F) {
       do {
         PrevSavePoint = SavePoint;
         for (auto *User : V->users()) {
-          if (isa<PHINode>(User))
-            continue;
           auto *Inst = const_cast<Instruction *>(cast<Instruction>(User));
           if (ReloadCandidates.contains(Inst) ||
               !isPotentiallyReachable(PrevSavePoint, Inst,
                                       /*ExclusionSet=*/nullptr, &DT)) {
             continue;
           }
+          // Phi's only use llvm.ssa.copy's of ZA which are live between the
+          // "za.phi" blocks and the phi. It should not be possible for a
+          // clobber to occur for a phi operand.
+          assert(!isa<PHINode>(Inst) &&
+                 "Did not expect phi's operand to be clobbered");
+
           // Find a common dominator of all reload points as the save (save)
           // point. It dominating all users means that it's safe to mark the
           // paths to the users as "clobbered" (preventing additional
@@ -385,9 +435,6 @@ static void insertLazySaveAndRestores(Function *F) {
     }
   });
 
-  IRBuilder<> Builder(F->getContext());
-  Module *M = F->getParent();
-
   Function *LazySaveIntr = Intrinsic::getOrInsertDeclaration(
       M, Intrinsic::aarch64_sme_lazy_save_za_state);
   Function *RestoreIntr = Intrinsic::getOrInsertDeclaration(
@@ -402,6 +449,8 @@ static void insertLazySaveAndRestores(Function *F) {
     Builder.SetInsertPoint(const_cast<Instruction *>(Restore));
     Builder.CreateCall(LazySaveIntr->getFunctionType(), RestoreIntr);
   }
+
+  return true;
 }
 
 struct SMEABI : public FunctionPass {
@@ -549,9 +598,10 @@ bool SMEABI::runOnFunction(Function &F) {
   if (F.isDeclaration() || F.hasFnAttribute("aarch64_expanded_pstate_za"))
     return false;
 
-  insertLazySaveAndRestores(&F);
-
   bool Changed = false;
+
+  Changed |= insertLazySaveAndRestores(M, &F, Builder);
+
   // SMEAttrs FnAttrs(F);
   // if (FnAttrs.isNewZA() || FnAttrs.isNewZT0())
   //   Changed |= updateNewStateFunctions(M, &F, Builder, FnAttrs);
