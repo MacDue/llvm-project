@@ -178,11 +178,13 @@ public:
   /// streaming mode.
   bool requiresSMChange() const;
 
-  bool requiresLazySave() const {
-    return false;
+  bool clobbersZAState() const {
     return caller().hasZAState() && callee().hasPrivateZAInterface() &&
            !callee().isSMEABIRoutine();
   }
+
+  // TODO: Remove.
+  bool requiresLazySave() const { return clobbersZAState(); }
 
   bool requiresPreservingZT0() const {
     return caller().hasZT0State() && !callsite().hasUndefZT0() &&
