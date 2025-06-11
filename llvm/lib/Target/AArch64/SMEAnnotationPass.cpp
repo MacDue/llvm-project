@@ -27,34 +27,26 @@ struct SMEAnnotationContext {
   IRBuilder<> Builder;
   SMEAttrs FnAttrs;
   Type *ZaType = nullptr;
-  Function *GetCurrentZAState = nullptr;
-  Function *MarkUpdateZAState = nullptr;
-  Function *MarkUseZAState = nullptr;
-  Function *ZAClobber= nullptr;
   AllocaInst *ZaAlloca = nullptr;
 
   template <typename... Args>
-  CallInst *CreateIntr(Intrinsic::ID IID, Function *&Intr, Args... CallArgs) {
-    if (!Intr)
-      Intr = Intrinsic::getOrInsertDeclaration(M, IID);
+  CallInst *CreateIntr(Intrinsic::ID IID, Args... CallArgs) {
+    Function *Intr = Intrinsic::getOrInsertDeclaration(M, IID);
     return Builder.CreateCall(Intr->getFunctionType(), Intr,
                               ArrayRef<Value *>{CallArgs...});
   }
 
   CallInst *CreateGetCurrentZAStateIntr() {
-    return CreateIntr(Intrinsic::aarch64_sme_current_za_state,
-                      GetCurrentZAState);
+    return CreateIntr(Intrinsic::aarch64_sme_current_za_state);
   }
   CallInst *CreateMarkUpdateZAStateIntr(Value *PrevZaState) {
-    return CreateIntr(Intrinsic::aarch64_sme_mark_update_za_state,
-                      MarkUpdateZAState, PrevZaState);
+    return CreateIntr(Intrinsic::aarch64_sme_mark_update_za_state, PrevZaState);
   }
   CallInst *CreateMarkUseZAStateIntr(Value *ZaState) {
-    return CreateIntr(Intrinsic::aarch64_sme_mark_use_za_state, MarkUseZAState,
-                      ZaState);
+    return CreateIntr(Intrinsic::aarch64_sme_mark_use_za_state, ZaState);
   }
   CallInst *CreateZAClobberIntr() {
-    return CreateIntr(Intrinsic::aarch64_sme_clobber_za_state, ZAClobber);
+    return CreateIntr(Intrinsic::aarch64_sme_clobber_za_state);
   }
 };
 
