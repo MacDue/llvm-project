@@ -637,12 +637,15 @@ bool SMEABI::runOnFunction(Function &F) {
     return false;
 
   bool Changed = false;
+  SMEAttrs FnAttrs(F);
 
-  Changed |= insertLazySaveAndRestores(M, &F, Builder);
+  if (FnAttrs.hasZAState())
+    Changed |= insertLazySaveAndRestores(M, &F, Builder);
 
-  // SMEAttrs FnAttrs(F);
-  // if (FnAttrs.isNewZA() || FnAttrs.isNewZT0())
-  //   Changed |= updateNewStateFunctions(M, &F, Builder, FnAttrs);
+  if (FnAttrs.isNewZA() || FnAttrs.isNewZT0()) {
+    // TODO: Use liveness information in updateNewStateFunctions.
+    Changed |= updateNewStateFunctions(M, &F, Builder, FnAttrs);
+  }
 
   return Changed;
 }
