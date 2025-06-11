@@ -567,7 +567,11 @@ public:
 } // end anonymous namespace
 
 void AArch64TargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
-
+  llvm::dbgs() << "Hre?\n";
+  PB.registerPipelineStartEPCallback(
+      [](ModulePassManager &PM, OptimizationLevel Level) {
+        PM.addPass(createModuleToFunctionPassAdaptor(SMEAnnotationPass()));
+      });
   PB.registerLateLoopOptimizationsEPCallback(
       [=](LoopPassManager &LPM, OptimizationLevel Level) {
         LPM.addPass(LoopIdiomVectorizePass());
