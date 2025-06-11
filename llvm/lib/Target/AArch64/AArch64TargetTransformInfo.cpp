@@ -280,7 +280,7 @@ bool AArch64TTIImpl::areInlineCompatible(const Function *Caller,
   if (CallAttrs.callee().isNewZA() || CallAttrs.callee().isNewZT0())
     return false;
 
-  if (CallAttrs.requiresLazySave() || CallAttrs.requiresSMChange() ||
+  if (CallAttrs.clobbersZAState() || CallAttrs.requiresSMChange() ||
       CallAttrs.requiresPreservingZT0() ||
       CallAttrs.requiresPreservingAllZAState()) {
     if (hasPossibleIncompatibleOps(Callee))

@@ -455,6 +455,10 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
 
   Function *LazySaveIntr = Intrinsic::getOrInsertDeclaration(
       M, Intrinsic::aarch64_sme_lazy_save_za_state);
+
+  Function *EnableZA =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_za_enable);
+
   Function *RestoreIntr = Intrinsic::getOrInsertDeclaration(
       M, Intrinsic::aarch64_sme_restore_za_state);
 
@@ -465,7 +469,8 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
 
   for (auto *Restore : ReloadPoints) {
     Builder.SetInsertPoint(const_cast<Instruction *>(Restore));
-    Builder.CreateCall(LazySaveIntr->getFunctionType(), RestoreIntr);
+    Builder.CreateCall(EnableZA->getFunctionType(), EnableZA);
+    Builder.CreateCall(RestoreIntr->getFunctionType(), RestoreIntr);
   }
 
   // Remove ZA liveness annotations from the function.
@@ -624,7 +629,6 @@ bool SMEABI::updateNewStateFunctions(Module *M, Function *F,
     }
   }
 
-  F->addFnAttr("aarch64_expanded_pstate_za");
   return true;
 }
 
@@ -635,6 +639,8 @@ bool SMEABI::runOnFunction(Function &F) {
 
   if (F.isDeclaration() || F.hasFnAttribute("aarch64_expanded_pstate_za"))
     return false;
+
+  F.addFnAttr("aarch64_expanded_pstate_za");
 
   bool Changed = false;
   SMEAttrs FnAttrs(F);

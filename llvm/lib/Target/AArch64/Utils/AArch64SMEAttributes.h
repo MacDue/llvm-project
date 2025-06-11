@@ -183,9 +183,6 @@ public:
            !callee().isSMEABIRoutine();
   }
 
-  // TODO: Remove.
-  bool requiresLazySave() const { return clobbersZAState(); }
-
   bool requiresPreservingZT0() const {
     return caller().hasZT0State() && !callsite().hasUndefZT0() &&
            !callee().sharesZT0() && !callee().hasAgnosticZAInterface();
@@ -197,7 +194,7 @@ public:
   }
 
   bool requiresEnablingZAAfterCall() const {
-    return requiresLazySave() || requiresDisablingZABeforeCall();
+    return requiresDisablingZABeforeCall();
   }
 
   bool requiresPreservingAllZAState() const {
