@@ -75,16 +75,6 @@ static void SetupZAEntryAndExits(SMEAnnotationContext &Ctx) {
   }
 }
 
-static bool isZAClobber(Instruction *Inst) {
-  if (isa<IntrinsicInst>(Inst))
-    return false;
-  auto *CallInst = dyn_cast<CallBase>(Inst);
-  if (!CallInst)
-    return false;
-  SMECallAttrs CallAttrs(*CallInst);
-  return CallAttrs.clobbersZAState();
-}
-
 /// Does this intrinsic update ZA state? E.g. Load a tile slice.
 /// TODO: Somehow table-generate this?
 static bool isZAUpdate(Intrinsic::ID IID) {
@@ -168,6 +158,33 @@ static bool isZAUse(Intrinsic::ID IID) {
   }
 }
 
+enum class ZAStateUsage {
+  None,
+  Clobber,
+  Update,
+  Use,
+};
+
+static ZAStateUsage getZAStateUsage(Instruction *Inst) {
+  if (auto *Intr = dyn_cast<IntrinsicInst>(Inst)) {
+    Intrinsic::ID IID = Intr->getIntrinsicID();
+    if (isZAUpdate(IID))
+      return ZAStateUsage::Update;
+    if (isZAUse(IID))
+      return ZAStateUsage::Use;
+    return ZAStateUsage::None;
+  }
+  auto *CallInst = dyn_cast<CallBase>(Inst);
+  if (!CallInst)
+    return ZAStateUsage::None;
+  SMECallAttrs CallAttrs(*CallInst);
+  if (CallAttrs.callee().hasSharedZAInterface())
+    return ZAStateUsage::Update;
+  if (CallAttrs.clobbersZAState())
+    return ZAStateUsage::Clobber;
+  return ZAStateUsage::None;
+}
+
 static void insertSMEAnnotations(SMEAnnotationContext &Ctx) {
   Ctx.F->addFnAttr(SME_ANNOTATED_ATTR);
 
@@ -180,23 +197,26 @@ static void insertSMEAnnotations(SMEAnnotationContext &Ctx) {
     for (BasicBlock::iterator I = Block->getFirstNonPHIIt(), E = Block->end();
          I != E; ++I) {
       Ctx.Builder.SetInsertPoint(I);
-      if (isZAClobber(&*I)) {
+      auto Usage = getZAStateUsage(&*I);
+      switch (Usage) {
+      case ZAStateUsage::Clobber:
         Ctx.CreateZAClobberIntr();
-      } else if (auto *Intr = dyn_cast<IntrinsicInst>(I)) {
-        Intrinsic::ID IID = Intr->getIntrinsicID();
-        bool IsZAUpdate = isZAUpdate(IID);
-        bool IsZAUse = !IsZAUpdate && isZAUse(IID);
-        if (IsZAUpdate || IsZAUse) {
-          Value *ZaState =
-              Ctx.Builder.CreateLoad(Ctx.ZaType, Ctx.ZaAlloca, "za.state");
-          if (IsZAUpdate) {
-            Value* NewZaState = Ctx.CreateMarkUpdateZAStateIntr(ZaState);
-            Ctx.Builder.SetInsertPoint(Intr->getNextNode());
-            Ctx.Builder.CreateStore(NewZaState, Ctx.ZaAlloca);
-          } else {
-            Ctx.CreateMarkUseZAStateIntr(ZaState);
-          }
+        break;
+      case ZAStateUsage::Use:
+      case ZAStateUsage::Update: {
+        Value *ZaState =
+            Ctx.Builder.CreateLoad(Ctx.ZaType, Ctx.ZaAlloca, "za.state");
+        if (Usage == ZAStateUsage::Update) {
+          Value *NewZaState = Ctx.CreateMarkUpdateZAStateIntr(ZaState);
+          Ctx.Builder.SetInsertPoint(I->getNextNode());
+          Ctx.Builder.CreateStore(NewZaState, Ctx.ZaAlloca);
+        } else {
+          Ctx.CreateMarkUseZAStateIntr(ZaState);
         }
+        break;
+      }
+      default:
+        break;
       }
     }
   }
