@@ -18,12 +18,14 @@
 #include "llvm/ADT/IntervalMap.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/DomTreeUpdater.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -243,6 +245,89 @@ static void preprocessForLazySaves(DominatorTree &DT, Module *M, Function *F,
   assert(DT.verify());
 }
 
+struct LazySaveBuffer {
+  Value *TPIDR2Block;
+  Value *Buffer;
+};
+
+static LazySaveBuffer setupLazySaveBuffer(Module *M, Function *F,
+                                          IRBuilder<> &Builder) {
+  Builder.SetInsertPoint(F->getEntryBlock().getTerminator());
+  Function *ReadSVLIntr =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_cntsb);
+
+  Value *SVL = Builder.CreateCall(ReadSVLIntr->getFunctionType(), ReadSVLIntr);
+  Value *BufferSize = Builder.CreateMul(SVL, SVL, "za.buffer.size");
+
+  Type *I8Type = Builder.getInt8Ty();
+  Type *I64Type = Type::getInt64Ty(F->getContext());
+  Value *Buffer = Builder.CreateAlloca(I8Type, BufferSize, "za.buffer");
+
+  Value *TPIDR2Block = Builder.CreateAlloca(I64Type, Builder.getInt64(2));
+  Value *TPIDR2Meta = Builder.CreatePtrAdd(TPIDR2Block, Builder.getInt64(8));
+
+  // NumSaveSlices is a 16-bit value (stored as an i64 for implicit zeroing).
+  Value *NumSaveSlices = SVL;
+  if (M->getDataLayout().isBigEndian())
+    NumSaveSlices = Builder.CreateShl(NumSaveSlices, 48);
+
+  Builder.CreateStore(Buffer, TPIDR2Block);
+  Builder.CreateStore(NumSaveSlices, TPIDR2Meta);
+
+  return LazySaveBuffer{TPIDR2Block, Buffer};
+}
+
+static void emitLazySaveZAState(Module *M, IRBuilder<> &Builder,
+                                LazySaveBuffer LazySaveBuffer) {
+  Function *SetTPIDR2Intr =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_set_tpidr2);
+  Builder.CreateCall(SetTPIDR2Intr->getFunctionType(), SetTPIDR2Intr,
+                     {Builder.CreatePtrToInt(LazySaveBuffer.TPIDR2Block,
+                                             Builder.getInt64Ty())});
+}
+
+static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
+                               LazySaveBuffer LazySaveBuffer) {
+  auto &Ctx = M->getContext();
+  auto *TPIDR2RestoreTy = FunctionType::get(
+      Builder.getVoidTy(), {Builder.getPtrTy()}, /*IsVarArgs=*/false);
+  auto Attrs =
+      AttributeList().addFnAttribute(Ctx, "aarch64_pstate_sm_compatible");
+  FunctionCallee RestoreDecl =
+      M->getOrInsertFunction("__arm_tpidr2_restore", TPIDR2RestoreTy, Attrs);
+
+  Function *GetTPIDR2Intr =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_get_tpidr2);
+  Function *SetTPIDR2Intr =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_set_tpidr2);
+  Function *EnableZAIntr =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_za_enable);
+
+  Value *TPIDR2 =
+      Builder.CreateCall(GetTPIDR2Intr->getFunctionType(), GetTPIDR2Intr);
+  Value *IsZero = Builder.CreateICmpEQ(TPIDR2, Builder.getInt64(0));
+  Builder.CreateCall(EnableZAIntr->getFunctionType(), EnableZAIntr);
+
+  auto *CurrentBB = Builder.GetInsertBlock();
+  auto *AfterRestore =
+      CurrentBB->splitBasicBlock(Builder.GetInsertPoint(), "after.restore.za");
+  BasicBlock *RestoreZA =
+      BasicBlock::Create(F->getContext(), "restore.za", F, AfterRestore);
+
+  auto *PrevBR = CurrentBB->getTerminator();
+  Builder.SetInsertPoint(PrevBR);
+  Builder.CreateCondBr(IsZero, RestoreZA, AfterRestore);
+  PrevBR->eraseFromParent();
+
+  Builder.SetInsertPoint(RestoreZA);
+  Builder.CreateCall(RestoreDecl, {LazySaveBuffer.TPIDR2Block});
+  Builder.CreateBr(AfterRestore);
+
+  Builder.SetInsertPoint(&AfterRestore->front());
+  Builder.CreateCall(SetTPIDR2Intr->getFunctionType(), SetTPIDR2Intr,
+                     {Builder.getInt64(0)});
+}
+
 static bool insertLazySaveAndRestores(Module *M, Function *F,
                                       IRBuilder<> &Builder) {
   // TODO: Exit early if there are no clobbers.
@@ -453,28 +538,8 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
     }
   });
 
-  Function *LazySaveIntr = Intrinsic::getOrInsertDeclaration(
-      M, Intrinsic::aarch64_sme_lazy_save_za_state);
-
-  Function *EnableZA =
-      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_za_enable);
-
-  Function *RestoreIntr = Intrinsic::getOrInsertDeclaration(
-      M, Intrinsic::aarch64_sme_restore_za_state);
-
-  for (auto *SavePoint : SavePoints) {
-    Builder.SetInsertPoint(const_cast<Instruction *>(SavePoint));
-    Builder.CreateCall(LazySaveIntr->getFunctionType(), LazySaveIntr);
-  }
-
-  for (auto *Restore : ReloadPoints) {
-    Builder.SetInsertPoint(const_cast<Instruction *>(Restore));
-    Builder.CreateCall(EnableZA->getFunctionType(), EnableZA);
-    Builder.CreateCall(RestoreIntr->getFunctionType(), RestoreIntr);
-  }
-
   // Remove ZA liveness annotations from the function.
-  {
+  auto RemoveAnnoations = make_scope_exit([&] {
     auto *UndefZA = UndefValue::get(ZaType);
     SmallPtrSet<Instruction *, 8> ToErase;
     for (auto &[V, _] : LiveRanges) {
@@ -491,6 +556,21 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
       Inst->eraseFromParent();
     for (auto *Clobber : Clobbers)
       const_cast<IntrinsicInst *>(Clobber)->eraseFromParent();
+  });
+
+  if (SavePoints.empty())
+    return true;
+
+  LazySaveBuffer SaveBuffer = setupLazySaveBuffer(M, F, Builder);
+
+  for (auto *SavePoint : SavePoints) {
+    Builder.SetInsertPoint(const_cast<Instruction *>(SavePoint));
+    emitLazySaveZAState(M, Builder, SaveBuffer);
+  }
+
+  for (auto *Restore : ReloadPoints) {
+    Builder.SetInsertPoint(const_cast<Instruction *>(Restore));
+    emitRestoreZAState(M, F, Builder, SaveBuffer);
   }
 
   return true;
