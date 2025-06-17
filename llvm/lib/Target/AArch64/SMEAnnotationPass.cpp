@@ -52,13 +52,14 @@ static void SetupZAEntryAndExits(SMEAnnotationContext &Ctx) {
   Ctx.Builder.SetInsertPoint(&EntryBlock->front());
   Ctx.ZaAlloca = Ctx.Builder.CreateAlloca(Ctx.ZaType, nullptr, "za.state");
 
+  // Use current ZA value on entry. This represents the ZA state on entry.
+  auto *CurrentZAValue = Ctx.CreateGetCurrentZAStateIntr();
+  Ctx.Builder.CreateStore(CurrentZAValue, Ctx.ZaAlloca);
+
   // Only the alloca needs to be created for new ZA functions.
   if (!Ctx.FnAttrs.hasSharedZAInterface())
     return;
 
-  // Use current ZA value on entry (since for shared ZA it is livein).
-  auto *CurrentZAValue = Ctx.CreateGetCurrentZAStateIntr();
-  Ctx.Builder.CreateStore(CurrentZAValue, Ctx.ZaAlloca);
   for (auto Block = Ctx.F->begin(), E = Ctx.F->end(); Block != E; ++Block) {
     auto *Return = dyn_cast<ReturnInst>(Block->getTerminator());
     if (!Return)

@@ -100,7 +100,7 @@ public:
         if (!isa<PHINode>(Inst)) {
           for (size_t I = 0, N = Inst.getNumOperands(); I < N; ++I) {
             auto *Op = Inst.getOperand(I);
-            if (Op->getType() != Type || isa<Constant>(Op))
+            if (Op->getType() != Type)
               continue;
             UseVals.insert(Op);
           }
@@ -111,9 +111,6 @@ public:
 
         // Collect definitions of `Type`.
         auto *Def = cast<Value>(&Inst);
-        if (isa<Constant>(Def))
-          continue;
-
         DefVals.insert(Def);
         // Collect out values for the current block.
         for (auto *User : Def->users()) {
@@ -391,8 +388,10 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
   for (auto It = F->begin(), E = F->end(); It != E; ++It) {
     BasicBlock *Block = &*It;
     auto &Info = Liveness.getBlockLiveness(Block);
-    for (Value *LiveIn : Info.LiveIn)
+    for (Value *LiveIn : Info.LiveIn) {
+      assert(!isa<Constant>(LiveIn) && "Constant ZA values are not supported");
       defineOrUpdateValueLiveRange(LiveIn, &Block->front(), Info);
+    }
 
     for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
       Instruction *Inst = &*It;
@@ -537,21 +536,26 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
     auto *UndefZA = UndefValue::get(ZaType);
     SmallPtrSet<Instruction *, 8> ToErase;
     for (Value *V : ZADefs) {
-      if (!V || isa<Constant>(V))
+      if (!V)
         continue;
+
       ToErase.insert(cast<Instruction>(V));
       for (Use &U : make_early_inc_range(V->uses())) {
         U.set(UndefZA);
         ToErase.insert(cast<Instruction>(U.getUser()));
       }
     }
-    for (auto *Inst : ToErase)
+    for (auto *Inst : ToErase) {
+      [[maybe_unused]] bool IsLoadOrStore = isa<LoadInst, StoreInst>(Inst);
+      assert(!IsLoadOrStore &&
+             "ZA loads and stores should have been eliminated");
       Inst->eraseFromParent();
+    }
   });
 
   // "OffPoints" are clobbers that occurred where ZA is not live. At these
   // points we need to ensure ZA state is off before the call and then re-enable
-  // it after the call. FIXME: Ths may emit back-to-back SMSTOP/START ZA pairs.
+  // it after the call. FIXME: This may emit back-to-back SMSTOP/START ZA pairs.
   for (CallBase *Clobber : OffPoints)
     emitZAOffAroundClobber(M, Clobber, Builder);
 
