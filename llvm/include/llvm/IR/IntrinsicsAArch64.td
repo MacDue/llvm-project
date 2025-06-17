@@ -2960,9 +2960,6 @@ let TargetPrefix = "aarch64" in {
   def int_aarch64_sme_mark_use_za_state : DefaultAttrsIntrinsic<[],
     [llvm_aarch64_za_generation_ty], [IntrInaccessibleMemOrArgMemOnly]>;
 
-  def int_aarch64_sme_clobber_za_state : DefaultAttrsIntrinsic<[],
-    [], [IntrInaccessibleMemOrArgMemOnly]>;
-
   def int_aarch64_sme_lazy_save_za_state : DefaultAttrsIntrinsic<[],
     [], [IntrInaccessibleMemOrArgMemOnly]>;
 

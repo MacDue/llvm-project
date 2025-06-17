@@ -45,9 +45,6 @@ struct SMEAnnotationContext {
   CallInst *CreateMarkUseZAStateIntr(Value *ZaState) {
     return CreateIntr(Intrinsic::aarch64_sme_mark_use_za_state, ZaState);
   }
-  CallInst *CreateZAClobberIntr() {
-    return CreateIntr(Intrinsic::aarch64_sme_clobber_za_state);
-  }
 };
 
 static void SetupZAEntryAndExits(SMEAnnotationContext &Ctx) {
@@ -160,7 +157,7 @@ static bool isZAUse(Intrinsic::ID IID) {
 
 enum class ZAStateUsage {
   None,
-  Clobber,
+  CallClobber,
   Call,
   Update,
   Use,
@@ -180,7 +177,7 @@ static ZAStateUsage getZAStateUsage(Instruction *Inst) {
     return ZAStateUsage::None;
   SMECallAttrs CallAttrs(*CallInst);
   if (CallAttrs.clobbersZAState())
-    return ZAStateUsage::Clobber;
+    return ZAStateUsage::CallClobber;
   return ZAStateUsage::Call;
 }
 
@@ -198,9 +195,6 @@ static void insertSMEAnnotations(SMEAnnotationContext &Ctx) {
       Ctx.Builder.SetInsertPoint(&I);
       auto Usage = getZAStateUsage(&I);
       switch (Usage) {
-      case ZAStateUsage::Clobber:
-        Ctx.CreateZAClobberIntr();
-        break;
       case ZAStateUsage::Use:
       case ZAStateUsage::Update:
       case ZAStateUsage::Call: {

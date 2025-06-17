@@ -44,16 +44,15 @@ namespace {
 
 struct LiveRange {
   using RangeSet =
-      llvm::IntervalMap<uint64_t, uint8_t, 16, llvm::IntervalMapInfo<unsigned>>;
+      llvm::IntervalMap<uint64_t, Value *, 16, llvm::IntervalMapInfo<unsigned>>;
   using Allocator = RangeSet::Allocator;
-  static constexpr uint8_t kValidLiveRange = 0xff;
 
   LiveRange(Allocator &allocator)
       : Ranges(std::make_unique<RangeSet>(allocator)) {}
 
   void unionWith(LiveRange const &Other) {
-    for (auto it = Other.Ranges->begin(); it != Other.Ranges->end(); ++it)
-      Ranges->insert(it.start(), it.stop(), kValidLiveRange);
+    for (auto It = Other.Ranges->begin(); It != Other.Ranges->end(); ++It)
+      Ranges->insert(It.start(), It.stop(), It.value());
   }
 
   bool overlaps(LiveRange const &Other) const {
@@ -61,18 +60,20 @@ struct LiveRange {
         .valid();
   }
 
-  bool overlaps(uint64_t Point) const {
-    return Ranges->lookup(Point) == kValidLiveRange;
+  Value *findLiveValue(uint64_t Point) const { return Ranges->lookup(Point); }
+
+  bool overlaps(uint64_t Start, uint64_t End) {
+    return Start <= End && Ranges->overlaps(Start, End);
   }
 
-  void mark(unsigned Start, unsigned End) {
+  void insert(uint64_t Start, uint64_t End, Value *V) {
     if (Start <= End)
-      Ranges->insert(Start, End, kValidLiveRange);
+      Ranges->insert(Start, End, V);
   }
 
   bool empty() const { return Ranges->empty(); }
-  unsigned start() const { return Ranges->start(); }
-  unsigned end() const { return Ranges->stop(); }
+  uint64_t start() const { return Ranges->start(); }
+  uint64_t end() const { return Ranges->stop(); }
 
   std::unique_ptr<RangeSet> Ranges;
 };
@@ -80,18 +81,18 @@ struct LiveRange {
 class TypeLiveness {
 public:
   struct BlockInfo {
-    using ValueSet = SmallPtrSet<const Value *, 8>;
+    using ValueSet = SmallPtrSet<Value *, 8>;
 
     BlockInfo() = default;
 
-    BlockInfo(const BasicBlock *Block, Type *Type) : Block(Block) {
+    BlockInfo(BasicBlock *Block, Type *Type) : Block(Block) {
       // TODO: Need to pre-process the IR to handle PHI nodes correctly
       // (as their uses don't make sense for live ranges -- really the
       // arguments are copies/uses in a predecessor).
       // -> split cond blocks -> insert uses before branches
       // (then ignore PHI users elsewhere)
       for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
-        const Instruction &Inst = *It;
+        Instruction &Inst = *It;
 
         // Collect uses of `Type`.
         // Note: We ignore phi uses -- these require preprocessing as they are
@@ -99,7 +100,7 @@ public:
         if (!isa<PHINode>(Inst)) {
           for (size_t I = 0, N = Inst.getNumOperands(); I < N; ++I) {
             auto *Op = Inst.getOperand(I);
-            if (Op->getType() != Type)
+            if (Op->getType() != Type || isa<Constant>(Op))
               continue;
             UseVals.insert(Op);
           }
@@ -110,8 +111,10 @@ public:
 
         // Collect definitions of `Type`.
         auto *Def = cast<Value>(&Inst);
-        DefVals.insert(Def);
+        if (isa<Constant>(Def))
+          continue;
 
+        DefVals.insert(Def);
         // Collect out values for the current block.
         for (auto *User : Def->users()) {
           auto UserInst = cast<Instruction>(User);
@@ -179,8 +182,8 @@ public:
     return BlockInfoMap.at(Block);
   }
 
-  const Instruction *getEndInstruction(const BlockInfo &Info, const Value *V,
-                                       const Instruction *Start) {
+  const Instruction *getEndInstruction(const BlockInfo &Info, Value *V,
+                                       Instruction *Start) {
     if (Info.LiveOut.contains(V))
       return &Info.Block->back();
     if (isa<Constant>(V))
@@ -245,13 +248,8 @@ static void preprocessForLazySaves(DominatorTree &DT, Module *M, Function *F,
   assert(DT.verify());
 }
 
-struct LazySaveBuffer {
-  Value *TPIDR2Block;
-  Value *Buffer;
-};
-
-static LazySaveBuffer setupLazySaveBuffer(Module *M, Function *F,
-                                          IRBuilder<> &Builder) {
+static Value *setupLazySaveBuffer(Module *M, Function *F,
+                                  IRBuilder<> &Builder) {
   Builder.SetInsertPoint(&F->getEntryBlock().front());
   Function *ReadSVLIntr =
       Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_cntsb);
@@ -274,20 +272,34 @@ static LazySaveBuffer setupLazySaveBuffer(Module *M, Function *F,
   Builder.CreateStore(Buffer, TPIDR2Block);
   Builder.CreateStore(NumSaveSlices, TPIDR2Meta);
 
-  return LazySaveBuffer{TPIDR2Block, Buffer};
+  return TPIDR2Block;
 }
 
 static void emitLazySaveZAState(Module *M, IRBuilder<> &Builder,
-                                LazySaveBuffer LazySaveBuffer) {
+                                Value *TPIDR2Block) {
   Function *SetTPIDR2Intr =
       Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_set_tpidr2);
-  Builder.CreateCall(SetTPIDR2Intr->getFunctionType(), SetTPIDR2Intr,
-                     {Builder.CreatePtrToInt(LazySaveBuffer.TPIDR2Block,
-                                             Builder.getInt64Ty())});
+  Builder.CreateCall(
+      SetTPIDR2Intr->getFunctionType(), SetTPIDR2Intr,
+      {Builder.CreatePtrToInt(TPIDR2Block, Builder.getInt64Ty())});
+}
+
+static void emitZAOffAroundClobber(Module *M, Instruction *Clobber,
+                                   IRBuilder<> &Builder) {
+  Value *Null = Builder.getInt64(0);
+  Function *DisableZAIntr =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_za_disable);
+  Function *EnableZAIntr =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_za_enable);
+  Builder.SetInsertPoint(Clobber);
+  emitLazySaveZAState(M, Builder, Null);
+  Builder.CreateCall(DisableZAIntr->getFunctionType(), DisableZAIntr);
+  Builder.SetInsertPoint(Clobber->getNextNode());
+  Builder.CreateCall(EnableZAIntr->getFunctionType(), EnableZAIntr);
 }
 
 static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
-                               LazySaveBuffer LazySaveBuffer) {
+                               Value *TPIDR2Block) {
   auto &Ctx = M->getContext();
   auto *TPIDR2RestoreTy = FunctionType::get(
       Builder.getVoidTy(), {Builder.getPtrTy()}, /*IsVarArgs=*/false);
@@ -320,7 +332,7 @@ static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
   PrevBR->eraseFromParent();
 
   Builder.SetInsertPoint(RestoreZA);
-  Builder.CreateCall(RestoreDecl, {LazySaveBuffer.TPIDR2Block});
+  Builder.CreateCall(RestoreDecl, {TPIDR2Block});
   Builder.CreateBr(AfterRestore);
 
   Builder.SetInsertPoint(&AfterRestore->front());
@@ -358,55 +370,47 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
 
   TypeLiveness Liveness(F, ZaType);
   LiveRange::Allocator LiveRangeAllocator;
-  DenseMap<const Value *, LiveRange> LiveRanges;
-  auto defineOrUpdateValueLiveRange = [&](const Value *V,
-                                          const Instruction *FirstUseOrDef,
+  LiveRange ZALiveness(LiveRangeAllocator);
+  auto defineOrUpdateValueLiveRange = [&](Value *V, Instruction *FirstUseOrDef,
                                           TypeLiveness::BlockInfo const &Info,
                                           bool Def = false) {
     // Find or create a live range for `value`.
-    auto [It, _] = LiveRanges.try_emplace(V, LiveRangeAllocator);
-    LiveRange &LiveRange = It->second;
     auto LastUseInBlock = Liveness.getEndInstruction(Info, V, FirstUseOrDef);
-    unsigned Start = Liveness.InstructionOrder.at(FirstUseOrDef);
+    unsigned Start =
+        Liveness.InstructionOrder.at(FirstUseOrDef) + (Def ? 1 : 0);
     unsigned End = Liveness.InstructionOrder.at(LastUseInBlock);
-    LiveRange.mark(Start + (Def ? 1 : 0), End);
+    if (ZALiveness.overlaps(Start, End))
+      reportFatalUsageError(
+          "Expected at most one live AArch64 SME ZA value at any point!");
+    ZALiveness.insert(Start, End, V);
   };
 
   // Compute live ranges for ZA state and collect clobbers.
-  SmallVector<const IntrinsicInst *> Clobbers;
+  SmallVector<Value *> ZADefs;
+  SmallVector<CallBase *> Clobbers;
   for (auto It = F->begin(), E = F->end(); It != E; ++It) {
-    const BasicBlock *Block = &*It;
+    BasicBlock *Block = &*It;
     auto &Info = Liveness.getBlockLiveness(Block);
-    for (const Value *LiveIn : Info.LiveIn)
+    for (Value *LiveIn : Info.LiveIn)
       defineOrUpdateValueLiveRange(LiveIn, &Block->front(), Info);
 
     for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
-      const Instruction *Inst = &*It;
-      if (auto *Intr = dyn_cast<IntrinsicInst>(Inst)) {
-        if (Intr->getIntrinsicID() == Intrinsic::aarch64_sme_clobber_za_state)
-          Clobbers.push_back(Intr);
+      Instruction *Inst = &*It;
+      if (auto *Call = dyn_cast<CallBase>(Inst)) {
+        if (!isa<IntrinsicInst>(Call) && SMECallAttrs(*Call).clobbersZAState())
+          Clobbers.push_back(Call);
       }
       if (Inst->getType() != ZaType)
         continue;
-      const Value *Def = cast<Value>(Inst);
+      Value *Def = cast<Value>(Inst);
       defineOrUpdateValueLiveRange(Def, Inst, Info, true);
+      ZADefs.push_back(Def);
     }
   }
 
-#ifndef NDEBUG
-  {
-    LiveRange ZALiveness(LiveRangeAllocator);
-    for (auto &[_, LiveRange] : LiveRanges) {
-      if (ZALiveness.overlaps(LiveRange))
-        report_fatal_error(
-            "Expected at most one live AArch64 SME ZA value at any point!");
-      ZALiveness.unionWith(LiveRange);
-    }
-  }
-#endif
-
-  SmallVector<const Instruction *> SavePoints;
-  SmallPtrSet<const Instruction *, 8> ReloadPoints;
+  SmallVector<CallBase *> OffPoints;
+  SmallVector<Instruction *> SavePoints;
+  SmallPtrSet<Instruction *, 8> ReloadPoints;
   LiveRange ClobberRange(LiveRangeAllocator);
 
   // Sort clobbers by dominance.
@@ -414,96 +418,97 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
     return Liveness.InstructionOrder.at(A) < Liveness.InstructionOrder.at(B);
   });
 
-  for (auto &[V, Range] : LiveRanges) {
-    for (auto *Clobber : Clobbers) {
-      unsigned ClobberPoint = Liveness.InstructionOrder.at(Clobber);
-      if (ClobberRange.overlaps(ClobberPoint) || !Range.overlaps(ClobberPoint))
+  for (auto *Clobber : Clobbers) {
+    unsigned ClobberPoint = Liveness.InstructionOrder.at(Clobber);
+    if (ClobberRange.findLiveValue(ClobberPoint))
+      continue;
+    Value *V = ZALiveness.findLiveValue(ClobberPoint);
+    if (!V) {
+      OffPoints.push_back(Clobber);
+      continue;
+    }
+
+    Instruction *SavePoint = Clobber;
+    auto *SaveBlock = SavePoint->getParent();
+    DenseMap<BasicBlock *, unsigned> BlockToMinReloadIndex;
+    SmallVector<Instruction *> ReloadCandidates;
+    unsigned MinDomLevel = DT.getNode(SaveBlock)->getLevel();
+    for (auto *User : V->users()) {
+      auto *Inst = cast<Instruction>(User);
+      if (!isPotentiallyReachable(Clobber, Inst,
+                                  /*ExclusionSet=*/nullptr, &DT)) {
         continue;
-
-      Instruction *SavePoint = const_cast<IntrinsicInst *>(Clobber);
-      auto *SaveBlock = SavePoint->getParent();
-      DenseMap<const BasicBlock *, unsigned> BlockToMinReloadIndex;
-      SmallVector<const Instruction *> ReloadCandidates;
-      unsigned MinDomLevel = DT.getNode(SaveBlock)->getLevel();
-      for (auto *User : V->users()) {
-        auto *Inst = const_cast<Instruction *>(cast<Instruction>(User));
-        if (!isPotentiallyReachable(Clobber, Inst,
-                                    /*ExclusionSet=*/nullptr, &DT)) {
-          continue;
-        }
-        // Phi's only use llvm.ssa.copy's of ZA which are live between the
-        // "za.phi" blocks and the phi. It should not be possible for a
-        // clobber to occur for a phi operand.
-        assert(!isa<PHINode>(Inst) &&
-               "Did not expect phi's operand to be clobbered");
-        unsigned ReloadIndex = Liveness.InstructionOrder.at(Inst);
-        auto *ReloadBlock = Inst->getParent();
-        auto [It, Inserted] = BlockToMinReloadIndex.insert(
-            std::make_pair(ReloadBlock, ReloadIndex));
-        if (!Inserted)
-          It->second = std::min(It->second, ReloadIndex);
-        ReloadCandidates.push_back(Inst);
-        MinDomLevel =
-            std::min(MinDomLevel, DT.getNode(ReloadBlock)->getLevel());
       }
-      SavePoints.push_back(SavePoint);
+      // Phi's only use llvm.ssa.copy's of ZA which are live between the
+      // "za.phi" blocks and the phi. It should not be possible for a clobber to
+      // occur for a phi operand.
+      assert(!isa<PHINode>(Inst) &&
+             "Did not expect phi's operand to be clobbered");
+      unsigned ReloadIndex = Liveness.InstructionOrder.at(Inst);
+      auto *ReloadBlock = Inst->getParent();
+      auto [It, Inserted] = BlockToMinReloadIndex.insert(
+          std::make_pair(ReloadBlock, ReloadIndex));
+      if (!Inserted)
+        It->second = std::min(It->second, ReloadIndex);
+      ReloadCandidates.push_back(Inst);
+      MinDomLevel = std::min(MinDomLevel, DT.getNode(ReloadBlock)->getLevel());
+    }
+    SavePoints.push_back(SavePoint);
 
-      unsigned SaveIndex = Liveness.InstructionOrder.at(SavePoint);
-      SmallPtrSet<const BasicBlock *, 8> ClobberedBlocks;
-      for (auto *Candidate : ReloadCandidates) {
-        bool IsDominatedByReload = false;
-        bool IsDominatedByClobber = false;
-        SmallVector<const BasicBlock *> ClobberPath;
-        const BasicBlock *CandidateBlock = Candidate->getParent();
-        const BasicBlock *Block = CandidateBlock;
-        unsigned ReloadIndex = Liveness.InstructionOrder.at(Candidate);
-        while (Block) {
-          // Check for any other reloads that might dominate this reload. If
-          // this reload is dominated by another, we can ignore this candidate
-          // (and not clobber its second of the live range). If another clobber
-          // exists before/after this reload point an additional save/restore
-          // will still be inserted.
-          auto It = BlockToMinReloadIndex.find(Block);
-          if (It != BlockToMinReloadIndex.end()) {
-            if (CandidateBlock != Block || ReloadIndex > It->second) {
-              IsDominatedByReload = true;
-              break;
-            }
-          }
-          // Record the "clobber path" up to and including the SaveBlock.
-          if (!IsDominatedByClobber)
-            ClobberPath.push_back(Block);
-          if (Block == SaveBlock &&
-              (SaveBlock != CandidateBlock || SaveIndex < ReloadIndex)) {
-            IsDominatedByClobber = true;
-          }
-          auto *DomNode = DT.getNode(Block);
-          auto *IDom = DomNode->getIDom();
-          if (!IDom || IDom->getLevel() < MinDomLevel)
+    unsigned SaveIndex = Liveness.InstructionOrder.at(SavePoint);
+    SmallPtrSet<BasicBlock *, 8> ClobberedBlocks;
+    for (auto *Candidate : ReloadCandidates) {
+      bool IsDominatedByReload = false;
+      bool IsDominatedByClobber = false;
+      SmallVector<BasicBlock *> ClobberPath;
+      BasicBlock *CandidateBlock = Candidate->getParent();
+      BasicBlock *Block = CandidateBlock;
+      unsigned ReloadIndex = Liveness.InstructionOrder.at(Candidate);
+      while (Block) {
+        // Check for any other reloads that might dominate this reload. If this
+        // reload is dominated by another, we can ignore this candidate (and not
+        // clobber its section of the live range). If another clobber exists
+        // before/after this reload point an additional save/restore will still
+        // be inserted.
+        auto It = BlockToMinReloadIndex.find(Block);
+        if (It != BlockToMinReloadIndex.end()) {
+          if (CandidateBlock != Block || ReloadIndex > It->second) {
+            IsDominatedByReload = true;
             break;
-          Block = IDom->getBlock();
+          }
         }
-        if (IsDominatedByReload)
-          continue;
-        ReloadPoints.insert(Candidate);
-        if (IsDominatedByClobber)
-          ClobberedBlocks.insert_range(ClobberPath);
+        // Record the "clobber path" up to and including the SaveBlock.
+        if (!IsDominatedByClobber)
+          ClobberPath.push_back(Block);
+        if (Block == SaveBlock &&
+            (SaveBlock != CandidateBlock || SaveIndex < ReloadIndex)) {
+          IsDominatedByClobber = true;
+        }
+        auto *DomNode = DT.getNode(Block);
+        auto *IDom = DomNode->getIDom();
+        if (!IDom || IDom->getLevel() < MinDomLevel)
+          break;
+        Block = IDom->getBlock();
       }
+      if (IsDominatedByReload)
+        continue;
+      ReloadPoints.insert(Candidate);
+      if (IsDominatedByClobber)
+        ClobberedBlocks.insert_range(ClobberPath);
+    }
 
-      // Mark the ranges of ZA that are 'clobbered'. Any additional clobbers in
-      // in these ranges will not incur additional save/reloads.
-      // TODO: Verify we don't need to check for interval overlaps here.
-      for (auto *Block : ClobberedBlocks) {
-        unsigned BlockEndIndex = Liveness.InstructionOrder.at(&Block->back());
-        unsigned ClobberEndIndex =
-            BlockToMinReloadIndex.lookup_or(Block, BlockEndIndex);
-        if (Block == SaveBlock) {
-          ClobberRange.mark(SaveIndex, ClobberEndIndex);
-        } else {
-          unsigned BlockStartIndex =
-              Liveness.InstructionOrder.at(&Block->front());
-          ClobberRange.mark(BlockStartIndex, ClobberEndIndex);
-        }
+    // Mark the ranges of ZA that are 'clobbered'. Any additional clobbers in in
+    // these ranges will not incur additional save/reloads.
+    for (auto *Block : ClobberedBlocks) {
+      unsigned BlockEndIndex = Liveness.InstructionOrder.at(&Block->back());
+      unsigned ClobberEndIndex =
+          BlockToMinReloadIndex.lookup_or(Block, BlockEndIndex);
+      if (Block == SaveBlock) {
+        ClobberRange.insert(SaveIndex, ClobberEndIndex, Clobber);
+      } else {
+        unsigned BlockStartIndex =
+            Liveness.InstructionOrder.at(&Block->front());
+        ClobberRange.insert(BlockStartIndex, ClobberEndIndex, Clobber);
       }
     }
   }
@@ -513,25 +518,14 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
            << "Key:\n"
            << "| - Live ZA value\n"
            << "x - Clobbered ZA value\n\n";
-    LiveRanges.try_emplace(nullptr, std::move(ClobberRange));
     for (auto It = F->begin(), E = F->end(); It != E; ++It) {
       const BasicBlock *Block = &*It;
       dbgs() << Block->getNameOrAsOperand() << ":\n";
       for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
         const Instruction *Inst = &*It;
         unsigned Index = Liveness.InstructionOrder.at(Inst);
-        for (auto &[V, Range] : LiveRanges) {
-          char Marker = [Index, V = V, &Range = Range] {
-            bool InRange = Range.overlaps(Index);
-            // ZA value:
-            if (V)
-              return InRange ? '|' : ' ';
-            // ZA clobber:
-            return InRange ? 'x' : ' ';
-          }();
-          dbgs() << Marker;
-        }
-        dbgs() << ' ';
+        dbgs() << (ClobberRange.findLiveValue(Index) ? 'x' : ' ');
+        dbgs() << (ZALiveness.findLiveValue(Index) ? '|' : ' ');
         Inst->dump();
       }
       dbgs() << "==========\n";
@@ -542,34 +536,37 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
   auto RemoveAnnoations = make_scope_exit([&] {
     auto *UndefZA = UndefValue::get(ZaType);
     SmallPtrSet<Instruction *, 8> ToErase;
-    for (auto &[V, _] : LiveRanges) {
+    for (Value *V : ZADefs) {
       if (!V || isa<Constant>(V))
         continue;
-      Value *ZaVal = const_cast<Value *>(V);
-      ToErase.insert(cast<Instruction>(ZaVal));
-      for (Use &U : make_early_inc_range(ZaVal->uses())) {
+      ToErase.insert(cast<Instruction>(V));
+      for (Use &U : make_early_inc_range(V->uses())) {
         U.set(UndefZA);
         ToErase.insert(cast<Instruction>(U.getUser()));
       }
     }
     for (auto *Inst : ToErase)
       Inst->eraseFromParent();
-    for (auto *Clobber : Clobbers)
-      const_cast<IntrinsicInst *>(Clobber)->eraseFromParent();
   });
+
+  // "OffPoints" are clobbers that occurred where ZA is not live. At these
+  // points we need to ensure ZA state is off before the call and then re-enable
+  // it after the call. FIXME: Ths may emit back-to-back SMSTOP/START ZA pairs.
+  for (CallBase *Clobber : OffPoints)
+    emitZAOffAroundClobber(M, Clobber, Builder);
 
   if (SavePoints.empty())
     return true;
-  LazySaveBuffer SaveBuffer = setupLazySaveBuffer(M, F, Builder);
+  Value *TPIDR2Block = setupLazySaveBuffer(M, F, Builder);
 
   for (auto *SavePoint : SavePoints) {
     Builder.SetInsertPoint(const_cast<Instruction *>(SavePoint));
-    emitLazySaveZAState(M, Builder, SaveBuffer);
+    emitLazySaveZAState(M, Builder, TPIDR2Block);
   }
 
   for (auto *Restore : ReloadPoints) {
     Builder.SetInsertPoint(const_cast<Instruction *>(Restore));
-    emitRestoreZAState(M, F, Builder, SaveBuffer);
+    emitRestoreZAState(M, F, Builder, TPIDR2Block);
   }
 
   return true;
