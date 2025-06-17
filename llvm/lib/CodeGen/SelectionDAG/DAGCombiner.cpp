@@ -3018,7 +3018,7 @@ SDValue DAGCombiner::visitADD(SDNode *N) {
 
   // fold (a+b) -> (a|b) iff a and b share no bits.
   if ((!LegalOperations || TLI.isOperationLegal(ISD::OR, VT)) &&
-      !isa<FrameIndexSDNode>(N0) && DAG.haveNoCommonBitsSet(N0, N1))
+      DAG.haveNoCommonBitsSet(N0, N1))
     return DAG.getNode(ISD::OR, DL, VT, N0, N1, SDNodeFlags::Disjoint);
 
   // Fold (add (vscale * C0), (vscale * C1)) to (vscale * (C0 + C1)).
