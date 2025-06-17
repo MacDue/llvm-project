@@ -33,6 +33,8 @@ class InstructionSelector;
 class SMEAnnotationPass : public PassInfoMixin<SMEAnnotationPass> {
 public:
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
+
+  static bool isRequired() { return true; }
 };
 
 FunctionPass *createAArch64DeadRegisterDefinitions();

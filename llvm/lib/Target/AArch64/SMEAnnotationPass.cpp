@@ -161,6 +161,7 @@ static bool isZAUse(Intrinsic::ID IID) {
 enum class ZAStateUsage {
   None,
   Clobber,
+  Call,
   Update,
   Use,
 };
@@ -178,11 +179,9 @@ static ZAStateUsage getZAStateUsage(Instruction *Inst) {
   if (!CallInst)
     return ZAStateUsage::None;
   SMECallAttrs CallAttrs(*CallInst);
-  if (CallAttrs.callee().hasSharedZAInterface())
-    return ZAStateUsage::Update;
   if (CallAttrs.clobbersZAState())
     return ZAStateUsage::Clobber;
-  return ZAStateUsage::None;
+  return ZAStateUsage::Call;
 }
 
 static void insertSMEAnnotations(SMEAnnotationContext &Ctx) {
@@ -194,24 +193,30 @@ static void insertSMEAnnotations(SMEAnnotationContext &Ctx) {
   SetupZAEntryAndExits(Ctx);
 
   for (auto Block = Ctx.F->begin(), E = Ctx.F->end(); Block != E; ++Block) {
-    for (BasicBlock::iterator I = Block->getFirstNonPHIIt(), E = Block->end();
-         I != E; ++I) {
-      Ctx.Builder.SetInsertPoint(I);
-      auto Usage = getZAStateUsage(&*I);
+    for (Instruction &I : make_early_inc_range(
+             make_range(Block->getFirstNonPHIIt(), Block->end()))) {
+      Ctx.Builder.SetInsertPoint(&I);
+      auto Usage = getZAStateUsage(&I);
       switch (Usage) {
       case ZAStateUsage::Clobber:
         Ctx.CreateZAClobberIntr();
         break;
       case ZAStateUsage::Use:
-      case ZAStateUsage::Update: {
+      case ZAStateUsage::Update:
+      case ZAStateUsage::Call: {
         Value *ZaState =
             Ctx.Builder.CreateLoad(Ctx.ZaType, Ctx.ZaAlloca, "za.state");
         if (Usage == ZAStateUsage::Update) {
           Value *NewZaState = Ctx.CreateMarkUpdateZAStateIntr(ZaState);
-          Ctx.Builder.SetInsertPoint(I->getNextNode());
+          Ctx.Builder.SetInsertPoint(I.getNextNode());
           Ctx.Builder.CreateStore(NewZaState, Ctx.ZaAlloca);
         } else {
           Ctx.CreateMarkUseZAStateIntr(ZaState);
+          if (Usage == ZAStateUsage::Call) {
+            Ctx.Builder.SetInsertPoint(I.getNextNode());
+            Value *NewZaState = Ctx.CreateGetCurrentZAStateIntr();
+            Ctx.Builder.CreateStore(NewZaState, Ctx.ZaAlloca);
+          }
         }
         break;
       }

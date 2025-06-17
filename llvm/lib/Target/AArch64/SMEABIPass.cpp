@@ -252,7 +252,7 @@ struct LazySaveBuffer {
 
 static LazySaveBuffer setupLazySaveBuffer(Module *M, Function *F,
                                           IRBuilder<> &Builder) {
-  Builder.SetInsertPoint(F->getEntryBlock().getTerminator());
+  Builder.SetInsertPoint(&F->getEntryBlock().front());
   Function *ReadSVLIntr =
       Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_cntsb);
 
@@ -560,7 +560,6 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
 
   if (SavePoints.empty())
     return true;
-
   LazySaveBuffer SaveBuffer = setupLazySaveBuffer(M, F, Builder);
 
   for (auto *SavePoint : SavePoints) {
