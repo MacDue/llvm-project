@@ -569,6 +569,9 @@ public:
 } // end anonymous namespace
 
 void AArch64TargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
+#define GET_PASS_REGISTRY "AArch64PassRegistry.def"
+#include "llvm/Passes/TargetPassRegistry.inc"
+
   PB.registerPipelineStartEPCallback(
       [](ModulePassManager &PM, OptimizationLevel Level) {
         PM.addPass(createModuleToFunctionPassAdaptor(SMEAnnotationPass()));

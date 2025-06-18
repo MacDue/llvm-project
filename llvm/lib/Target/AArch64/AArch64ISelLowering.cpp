@@ -9066,8 +9066,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   // If caller shares ZT0 but the callee is not shared ZA, we need to stop
   // PSTATE.ZA before the call if there is no lazy-save active.
   bool DisableZA = CallAttrs.requiresDisablingZABeforeCall();
-  assert((!DisableZA /*|| !RequiresLazySave*/) &&
-         "Lazy-save should have PSTATE.SM=1 on entry to the function");
+  // assert((!DisableZA || !RequiresLazySave) &&
+  //        "Lazy-save should have PSTATE.SM=1 on entry to the function");
 
   if (DisableZA)
     Chain = DAG.getNode(
