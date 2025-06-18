@@ -11,10 +11,11 @@ define void @disable_tailcallopt() "aarch64_inout_za" nounwind {
 ; CHECK-NEXT:    mov x29, sp
 ; CHECK-NEXT:    sub sp, sp, #16
 ; CHECK-NEXT:    rdsvl x8, #1
-; CHECK-NEXT:    mov x10, sp
-; CHECK-NEXT:    mul x9, x8, x8
-; CHECK-NEXT:    and x9, x9, #0xfffffffffffffff0
-; CHECK-NEXT:    sub x9, x10, x9
+; CHECK-NEXT:    mov x10, #15 // =0xf
+; CHECK-NEXT:    mov x9, sp
+; CHECK-NEXT:    madd x10, x8, x8, x10
+; CHECK-NEXT:    and x10, x10, #0xfffffffffffffff0
+; CHECK-NEXT:    sub x9, x9, x10
 ; CHECK-NEXT:    mov sp, x9
 ; CHECK-NEXT:    sub x10, x29, #16
 ; CHECK-NEXT:    stp x9, x8, [x29, #-16]
@@ -41,9 +42,33 @@ define void @disable_tailcallopt() "aarch64_inout_za" nounwind {
 define fp128 @f128_call_za(fp128 %a, fp128 %b) "aarch64_inout_za" nounwind {
 ; CHECK-LABEL: f128_call_za:
 ; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x30, [sp, #-16]! // 8-byte Folded Spill
+; CHECK-NEXT:    stp x29, x30, [sp, #-32]! // 16-byte Folded Spill
+; CHECK-NEXT:    str x19, [sp, #16] // 8-byte Folded Spill
+; CHECK-NEXT:    mov x29, sp
+; CHECK-NEXT:    sub sp, sp, #16
+; CHECK-NEXT:    rdsvl x8, #1
+; CHECK-NEXT:    mov x9, sp
+; CHECK-NEXT:    msub x9, x8, x8, x9
+; CHECK-NEXT:    mov sp, x9
+; CHECK-NEXT:    stur x9, [x29, #-16]
+; CHECK-NEXT:    sub x9, x29, #16
+; CHECK-NEXT:    sturh wzr, [x29, #-6]
+; CHECK-NEXT:    stur wzr, [x29, #-4]
+; CHECK-NEXT:    mrs x19, TPIDR2_EL0
+; CHECK-NEXT:    sturh w8, [x29, #-8]
+; CHECK-NEXT:    msr TPIDR2_EL0, x9
 ; CHECK-NEXT:    bl __addtf3
-; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
+; CHECK-NEXT:    smstart za
+; CHECK-NEXT:    mrs x8, TPIDR2_EL0
+; CHECK-NEXT:    sub x0, x29, #16
+; CHECK-NEXT:    cbnz x8, .LBB1_2
+; CHECK-NEXT:  // %bb.1:
+; CHECK-NEXT:    bl __arm_tpidr2_restore
+; CHECK-NEXT:  .LBB1_2:
+; CHECK-NEXT:    msr TPIDR2_EL0, x19
+; CHECK-NEXT:    mov sp, x29
+; CHECK-NEXT:    ldr x19, [sp, #16] // 8-byte Folded Reload
+; CHECK-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-NEXT:    ret
   %in_za = tail call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = fadd fp128 %a, %b

@@ -796,7 +796,7 @@ bool SMEABI::runOnFunction(Function &F) {
   bool Changed = false;
   SMEAttrs FnAttrs(F);
 
-  if (FnAttrs.hasZAState())
+  if (FnAttrs.hasZAState() || FnAttrs.hasAgnosticZAInterface())
     Changed |= insertLazySaveAndRestores(M, &F, Builder);
 
   if (FnAttrs.isNewZA() || FnAttrs.isNewZT0()) {

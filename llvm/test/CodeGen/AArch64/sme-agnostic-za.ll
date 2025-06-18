@@ -12,7 +12,9 @@ define i64 @agnostic_caller_no_callees(ptr %ptr) nounwind "aarch64_za_state_agno
 ; CHECK:       // %bb.0:
 ; CHECK-NEXT:    ldr x0, [x0]
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %v = load i64, ptr %ptr
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret i64 %v
 }
 
@@ -29,18 +31,15 @@ define i64 @agnostic_caller_private_za_callee(i64 %v) nounwind "aarch64_za_state
 ; CHECK-NEXT:    mov x29, sp
 ; CHECK-NEXT:    mov x8, x0
 ; CHECK-NEXT:    bl __arm_sme_state_size
-; CHECK-NEXT:    sub sp, sp, x0
-; CHECK-NEXT:    mov x19, sp
+; CHECK-NEXT:    add x10, x0, #15
+; CHECK-NEXT:    mov x9, sp
+; CHECK-NEXT:    and x10, x10, #0xfffffffffffffff0
+; CHECK-NEXT:    sub x19, x9, x10
+; CHECK-NEXT:    mov sp, x19
 ; CHECK-NEXT:    mov x0, x19
 ; CHECK-NEXT:    bl __arm_sme_save
 ; CHECK-NEXT:    mov x0, x8
 ; CHECK-NEXT:    bl private_za_decl
-; CHECK-NEXT:    mov x1, x0
-; CHECK-NEXT:    mov x0, x19
-; CHECK-NEXT:    bl __arm_sme_restore
-; CHECK-NEXT:    mov x0, x19
-; CHECK-NEXT:    bl __arm_sme_save
-; CHECK-NEXT:    mov x0, x1
 ; CHECK-NEXT:    bl private_za_decl
 ; CHECK-NEXT:    mov x1, x0
 ; CHECK-NEXT:    mov x0, x19
@@ -50,8 +49,10 @@ define i64 @agnostic_caller_private_za_callee(i64 %v) nounwind "aarch64_za_state
 ; CHECK-NEXT:    ldr x19, [sp, #16] // 8-byte Folded Reload
 ; CHECK-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = call i64 @private_za_decl(i64 %v)
   %res2 = call i64 @private_za_decl(i64 %res)
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret i64 %res2
 }
 
@@ -65,7 +66,9 @@ define i64 @agnostic_caller_agnostic_callee(i64 %v) nounwind "aarch64_za_state_a
 ; CHECK-NEXT:    bl agnostic_decl
 ; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = call i64 @agnostic_decl(i64 %v)
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret i64 %res
 }
 
@@ -79,7 +82,9 @@ define i64 @shared_caller_agnostic_callee(i64 %v) nounwind "aarch64_inout_za" "a
 ; CHECK-NEXT:    bl agnostic_decl
 ; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = call i64 @agnostic_decl(i64 %v)
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret i64 %res
 }
 
@@ -100,21 +105,16 @@ define i64 @streaming_agnostic_caller_nonstreaming_private_za_callee(i64 %v) nou
 ; CHECK-NEXT:    stp x20, x19, [sp, #96] // 16-byte Folded Spill
 ; CHECK-NEXT:    mov x8, x0
 ; CHECK-NEXT:    bl __arm_sme_state_size
-; CHECK-NEXT:    sub sp, sp, x0
-; CHECK-NEXT:    mov x20, sp
+; CHECK-NEXT:    add x10, x0, #15
+; CHECK-NEXT:    mov x9, sp
+; CHECK-NEXT:    and x10, x10, #0xfffffffffffffff0
+; CHECK-NEXT:    sub x20, x9, x10
+; CHECK-NEXT:    mov sp, x20
 ; CHECK-NEXT:    mov x0, x20
 ; CHECK-NEXT:    bl __arm_sme_save
 ; CHECK-NEXT:    smstop sm
 ; CHECK-NEXT:    mov x0, x8
 ; CHECK-NEXT:    bl private_za_decl
-; CHECK-NEXT:    mov x1, x0
-; CHECK-NEXT:    smstart sm
-; CHECK-NEXT:    mov x0, x20
-; CHECK-NEXT:    bl __arm_sme_restore
-; CHECK-NEXT:    mov x0, x20
-; CHECK-NEXT:    bl __arm_sme_save
-; CHECK-NEXT:    smstop sm
-; CHECK-NEXT:    mov x0, x1
 ; CHECK-NEXT:    bl private_za_decl
 ; CHECK-NEXT:    mov x1, x0
 ; CHECK-NEXT:    smstart sm
@@ -129,8 +129,10 @@ define i64 @streaming_agnostic_caller_nonstreaming_private_za_callee(i64 %v) nou
 ; CHECK-NEXT:    ldp d13, d12, [sp, #16] // 16-byte Folded Reload
 ; CHECK-NEXT:    ldp d15, d14, [sp], #112 // 16-byte Folded Reload
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = call i64 @private_za_decl(i64 %v)
   %res2 = call i64 @private_za_decl(i64 %res)
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret i64 %res2
 }
 
@@ -151,8 +153,11 @@ define i64 @streaming_compatible_agnostic_caller_nonstreaming_private_za_callee(
 ; CHECK-NEXT:    stp x20, x19, [sp, #96] // 16-byte Folded Spill
 ; CHECK-NEXT:    mov x8, x0
 ; CHECK-NEXT:    bl __arm_sme_state_size
-; CHECK-NEXT:    sub sp, sp, x0
-; CHECK-NEXT:    mov x19, sp
+; CHECK-NEXT:    add x10, x0, #15
+; CHECK-NEXT:    mov x9, sp
+; CHECK-NEXT:    and x10, x10, #0xfffffffffffffff0
+; CHECK-NEXT:    sub x19, x9, x10
+; CHECK-NEXT:    mov sp, x19
 ; CHECK-NEXT:    mov x0, x19
 ; CHECK-NEXT:    bl __arm_sme_save
 ; CHECK-NEXT:    bl __arm_sme_state
@@ -168,10 +173,6 @@ define i64 @streaming_compatible_agnostic_caller_nonstreaming_private_za_callee(
 ; CHECK-NEXT:  // %bb.3:
 ; CHECK-NEXT:    smstart sm
 ; CHECK-NEXT:  .LBB5_4:
-; CHECK-NEXT:    mov x0, x19
-; CHECK-NEXT:    bl __arm_sme_restore
-; CHECK-NEXT:    mov x0, x19
-; CHECK-NEXT:    bl __arm_sme_save
 ; CHECK-NEXT:    bl __arm_sme_state
 ; CHECK-NEXT:    and x20, x0, #0x1
 ; CHECK-NEXT:    tbz w20, #0, .LBB5_6
@@ -196,7 +197,9 @@ define i64 @streaming_compatible_agnostic_caller_nonstreaming_private_za_callee(
 ; CHECK-NEXT:    ldp d13, d12, [sp, #16] // 16-byte Folded Reload
 ; CHECK-NEXT:    ldp d15, d14, [sp], #112 // 16-byte Folded Reload
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = call i64 @private_za_decl(i64 %v)
   %res2 = call i64 @private_za_decl(i64 %res)
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret i64 %res2
 }
