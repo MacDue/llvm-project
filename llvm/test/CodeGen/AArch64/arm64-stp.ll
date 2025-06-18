@@ -140,9 +140,9 @@ define void @nosplat_v4i32(i32 %v, ptr %p) {
 ; CHECK-NEXT:    sub sp, sp, #16
 ; CHECK-NEXT:    .cfi_def_cfa_offset 16
 ; CHECK-NEXT:    // kill: def $w0 killed $w0 def $x0
-; CHECK-NEXT:    and x8, x0, #0x3
-; CHECK-NEXT:    mov x9, sp
-; CHECK-NEXT:    str w0, [x9, x8, lsl #2]
+; CHECK-NEXT:    mov x8, sp
+; CHECK-NEXT:    bfi x8, x0, #2, #2
+; CHECK-NEXT:    str w0, [x8]
 ; CHECK-NEXT:    ldr q0, [sp]
 ; CHECK-NEXT:    mov v0.s[1], w0
 ; CHECK-NEXT:    mov v0.s[2], w0

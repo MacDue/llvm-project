@@ -1910,12 +1910,6 @@ SDValue SelectionDAGBuilder::getValueImpl(const Value *V) {
                          DAG.getConstant(0, getCurSDLoc(), MVT::nxv16i1));
     }
 
-    if (VT == MVT::aarch64zaGeneration) {
-      assert(C->isNullValue());
-      return DAG.getNode(ISD::BITCAST, getCurSDLoc(), VT,
-                         DAG.getConstant(0, getCurSDLoc(), MVT::i64));
-    }
-
     if (VT.isRISCVVectorTuple()) {
       assert(C->isNullValue() && "Can only zero this target type!");
       return DAG.getNode(
