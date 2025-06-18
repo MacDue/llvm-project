@@ -57,7 +57,7 @@ static void SetupZAEntryAndExits(SMEAnnotationContext &Ctx) {
   Ctx.Builder.CreateStore(CurrentZAValue, Ctx.ZaAlloca);
 
   // Only the alloca needs to be created for new ZA functions.
-  if (!Ctx.FnAttrs.hasSharedZAInterface())
+  if (Ctx.FnAttrs.hasPrivateZAInterface())
     return;
 
   for (auto Block = Ctx.F->begin(), E = Ctx.F->end(); Block != E; ++Block) {
@@ -185,7 +185,7 @@ static ZAStateUsage getZAStateUsage(Instruction *Inst) {
 static void insertSMEAnnotations(SMEAnnotationContext &Ctx) {
   Ctx.F->addFnAttr(SME_ANNOTATED_ATTR);
 
-  if (!Ctx.FnAttrs.hasZAState())
+  if (!Ctx.FnAttrs.hasZAState() && !Ctx.FnAttrs.hasAgnosticZAInterface())
     return;
 
   SetupZAEntryAndExits(Ctx);

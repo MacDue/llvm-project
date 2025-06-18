@@ -273,6 +273,27 @@ static Value *setupLazySaveBuffer(Module *M, Function *F,
   return TPIDR2Block;
 }
 
+static Value *setupFullZASaveBuffer(Module *M, Function *F,
+                                    IRBuilder<> &Builder) {
+  Builder.SetInsertPoint(&F->getEntryBlock().front());
+  auto &Ctx = M->getContext();
+  auto *SMEStateSizeTy =
+      FunctionType::get(Builder.getInt64Ty(), {}, /*IsVarArgs=*/false);
+  auto Attrs =
+      AttributeList().addFnAttribute(Ctx, "aarch64_pstate_sm_compatible");
+  FunctionCallee SMEStateSizeDecl =
+      M->getOrInsertFunction("__arm_sme_state_size", SMEStateSizeTy, Attrs);
+
+  CallBase *StateSize = Builder.CreateCall(SMEStateSizeDecl);
+  StateSize->setCallingConv(
+      CallingConv::AArch64_SME_ABI_Support_Routines_PreserveMost_From_X1);
+
+  Type *I8Type = Builder.getInt8Ty();
+  Value *Buffer = Builder.CreateAlloca(I8Type, StateSize, "za.buffer");
+
+  return Buffer;
+}
+
 static void emitLazySaveZAState(Module *M, IRBuilder<> &Builder,
                                 Value *TPIDR2Block) {
   Function *SetTPIDR2Intr =
@@ -280,6 +301,21 @@ static void emitLazySaveZAState(Module *M, IRBuilder<> &Builder,
   Builder.CreateCall(
       SetTPIDR2Intr->getFunctionType(), SetTPIDR2Intr,
       {Builder.CreatePtrToInt(TPIDR2Block, Builder.getInt64Ty())});
+}
+
+static void emitFullSaveRestoreZAState(Module *M, IRBuilder<> &Builder,
+                                       Value *Buffer, bool IsSave) {
+  auto &Ctx = M->getContext();
+  auto *CalleeTy = FunctionType::get(Builder.getVoidTy(), {Builder.getPtrTy()},
+                                     /*IsVarArgs=*/false);
+  auto Attrs =
+      AttributeList().addFnAttribute(Ctx, "aarch64_pstate_sm_compatible");
+  FunctionCallee CalleeDecl = M->getOrInsertFunction(
+      IsSave ? "__arm_sme_save" : "__arm_sme_restore", CalleeTy, Attrs);
+
+  CallBase *Call = Builder.CreateCall(CalleeDecl, {Buffer});
+  Call->setCallingConv(
+      CallingConv::AArch64_SME_ABI_Support_Routines_PreserveMost_From_X1);
 }
 
 static void emitZAOffAroundClobber(Module *M, Instruction *Clobber,
@@ -296,8 +332,8 @@ static void emitZAOffAroundClobber(Module *M, Instruction *Clobber,
   Builder.CreateCall(EnableZAIntr->getFunctionType(), EnableZAIntr);
 }
 
-static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
-                               Value *TPIDR2Block) {
+static void emitLazyRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
+                                   Value *TPIDR2Block) {
   auto &Ctx = M->getContext();
   auto *TPIDR2RestoreTy = FunctionType::get(
       Builder.getVoidTy(), {Builder.getPtrTy()}, /*IsVarArgs=*/false);
@@ -332,12 +368,39 @@ static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
   Builder.SetInsertPoint(RestoreZA);
   CallBase *RestoreCall = Builder.CreateCall(RestoreDecl, {TPIDR2Block});
   RestoreCall->setCallingConv(
-      CallingConv::AArch64_SME_ABI_Support_Routines_PreserveMost_From_X0);
+      CallingConv::AArch64_SME_ABI_Support_Routines_PreserveMost_From_X1);
   Builder.CreateBr(AfterRestore);
 
   Builder.SetInsertPoint(&AfterRestore->front());
   Builder.CreateCall(SetTPIDR2Intr->getFunctionType(), SetTPIDR2Intr,
                      {Builder.getInt64(0)});
+}
+
+static Value *setupSaveBuffer(Module *M, Function *F, IRBuilder<> &Builder,
+                              SMEAttrs FnAttrs) {
+  if (FnAttrs.hasZAState())
+    return setupLazySaveBuffer(M, F, Builder);
+  if (FnAttrs.hasAgnosticZAInterface())
+    return setupFullZASaveBuffer(M, F, Builder);
+  llvm_unreachable("Don't know how to allocate ZA save buffer");
+}
+
+static void emitSaveZAState(Module *M, IRBuilder<> &Builder, Value *Buffer,
+                            SMEAttrs FnAttrs) {
+  if (FnAttrs.hasZAState())
+    return emitLazySaveZAState(M, Builder, Buffer);
+  if (FnAttrs.hasAgnosticZAInterface())
+    return emitFullSaveRestoreZAState(M, Builder, Buffer, /*IsSave=*/true);
+  llvm_unreachable("Don't know how to save ZA state");
+}
+
+static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
+                               Value *Buffer, SMEAttrs FnAttrs) {
+  if (FnAttrs.hasZAState())
+    return emitLazyRestoreZAState(M, F, Builder, Buffer);
+  if (FnAttrs.hasAgnosticZAInterface())
+    return emitFullSaveRestoreZAState(M, Builder, Buffer, /*IsSave=*/false);
+  llvm_unreachable("Don't know how to restore ZA state");
 }
 
 static bool insertLazySaveAndRestores(Module *M, Function *F,
@@ -560,21 +623,25 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
   // "OffPoints" are clobbers that occurred where ZA is not live. At these
   // points we need to ensure ZA state is off before the call and then re-enable
   // it after the call. FIXME: This may emit back-to-back SMSTOP/START ZA pairs.
+  // Note: These should not exist in shared or agnostic ZA functions emitted by
+  // Clang (but could occur in hand-crafted IR or private ZA functions).
   for (CallBase *Clobber : OffPoints)
     emitZAOffAroundClobber(M, Clobber, Builder);
 
   if (SavePoints.empty())
     return true;
-  Value *TPIDR2Block = setupLazySaveBuffer(M, F, Builder);
+
+  SMEAttrs FnAttrs(*F);
+  Value *Buffer = setupSaveBuffer(M, F, Builder, FnAttrs);
 
   for (auto *SavePoint : SavePoints) {
-    Builder.SetInsertPoint(const_cast<Instruction *>(SavePoint));
-    emitLazySaveZAState(M, Builder, TPIDR2Block);
+    Builder.SetInsertPoint(SavePoint);
+    emitSaveZAState(M, Builder, Buffer, FnAttrs);
   }
 
   for (auto *Restore : ReloadPoints) {
-    Builder.SetInsertPoint(const_cast<Instruction *>(Restore));
-    emitRestoreZAState(M, F, Builder, TPIDR2Block);
+    Builder.SetInsertPoint(Restore);
+    emitRestoreZAState(M, F, Builder, Buffer, FnAttrs);
   }
 
   return true;

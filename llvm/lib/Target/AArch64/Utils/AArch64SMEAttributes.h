@@ -179,13 +179,22 @@ public:
   bool requiresSMChange() const;
 
   bool clobbersZAState() const {
-    return caller().hasZAState() && callee().hasPrivateZAInterface() &&
-           !callee().isSMEABIRoutine();
+    return requiresLazySave() || requiresPreservingAllZAState();
   }
 
   bool requiresPreservingZT0() const {
     return caller().hasZT0State() && !callsite().hasUndefZT0() &&
            !callee().sharesZT0() && !callee().hasAgnosticZAInterface();
+  }
+
+  bool requiresLazySave() const {
+    return caller().hasZAState() && callee().hasPrivateZAInterface() &&
+           !callee().isSMEABIRoutine();
+  }
+
+  bool requiresPreservingAllZAState() const {
+    return caller().hasAgnosticZAInterface() &&
+           !callee().hasAgnosticZAInterface() && !callee().isSMEABIRoutine();
   }
 
   bool requiresDisablingZABeforeCall() const {
@@ -195,11 +204,6 @@ public:
 
   bool requiresEnablingZAAfterCall() const {
     return requiresDisablingZABeforeCall();
-  }
-
-  bool requiresPreservingAllZAState() const {
-    return caller().hasAgnosticZAInterface() &&
-           !callee().hasAgnosticZAInterface() && !callee().isSMEABIRoutine();
   }
 };
 
