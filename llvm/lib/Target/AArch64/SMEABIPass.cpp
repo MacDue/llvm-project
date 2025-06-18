@@ -252,7 +252,8 @@ static Value *setupLazySaveBuffer(Module *M, Function *F,
       Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_cntsb);
 
   Value *SVL = Builder.CreateCall(ReadSVLIntr->getFunctionType(), ReadSVLIntr);
-  Value *BufferSize = Builder.CreateMul(SVL, SVL, "za.buffer.size");
+  Value *BufferSize = Builder.CreateMul(SVL, SVL, "za.buffer.size",
+                                        /*HasNUW=*/true, /*HasNSW=*/true);
 
   Type *I8Type = Builder.getInt8Ty();
   Type *I64Type = Type::getInt64Ty(F->getContext());
@@ -329,7 +330,9 @@ static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
   PrevBR->eraseFromParent();
 
   Builder.SetInsertPoint(RestoreZA);
-  Builder.CreateCall(RestoreDecl, {TPIDR2Block});
+  CallBase *RestoreCall = Builder.CreateCall(RestoreDecl, {TPIDR2Block});
+  RestoreCall->setCallingConv(
+      CallingConv::AArch64_SME_ABI_Support_Routines_PreserveMost_From_X0);
   Builder.CreateBr(AfterRestore);
 
   Builder.SetInsertPoint(&AfterRestore->front());
@@ -352,7 +355,8 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
     auto &EntryBlock = F->getEntryBlock();
     for (BasicBlock::iterator I = EntryBlock.begin(), E = EntryBlock.end();
          I != E; ++I) {
-      if (AllocaInst *AI = dyn_cast<AllocaInst>(I))
+      if (AllocaInst *AI = dyn_cast<AllocaInst>(I);
+          AI && AI->getAllocatedType() == ZaType)
         ZaAllocas.push_back(AI);
     }
 
