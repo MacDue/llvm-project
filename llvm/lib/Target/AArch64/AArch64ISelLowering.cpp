@@ -8952,8 +8952,20 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     return R;
   };
 
-  bool RequiresLazySave = CallAttrs.requiresLazySave();
-  bool RequiresSaveAllZA = CallAttrs.requiresPreservingAllZAState();
+  bool CallPresentInIR = CLI.CB != nullptr;
+  bool RequiresLazySave = !CallPresentInIR && CallAttrs.requiresLazySave();
+  bool RequiresSaveAllZA =
+      !CallPresentInIR && CallAttrs.requiresPreservingAllZAState();
+  bool ShouldSaveTPIDR2 = RequiresLazySave || RequiresSaveAllZA;
+
+  SDValue PreviousTPIDR2;
+  if (ShouldSaveTPIDR2) {
+    PreviousTPIDR2 = DAG.getNode(
+        ISD::INTRINSIC_W_CHAIN, DL, DAG.getVTList(MVT::i64, MVT::Other), Chain,
+        DAG.getConstant(Intrinsic::aarch64_sme_get_tpidr2, DL, MVT::i32));
+    Chain = PreviousTPIDR2.getValue(1);
+  }
+
   if (RequiresLazySave) {
     const TPIDR2Object &TPIDR2 = FuncInfo->getTPIDR2Obj();
     MachinePointerInfo MPI =
@@ -8974,10 +8986,10 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
         TPIDR2ObjAddr);
     OptimizationRemarkEmitter ORE(&MF.getFunction());
     ORE.emit([&]() {
-      auto R = CLI.CB ? OptimizationRemarkAnalysis("sme", "SMELazySaveZA",
-                                                   CLI.CB)
-                      : OptimizationRemarkAnalysis("sme", "SMELazySaveZA",
-                                                   &MF.getFunction());
+      auto R = CLI.CB
+                   ? OptimizationRemarkAnalysis("sme", "SMELazySaveZA", CLI.CB)
+                   : OptimizationRemarkAnalysis("sme", "SMELazySaveZA",
+                                                &MF.getFunction());
       return DescribeCallsite(R) << " sets up a lazy save for ZA";
     });
   } else if (RequiresSaveAllZA) {
@@ -9509,7 +9521,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     }
   }
 
-  if (CallAttrs.requiresEnablingZAAfterCall())
+  if (RequiresLazySave || CallAttrs.requiresEnablingZAAfterCall())
     // Unconditionally resume ZA.
     Result = DAG.getNode(
         AArch64ISD::SMSTART, DL, DAG.getVTList(MVT::Other, MVT::Glue), Result,
@@ -9552,6 +9564,13 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   } else if (RequiresSaveAllZA) {
     Result = emitSMEStateSaveRestore(*this, DAG, FuncInfo, DL, Result,
                                      /*IsSave=*/false);
+  }
+
+  if (ShouldSaveTPIDR2) {
+    Result = DAG.getNode(
+        ISD::INTRINSIC_VOID, DL, MVT::Other, Result,
+        DAG.getConstant(Intrinsic::aarch64_sme_set_tpidr2, DL, MVT::i32),
+        PreviousTPIDR2);
   }
 
   if (RequiresSMChange || RequiresLazySave || ShouldPreserveZT0 ||
