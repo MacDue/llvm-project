@@ -9554,12 +9554,6 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
         DAG.getNode(AArch64ISD::RESTORE_ZA, DL, MVT::Other,
                     {Result, TPIDR2_EL0, DAG.getRegister(AArch64::X0, MVT::i64),
                      RestoreRoutine, RegMask, Result.getValue(1)});
-
-    // Finally reset the TPIDR2_EL0 register to 0.
-    Result = DAG.getNode(
-        ISD::INTRINSIC_VOID, DL, MVT::Other, Result,
-        DAG.getConstant(Intrinsic::aarch64_sme_set_tpidr2, DL, MVT::i32),
-        DAG.getConstant(0, DL, MVT::i64));
     TPIDR2.Uses++;
   } else if (RequiresSaveAllZA) {
     Result = emitSMEStateSaveRestore(*this, DAG, FuncInfo, DL, Result,

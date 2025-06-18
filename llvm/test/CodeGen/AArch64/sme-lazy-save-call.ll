@@ -84,9 +84,33 @@ define void @test_lazy_save_2_callees() nounwind "aarch64_inout_za" {
 define float @test_lazy_save_expanded_intrinsic(float %a) nounwind "aarch64_inout_za" {
 ; CHECK-LABEL: test_lazy_save_expanded_intrinsic:
 ; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x30, [sp, #-16]! // 8-byte Folded Spill
+; CHECK-NEXT:    stp x29, x30, [sp, #-32]! // 16-byte Folded Spill
+; CHECK-NEXT:    stp x20, x19, [sp, #16] // 16-byte Folded Spill
+; CHECK-NEXT:    mov x29, sp
+; CHECK-NEXT:    sub sp, sp, #16
+; CHECK-NEXT:    rdsvl x8, #1
+; CHECK-NEXT:    mov x9, sp
+; CHECK-NEXT:    msub x9, x8, x8, x9
+; CHECK-NEXT:    mov sp, x9
+; CHECK-NEXT:    stur x9, [x29, #-16]
+; CHECK-NEXT:    sub x9, x29, #16
+; CHECK-NEXT:    sturh wzr, [x29, #-6]
+; CHECK-NEXT:    stur wzr, [x29, #-4]
+; CHECK-NEXT:    mrs x20, TPIDR2_EL0
+; CHECK-NEXT:    sturh w8, [x29, #-8]
+; CHECK-NEXT:    msr TPIDR2_EL0, x9
 ; CHECK-NEXT:    bl cosf
-; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
+; CHECK-NEXT:    smstart za
+; CHECK-NEXT:    mrs x8, TPIDR2_EL0
+; CHECK-NEXT:    sub x0, x29, #16
+; CHECK-NEXT:    cbnz x8, .LBB2_2
+; CHECK-NEXT:  // %bb.1:
+; CHECK-NEXT:    bl __arm_tpidr2_restore
+; CHECK-NEXT:  .LBB2_2:
+; CHECK-NEXT:    msr TPIDR2_EL0, x20
+; CHECK-NEXT:    mov sp, x29
+; CHECK-NEXT:    ldp x20, x19, [sp, #16] // 16-byte Folded Reload
+; CHECK-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-NEXT:    ret
   %za.state = tail call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = call float @llvm.cos.f32(float %a)
