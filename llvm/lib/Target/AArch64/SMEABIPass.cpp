@@ -516,9 +516,7 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
   }
 
   SmallVector<CallBase *> OffPoints;
-  SmallVector<Instruction *> SavePoints;
-  SmallPtrSet<Instruction *, 8> ReloadPoints;
-  LiveRange ClobberRange(LiveRangeAllocator);
+  SmallPtrSet<Instruction *, 8> SavePoints, ReloadPoints;
 
   // Sort clobbers by dominance.
   sort(Clobbers, [&](auto *A, auto *B) {
@@ -527,19 +525,15 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
 
   for (auto *Clobber : Clobbers) {
     unsigned ClobberPoint = Liveness.InstructionOrder.at(Clobber);
-    if (ClobberRange.findLiveValue(ClobberPoint))
-      continue;
     Value *V = ZALiveness.findLiveValue(ClobberPoint);
     if (!V) {
       OffPoints.push_back(Clobber);
       continue;
     }
 
-    Instruction *SavePoint = Clobber;
-    auto *SaveBlock = SavePoint->getParent();
+    unsigned MinReloadLevel = 0;
     DenseMap<BasicBlock *, unsigned> BlockToMinReloadIndex;
     SmallVector<Instruction *> ReloadCandidates;
-    unsigned MinDomLevel = DT.getNode(SaveBlock)->getLevel();
     for (auto *User : V->users()) {
       auto *Inst = cast<Instruction>(User);
       if (!isPotentiallyReachable(Clobber, Inst,
@@ -557,26 +551,28 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
           std::make_pair(ReloadBlock, ReloadIndex));
       if (!Inserted)
         It->second = std::min(It->second, ReloadIndex);
+      unsigned ReloadLevel = DT.getNode(ReloadBlock)->getLevel();
+      if (ReloadCandidates.empty())
+        MinReloadLevel = ReloadLevel;
+      else
+        MinReloadLevel = std::min(ReloadLevel, MinReloadLevel);
       ReloadCandidates.push_back(Inst);
-      MinDomLevel = std::min(MinDomLevel, DT.getNode(ReloadBlock)->getLevel());
     }
-    SavePoints.push_back(SavePoint);
 
-    unsigned SaveIndex = Liveness.InstructionOrder.at(SavePoint);
-    SmallPtrSet<BasicBlock *, 8> ClobberedBlocks;
+    // Setup a ZA save just after the definition of the current ZA state.
+    Instruction *SavePoint = cast<Instruction>(V)->getNextNode();
+    if (isa<PHINode>(SavePoint))
+      SavePoint = &*SavePoint->getParent()->getFirstNonPHIIt();
+    SavePoints.insert(SavePoint);
+
     for (auto *Candidate : ReloadCandidates) {
       bool IsDominatedByReload = false;
-      bool IsDominatedByClobber = false;
-      SmallVector<BasicBlock *> ClobberPath;
       BasicBlock *CandidateBlock = Candidate->getParent();
       BasicBlock *Block = CandidateBlock;
       unsigned ReloadIndex = Liveness.InstructionOrder.at(Candidate);
       while (Block) {
         // Check for any other reloads that might dominate this reload. If this
-        // reload is dominated by another, we can ignore this candidate (and not
-        // clobber its section of the live range). If another clobber exists
-        // before/after this reload point an additional save/restore will still
-        // be inserted.
+        // reload is dominated by another, we can ignore this candidate.
         auto It = BlockToMinReloadIndex.find(Block);
         if (It != BlockToMinReloadIndex.end()) {
           if (CandidateBlock != Block || ReloadIndex > It->second) {
@@ -584,52 +580,26 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
             break;
           }
         }
-        // Record the "clobber path" up to and including the SaveBlock.
-        if (!IsDominatedByClobber)
-          ClobberPath.push_back(Block);
-        if (Block == SaveBlock &&
-            (SaveBlock != CandidateBlock || SaveIndex < ReloadIndex)) {
-          IsDominatedByClobber = true;
-        }
         auto *DomNode = DT.getNode(Block);
         auto *IDom = DomNode->getIDom();
-        if (!IDom || IDom->getLevel() < MinDomLevel)
+        if (!IDom || IDom->getLevel() < MinReloadLevel)
           break;
         Block = IDom->getBlock();
       }
       if (IsDominatedByReload)
         continue;
       ReloadPoints.insert(Candidate);
-      if (IsDominatedByClobber)
-        ClobberedBlocks.insert_range(ClobberPath);
-    }
-
-    // Mark the ranges of ZA that are 'clobbered'. Any additional clobbers in in
-    // these ranges will not incur additional save/reloads.
-    for (auto *Block : ClobberedBlocks) {
-      unsigned BlockEndIndex = Liveness.InstructionOrder.at(&Block->back());
-      unsigned ClobberEndIndex =
-          BlockToMinReloadIndex.lookup_or(Block, BlockEndIndex);
-      if (Block == SaveBlock) {
-        ClobberRange.insert(SaveIndex, ClobberEndIndex, Clobber);
-      } else {
-        unsigned BlockStartIndex =
-            Liveness.InstructionOrder.at(&Block->front());
-        ClobberRange.insert(BlockStartIndex, ClobberEndIndex, Clobber);
-      }
     }
   }
 
   LLVM_DEBUG({
-    dbgs() << "========== @" << F->getName() << ": ZA Liveness/Clobbers\n"
+    dbgs() << "========== @" << F->getName() << ": ZA Liveness\n"
            << "Key:\n"
-           << "| - Live ZA value\n"
-           << "x - Clobbered ZA value\n\n";
+           << "| - Live ZA value\n\n";
     for (BasicBlock &Block : *F) {
       dbgs() << Block.getNameOrAsOperand() << ":\n";
       for (Instruction &Inst : Block) {
         unsigned Index = Liveness.InstructionOrder.at(&Inst);
-        dbgs() << (ClobberRange.findLiveValue(Index) ? 'x' : ' ');
         dbgs() << (ZALiveness.findLiveValue(Index) ? '|' : ' ');
         Inst.dump();
       }

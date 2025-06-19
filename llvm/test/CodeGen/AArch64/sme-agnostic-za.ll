@@ -79,6 +79,7 @@ define i64 @agnostic_caller_private_za_callee(i64 %v) nounwind "aarch64_za_state
 ; ZA-LIVENESS-NEXT:    ldr x19, [sp, #16] // 8-byte Folded Reload
 ; ZA-LIVENESS-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; ZA-LIVENESS-NEXT:    ret
+; ZA-LIVENESS-NEX
   %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = call i64 @private_za_decl(i64 %v)
   %res2 = call i64 @private_za_decl(i64 %res)
