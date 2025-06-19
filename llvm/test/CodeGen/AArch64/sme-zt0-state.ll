@@ -34,34 +34,39 @@ define void @za_zt0_shared_caller_no_state_callee(ptr %callee) "aarch64_inout_za
 ; CHECK-NEXT:    stp x29, x30, [sp, #-32]! // 16-byte Folded Spill
 ; CHECK-NEXT:    str x19, [sp, #16] // 8-byte Folded Spill
 ; CHECK-NEXT:    mov x29, sp
-; CHECK-NEXT:    sub sp, sp, #80
+; CHECK-NEXT:    sub sp, sp, #144
 ; CHECK-NEXT:    rdsvl x8, #1
+; CHECK-NEXT:    mov x10, #15 // =0xf
 ; CHECK-NEXT:    mov x9, sp
-; CHECK-NEXT:    msub x9, x8, x8, x9
+; CHECK-NEXT:    madd x10, x8, x8, x10
+; CHECK-NEXT:    and x10, x10, #0xfffffffffffffff0
+; CHECK-NEXT:    sub x9, x9, x10
 ; CHECK-NEXT:    mov sp, x9
-; CHECK-NEXT:    stur x9, [x29, #-16]
-; CHECK-NEXT:    sub x9, x29, #16
+; CHECK-NEXT:    sub x10, x29, #16
 ; CHECK-NEXT:    sub x19, x29, #80
-; CHECK-NEXT:    sturh wzr, [x29, #-6]
-; CHECK-NEXT:    stur wzr, [x29, #-4]
-; CHECK-NEXT:    sturh w8, [x29, #-8]
-; CHECK-NEXT:    msr TPIDR2_EL0, x9
+; CHECK-NEXT:    stp x9, x8, [x29, #-16]
+; CHECK-NEXT:    msr TPIDR2_EL0, x10
 ; CHECK-NEXT:    str zt0, [x19]
 ; CHECK-NEXT:    blr x0
-; CHECK-NEXT:    smstart za
 ; CHECK-NEXT:    ldr zt0, [x19]
 ; CHECK-NEXT:    mrs x8, TPIDR2_EL0
-; CHECK-NEXT:    sub x0, x29, #16
+; CHECK-NEXT:    smstart za
 ; CHECK-NEXT:    cbnz x8, .LBB1_2
-; CHECK-NEXT:  // %bb.1:
+; CHECK-NEXT:  // %bb.1: // %restore.za
+; CHECK-NEXT:    sub x8, x29, #144
+; CHECK-NEXT:    sub x0, x29, #16
+; CHECK-NEXT:    str zt0, [x8]
 ; CHECK-NEXT:    bl __arm_tpidr2_restore
-; CHECK-NEXT:  .LBB1_2:
+; CHECK-NEXT:    ldr zt0, [x8]
+; CHECK-NEXT:  .LBB1_2: // %after.restore.za
 ; CHECK-NEXT:    msr TPIDR2_EL0, xzr
 ; CHECK-NEXT:    mov sp, x29
 ; CHECK-NEXT:    ldr x19, [sp, #16] // 8-byte Folded Reload
 ; CHECK-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee();
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }
 
@@ -94,7 +99,9 @@ define void @za_zt0_shared_caller_za_shared_callee(ptr %callee) "aarch64_inout_z
 ; CHECK-NEXT:    ldp x30, x19, [sp, #64] // 16-byte Folded Reload
 ; CHECK-NEXT:    add sp, sp, #80
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee() "aarch64_inout_za";
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }
 
@@ -106,7 +113,9 @@ define void @za_zt0_shared_caller_za_zt0_shared_callee(ptr %callee) "aarch64_ino
 ; CHECK-NEXT:    blr x0
 ; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee() "aarch64_inout_za" "aarch64_in_zt0";
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }
 
@@ -245,7 +254,9 @@ define void @new_za_zt0_caller(ptr %callee) "aarch64_new_za" "aarch64_new_zt0" n
 ; CHECK-NEXT:    smstop za
 ; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee() "aarch64_inout_za" "aarch64_in_zt0";
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }
 
@@ -258,7 +269,9 @@ define void @new_za_shared_zt0_caller(ptr %callee) "aarch64_new_za" "aarch64_in_
 ; CHECK-NEXT:    blr x0
 ; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee() "aarch64_inout_za" "aarch64_in_zt0";
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }
 
@@ -271,6 +284,8 @@ define void @shared_za_new_zt0(ptr %callee) "aarch64_inout_za" "aarch64_new_zt0"
 ; CHECK-NEXT:    blr x0
 ; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-NEXT:    ret
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee() "aarch64_inout_za" "aarch64_in_zt0";
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }

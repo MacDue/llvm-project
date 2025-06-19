@@ -25,6 +25,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/DomTreeUpdater.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
@@ -91,9 +92,7 @@ public:
       // arguments are copies/uses in a predecessor).
       // -> split cond blocks -> insert uses before branches
       // (then ignore PHI users elsewhere)
-      for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
-        Instruction &Inst = *It;
-
+      for (Instruction &Inst : *Block) {
         // Collect uses of `Type`.
         // Note: We ignore phi uses -- these require preprocessing as they are
         // not dominated by the definition.
@@ -162,8 +161,8 @@ public:
       auto &Info = BlockInfoMap.try_emplace(Block, Block, Type).first->second;
       if (Info.updateLiveIn())
         Worklist.insert(pred_begin(Block), pred_end(Block));
-      for (auto It = Block->begin(), E = Block->end(); It != E; ++It)
-        InstructionOrder.try_emplace(&*It, NextInstructionId++);
+      for (Instruction &Inst : *Block)
+        InstructionOrder.try_emplace(&Inst, NextInstructionId++);
     }
     while (!Worklist.empty()) {
       const BasicBlock *Block = Worklist.pop_back_val();
@@ -203,14 +202,12 @@ public:
 // to use the ssa.copy (and we then ignore phi uses for live range calculation).
 // After this pass, the "za.phi" blocks will either be empty (and optimize
 // away), or contain a ZA restore.
-static void preprocessForLazySaves(DominatorTree &DT, Module *M, Function *F,
-                                   Type *ZaType, IRBuilder<> &Builder) {
+static void preprocessPhisForZASaveRestore(DominatorTree &DT, Module *M,
+                                           Function *F, Type *ZaType,
+                                           IRBuilder<> &Builder) {
   SmallVector<PHINode *> Worklist;
-  for (auto It = F->begin(), E = F->end(); It != E; ++It) {
-    BasicBlock *Block = &*It;
-    if (Block->phis().empty())
-      continue;
-    for (PHINode &Phi : Block->phis()) {
+  for (BasicBlock &Block : *F) {
+    for (PHINode &Phi : Block.phis()) {
       if (Phi.getType() != ZaType)
         continue;
       Worklist.push_back(&Phi);
@@ -245,8 +242,7 @@ static void preprocessForLazySaves(DominatorTree &DT, Module *M, Function *F,
   assert(DT.verify());
 }
 
-static Value *setupLazySaveBuffer(Module *M, Function *F,
-                                  IRBuilder<> &Builder) {
+static Value *emitLazySaveBuffer(Module *M, Function *F, IRBuilder<> &Builder) {
   Builder.SetInsertPoint(&F->getEntryBlock().front());
   Function *ReadSVLIntr =
       Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_cntsb);
@@ -257,7 +253,8 @@ static Value *setupLazySaveBuffer(Module *M, Function *F,
 
   Type *I8Type = Builder.getInt8Ty();
   Type *I64Type = Type::getInt64Ty(F->getContext());
-  Value *Buffer = Builder.CreateAlloca(I8Type, BufferSize, "za.buffer");
+  AllocaInst *Buffer = Builder.CreateAlloca(I8Type, BufferSize, "za.buffer");
+  Buffer->setAlignment(Align(16));
 
   Value *TPIDR2Block = Builder.CreateAlloca(I64Type, Builder.getInt64(2));
   Value *TPIDR2Meta = Builder.CreatePtrAdd(TPIDR2Block, Builder.getInt64(8));
@@ -273,8 +270,8 @@ static Value *setupLazySaveBuffer(Module *M, Function *F,
   return TPIDR2Block;
 }
 
-static Value *setupFullZASaveBuffer(Module *M, Function *F,
-                                    IRBuilder<> &Builder) {
+static Value *emitFullZASaveBuffer(Module *M, Function *F,
+                                   IRBuilder<> &Builder) {
   Builder.SetInsertPoint(&F->getEntryBlock().front());
   auto &Ctx = M->getContext();
   auto *SMEStateSizeTy =
@@ -289,7 +286,8 @@ static Value *setupFullZASaveBuffer(Module *M, Function *F,
       CallingConv::AArch64_SME_ABI_Support_Routines_PreserveMost_From_X1);
 
   Type *I8Type = Builder.getInt8Ty();
-  Value *Buffer = Builder.CreateAlloca(I8Type, StateSize, "za.buffer");
+  AllocaInst *Buffer = Builder.CreateAlloca(I8Type, StateSize, "za.buffer");
+  Buffer->setAlignment(Align(16));
 
   return Buffer;
 }
@@ -376,18 +374,35 @@ static void emitLazyRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
                      {Builder.getInt64(0)});
 }
 
-static Value *setupSaveBuffer(Module *M, Function *F, IRBuilder<> &Builder,
-                              SMEAttrs FnAttrs) {
+static Value *emitZASaveBuffer(Module *M, Function *F, IRBuilder<> &Builder,
+                               SMEAttrs FnAttrs) {
   if (FnAttrs.hasZAState())
-    return setupLazySaveBuffer(M, F, Builder);
+    return emitLazySaveBuffer(M, F, Builder);
   if (FnAttrs.hasAgnosticZAInterface())
-    return setupFullZASaveBuffer(M, F, Builder);
+    return emitFullZASaveBuffer(M, F, Builder);
   llvm_unreachable("Don't know how to allocate ZA save buffer");
 }
 
-static void emitSaveZAState(Module *M, IRBuilder<> &Builder, Value *Buffer,
-                            SMEAttrs FnAttrs) {
-  if (FnAttrs.hasZAState())
+static void emitSaveZAState(Module *M, Function *F, IRBuilder<> &Builder,
+                            Value *Buffer, SMEAttrs FnAttrs) {
+  bool IsLazySave = FnAttrs.hasZAState();
+  OptimizationRemarkEmitter ORE(F);
+  ORE.emit([&] {
+    auto Clobber = Builder.GetInsertPoint();
+    OptimizationRemarkAnalysis R("sme", "SMEABI", &*Clobber);
+    R << "in function '" << F->getName() << "' "
+      << (IsLazySave ? "lazy save for ZA" : "full ZA save")
+      << " required before ";
+    if (CallBase *Call = dyn_cast<CallBase>(Clobber))
+      if (auto *Callee = Call->getCalledFunction())
+        R << "call to '" << Callee->getName() << "'";
+      else
+        R << "indirect function call";
+    else
+      R << "clobber";
+    return R;
+  });
+  if (IsLazySave)
     return emitLazySaveZAState(M, Builder, Buffer);
   if (FnAttrs.hasAgnosticZAInterface())
     return emitFullSaveRestoreZAState(M, Builder, Buffer, /*IsSave=*/true);
@@ -403,8 +418,8 @@ static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
   llvm_unreachable("Don't know how to restore ZA state");
 }
 
-static bool insertLazySaveAndRestores(Module *M, Function *F,
-                                      IRBuilder<> &Builder) {
+static bool insertZASavesAndRestores(Module *M, Function *F,
+                                     IRBuilder<> &Builder) {
   // TODO: Exit early if there are no clobbers.
   Type *ZaType = TargetExtType::get(F->getContext(), "aarch64.za.generation");
   // TODO: Look up existing dominator tree?
@@ -428,9 +443,8 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
   }
 
   // We need to pre-process phis to correctly compute their liveness, since a
-  // phi is really a copy in a predecessor, its uses cannot be considered
-  // live-in.
-  preprocessForLazySaves(DT, M, F, ZaType, Builder);
+  // phi is a copy in a predecessor, its uses cannot be considered live-in.
+  preprocessPhisForZASaveRestore(DT, M, F, ZaType, Builder);
 
   TypeLiveness Liveness(F, ZaType);
   LiveRange::Allocator LiveRangeAllocator;
@@ -452,24 +466,22 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
   // Compute live ranges for ZA state and collect clobbers.
   SmallVector<Value *> ZADefs;
   SmallVector<CallBase *> Clobbers;
-  for (auto It = F->begin(), E = F->end(); It != E; ++It) {
-    BasicBlock *Block = &*It;
-    auto &Info = Liveness.getBlockLiveness(Block);
+  for (BasicBlock &Block : *F) {
+    auto &Info = Liveness.getBlockLiveness(&Block);
     for (Value *LiveIn : Info.LiveIn) {
       assert(!isa<Constant>(LiveIn) && "Constant ZA values are not supported");
-      defineOrUpdateValueLiveRange(LiveIn, &Block->front(), Info);
+      defineOrUpdateValueLiveRange(LiveIn, &Block.front(), Info);
     }
 
-    for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
-      Instruction *Inst = &*It;
-      if (auto *Call = dyn_cast<CallBase>(Inst)) {
+    for (Instruction &Inst : Block) {
+      if (auto *Call = dyn_cast<CallBase>(&Inst)) {
         if (!isa<IntrinsicInst>(Call) && SMECallAttrs(*Call).clobbersZAState())
           Clobbers.push_back(Call);
       }
-      if (Inst->getType() != ZaType)
+      if (Inst.getType() != ZaType)
         continue;
-      Value *Def = cast<Value>(Inst);
-      defineOrUpdateValueLiveRange(Def, Inst, Info, true);
+      Value *Def = cast<Value>(&Inst);
+      defineOrUpdateValueLiveRange(Def, &Inst, Info, true);
       ZADefs.push_back(Def);
     }
   }
@@ -584,15 +596,13 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
            << "Key:\n"
            << "| - Live ZA value\n"
            << "x - Clobbered ZA value\n\n";
-    for (auto It = F->begin(), E = F->end(); It != E; ++It) {
-      const BasicBlock *Block = &*It;
-      dbgs() << Block->getNameOrAsOperand() << ":\n";
-      for (auto It = Block->begin(), E = Block->end(); It != E; ++It) {
-        const Instruction *Inst = &*It;
-        unsigned Index = Liveness.InstructionOrder.at(Inst);
+    for (BasicBlock &Block : *F) {
+      dbgs() << Block.getNameOrAsOperand() << ":\n";
+      for (Instruction &Inst : Block) {
+        unsigned Index = Liveness.InstructionOrder.at(&Inst);
         dbgs() << (ClobberRange.findLiveValue(Index) ? 'x' : ' ');
         dbgs() << (ZALiveness.findLiveValue(Index) ? '|' : ' ');
-        Inst->dump();
+        Inst.dump();
       }
       dbgs() << "==========\n";
     }
@@ -632,11 +642,11 @@ static bool insertLazySaveAndRestores(Module *M, Function *F,
     return true;
 
   SMEAttrs FnAttrs(*F);
-  Value *Buffer = setupSaveBuffer(M, F, Builder, FnAttrs);
+  Value *Buffer = emitZASaveBuffer(M, F, Builder, FnAttrs);
 
   for (auto *SavePoint : SavePoints) {
     Builder.SetInsertPoint(SavePoint);
-    emitSaveZAState(M, Builder, Buffer, FnAttrs);
+    emitSaveZAState(M, F, Builder, Buffer, FnAttrs);
   }
 
   for (auto *Restore : ReloadPoints) {
@@ -791,18 +801,17 @@ bool SMEABI::runOnFunction(Function &F) {
   if (F.isDeclaration() || F.hasFnAttribute("aarch64_expanded_pstate_za"))
     return false;
 
-  F.addFnAttr("aarch64_expanded_pstate_za");
-
   bool Changed = false;
   SMEAttrs FnAttrs(F);
 
   if (FnAttrs.hasZAState() || FnAttrs.hasAgnosticZAInterface())
-    Changed |= insertLazySaveAndRestores(M, &F, Builder);
+    Changed |= insertZASavesAndRestores(M, &F, Builder);
 
-  if (FnAttrs.isNewZA() || FnAttrs.isNewZT0()) {
-    // TODO: Use liveness information in updateNewStateFunctions.
+  if (FnAttrs.isNewZA() || FnAttrs.isNewZT0())
     Changed |= updateNewStateFunctions(M, &F, Builder, FnAttrs);
-  }
+
+  if (Changed)
+    F.addFnAttr("aarch64_expanded_pstate_za");
 
   return Changed;
 }

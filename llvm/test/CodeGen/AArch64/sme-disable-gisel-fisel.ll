@@ -302,9 +302,33 @@ entry:
 define fp128 @f128_call_za(fp128 %a, fp128 %b) "aarch64_inout_za" nounwind {
 ; CHECK-COMMON-LABEL: f128_call_za:
 ; CHECK-COMMON:       // %bb.0:
-; CHECK-COMMON-NEXT:    str x30, [sp, #-16]! // 8-byte Folded Spill
+; CHECK-COMMON-NEXT:    stp x29, x30, [sp, #-32]! // 16-byte Folded Spill
+; CHECK-COMMON-NEXT:    stp x20, x19, [sp, #16] // 16-byte Folded Spill
+; CHECK-COMMON-NEXT:    mov x29, sp
+; CHECK-COMMON-NEXT:    sub sp, sp, #16
+; CHECK-COMMON-NEXT:    rdsvl x8, #1
+; CHECK-COMMON-NEXT:    mov x9, sp
+; CHECK-COMMON-NEXT:    msub x9, x8, x8, x9
+; CHECK-COMMON-NEXT:    mov sp, x9
+; CHECK-COMMON-NEXT:    stur x9, [x29, #-16]
+; CHECK-COMMON-NEXT:    sub x9, x29, #16
+; CHECK-COMMON-NEXT:    sturh wzr, [x29, #-6]
+; CHECK-COMMON-NEXT:    stur wzr, [x29, #-4]
+; CHECK-COMMON-NEXT:    mrs x20, TPIDR2_EL0
+; CHECK-COMMON-NEXT:    sturh w8, [x29, #-8]
+; CHECK-COMMON-NEXT:    msr TPIDR2_EL0, x9
 ; CHECK-COMMON-NEXT:    bl __addtf3
-; CHECK-COMMON-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
+; CHECK-COMMON-NEXT:    smstart za
+; CHECK-COMMON-NEXT:    mrs x8, TPIDR2_EL0
+; CHECK-COMMON-NEXT:    sub x0, x29, #16
+; CHECK-COMMON-NEXT:    cbnz x8, .LBB8_2
+; CHECK-COMMON-NEXT:  // %bb.1:
+; CHECK-COMMON-NEXT:    bl __arm_tpidr2_restore
+; CHECK-COMMON-NEXT:  .LBB8_2:
+; CHECK-COMMON-NEXT:    msr TPIDR2_EL0, x20
+; CHECK-COMMON-NEXT:    mov sp, x29
+; CHECK-COMMON-NEXT:    ldp x20, x19, [sp, #16] // 16-byte Folded Reload
+; CHECK-COMMON-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-COMMON-NEXT:    ret
   %za.state = tail call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = fadd fp128 %a, %b
@@ -346,9 +370,33 @@ define fp128 @f128_call_sm(fp128 %a, fp128 %b) "aarch64_pstate_sm_enabled" nounw
 define double @frem_call_za(double %a, double %b) "aarch64_inout_za" nounwind {
 ; CHECK-COMMON-LABEL: frem_call_za:
 ; CHECK-COMMON:       // %bb.0:
-; CHECK-COMMON-NEXT:    str x30, [sp, #-16]! // 8-byte Folded Spill
+; CHECK-COMMON-NEXT:    stp x29, x30, [sp, #-32]! // 16-byte Folded Spill
+; CHECK-COMMON-NEXT:    stp x20, x19, [sp, #16] // 16-byte Folded Spill
+; CHECK-COMMON-NEXT:    mov x29, sp
+; CHECK-COMMON-NEXT:    sub sp, sp, #16
+; CHECK-COMMON-NEXT:    rdsvl x8, #1
+; CHECK-COMMON-NEXT:    mov x9, sp
+; CHECK-COMMON-NEXT:    msub x9, x8, x8, x9
+; CHECK-COMMON-NEXT:    mov sp, x9
+; CHECK-COMMON-NEXT:    stur x9, [x29, #-16]
+; CHECK-COMMON-NEXT:    sub x9, x29, #16
+; CHECK-COMMON-NEXT:    sturh wzr, [x29, #-6]
+; CHECK-COMMON-NEXT:    stur wzr, [x29, #-4]
+; CHECK-COMMON-NEXT:    mrs x20, TPIDR2_EL0
+; CHECK-COMMON-NEXT:    sturh w8, [x29, #-8]
+; CHECK-COMMON-NEXT:    msr TPIDR2_EL0, x9
 ; CHECK-COMMON-NEXT:    bl fmod
-; CHECK-COMMON-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
+; CHECK-COMMON-NEXT:    smstart za
+; CHECK-COMMON-NEXT:    mrs x8, TPIDR2_EL0
+; CHECK-COMMON-NEXT:    sub x0, x29, #16
+; CHECK-COMMON-NEXT:    cbnz x8, .LBB10_2
+; CHECK-COMMON-NEXT:  // %bb.1:
+; CHECK-COMMON-NEXT:    bl __arm_tpidr2_restore
+; CHECK-COMMON-NEXT:  .LBB10_2:
+; CHECK-COMMON-NEXT:    msr TPIDR2_EL0, x20
+; CHECK-COMMON-NEXT:    mov sp, x29
+; CHECK-COMMON-NEXT:    ldp x20, x19, [sp, #16] // 16-byte Folded Reload
+; CHECK-COMMON-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-COMMON-NEXT:    ret
   %za.state = tail call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = frem double %a, %b
@@ -483,21 +531,12 @@ entry:
 define void @agnostic_za_function(ptr %ptr) nounwind "aarch64_za_state_agnostic" {
 ; CHECK-COMMON-LABEL: agnostic_za_function:
 ; CHECK-COMMON:       // %bb.0:
-; CHECK-COMMON-NEXT:    stp x29, x30, [sp, #-32]! // 16-byte Folded Spill
-; CHECK-COMMON-NEXT:    stp x20, x19, [sp, #16] // 16-byte Folded Spill
-; CHECK-COMMON-NEXT:    mov x29, sp
-; CHECK-COMMON-NEXT:    mov x8, x0
-; CHECK-COMMON-NEXT:    bl __arm_sme_state_size
-; CHECK-COMMON-NEXT:    sub sp, sp, x0
-; CHECK-COMMON-NEXT:    mov x20, sp
-; CHECK-COMMON-NEXT:    mov x0, x20
-; CHECK-COMMON-NEXT:    bl __arm_sme_save
-; CHECK-COMMON-NEXT:    blr x8
-; CHECK-COMMON-NEXT:    mov x0, x20
-; CHECK-COMMON-NEXT:    bl __arm_sme_restore
-; CHECK-COMMON-NEXT:    mov sp, x29
-; CHECK-COMMON-NEXT:    ldp x20, x19, [sp, #16] // 16-byte Folded Reload
-; CHECK-COMMON-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
+; CHECK-COMMON-NEXT:    str x30, [sp, #-16]! // 8-byte Folded Spill
+; CHECK-COMMON-NEXT:    msr TPIDR2_EL0, xzr
+; CHECK-COMMON-NEXT:    smstop za
+; CHECK-COMMON-NEXT:    blr x0
+; CHECK-COMMON-NEXT:    smstart za
+; CHECK-COMMON-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-COMMON-NEXT:    ret
   call void %ptr()
   ret void

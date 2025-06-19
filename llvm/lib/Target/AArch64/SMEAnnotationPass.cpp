@@ -183,10 +183,10 @@ static ZAStateUsage getZAStateUsage(Instruction *Inst) {
 }
 
 static void insertSMEAnnotations(SMEAnnotationContext &Ctx) {
-  Ctx.F->addFnAttr(SME_ANNOTATED_ATTR);
-
   if (!Ctx.FnAttrs.hasZAState() && !Ctx.FnAttrs.hasAgnosticZAInterface())
     return;
+
+  Ctx.F->addFnAttr(SME_ANNOTATED_ATTR);
 
   SetupZAEntryAndExits(Ctx);
 

@@ -2828,28 +2828,28 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK0-NEXT:    .cfi_offset b15, -112
 ; CHECK0-NEXT:    sub sp, sp, #16
 ; CHECK0-NEXT:    rdsvl x8, #1
+; CHECK0-NEXT:    mov x10, #15 // =0xf
 ; CHECK0-NEXT:    mov x9, sp
+; CHECK0-NEXT:    madd x10, x8, x8, x10
 ; CHECK0-NEXT:    mov w20, w0
-; CHECK0-NEXT:    msub x9, x8, x8, x9
+; CHECK0-NEXT:    and x10, x10, #0xfffffffffffffff0
+; CHECK0-NEXT:    sub x9, x9, x10
 ; CHECK0-NEXT:    mov sp, x9
-; CHECK0-NEXT:    stur x9, [x29, #-80]
-; CHECK0-NEXT:    sub x9, x29, #80
-; CHECK0-NEXT:    sturh wzr, [x29, #-70]
-; CHECK0-NEXT:    stur wzr, [x29, #-68]
-; CHECK0-NEXT:    sturh w8, [x29, #-72]
-; CHECK0-NEXT:    msr TPIDR2_EL0, x9
+; CHECK0-NEXT:    sub x10, x29, #80
+; CHECK0-NEXT:    stp x9, x8, [x29, #-80]
+; CHECK0-NEXT:    msr TPIDR2_EL0, x10
 ; CHECK0-NEXT:    .cfi_offset vg, -32
 ; CHECK0-NEXT:    smstop sm
 ; CHECK0-NEXT:    bl other
 ; CHECK0-NEXT:    smstart sm
 ; CHECK0-NEXT:    .cfi_restore vg
-; CHECK0-NEXT:    smstart za
 ; CHECK0-NEXT:    mrs x8, TPIDR2_EL0
-; CHECK0-NEXT:    sub x0, x29, #80
+; CHECK0-NEXT:    smstart za
 ; CHECK0-NEXT:    cbnz x8, .LBB33_2
-; CHECK0-NEXT:  // %bb.1: // %entry
+; CHECK0-NEXT:  // %bb.1: // %restore.za
+; CHECK0-NEXT:    sub x0, x29, #80
 ; CHECK0-NEXT:    bl __arm_tpidr2_restore
-; CHECK0-NEXT:  .LBB33_2: // %entry
+; CHECK0-NEXT:  .LBB33_2: // %after.restore.za
 ; CHECK0-NEXT:    mov w0, w20
 ; CHECK0-NEXT:    msr TPIDR2_EL0, xzr
 ; CHECK0-NEXT:    sub sp, x29, #64
@@ -2902,29 +2902,29 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK64-NEXT:    .cfi_offset b15, -176
 ; CHECK64-NEXT:    sub sp, sp, #80
 ; CHECK64-NEXT:    rdsvl x8, #1
+; CHECK64-NEXT:    mov x10, #15 // =0xf
 ; CHECK64-NEXT:    mov x9, sp
+; CHECK64-NEXT:    madd x10, x8, x8, x10
 ; CHECK64-NEXT:    mov w20, w0
-; CHECK64-NEXT:    msub x9, x8, x8, x9
 ; CHECK64-NEXT:    mov x19, sp
+; CHECK64-NEXT:    and x10, x10, #0xfffffffffffffff0
+; CHECK64-NEXT:    sub x9, x9, x10
 ; CHECK64-NEXT:    mov sp, x9
-; CHECK64-NEXT:    str x9, [x19]
-; CHECK64-NEXT:    add x9, x19, #0
-; CHECK64-NEXT:    strh wzr, [x19, #10]
-; CHECK64-NEXT:    str wzr, [x19, #12]
-; CHECK64-NEXT:    strh w8, [x19, #8]
-; CHECK64-NEXT:    msr TPIDR2_EL0, x9
+; CHECK64-NEXT:    add x10, x19, #0
+; CHECK64-NEXT:    stp x9, x8, [x19]
+; CHECK64-NEXT:    msr TPIDR2_EL0, x10
 ; CHECK64-NEXT:    .cfi_offset vg, -32
 ; CHECK64-NEXT:    smstop sm
 ; CHECK64-NEXT:    bl other
 ; CHECK64-NEXT:    smstart sm
 ; CHECK64-NEXT:    .cfi_restore vg
-; CHECK64-NEXT:    smstart za
 ; CHECK64-NEXT:    mrs x8, TPIDR2_EL0
-; CHECK64-NEXT:    add x0, x19, #0
+; CHECK64-NEXT:    smstart za
 ; CHECK64-NEXT:    cbnz x8, .LBB33_2
-; CHECK64-NEXT:  // %bb.1: // %entry
+; CHECK64-NEXT:  // %bb.1: // %restore.za
+; CHECK64-NEXT:    add x0, x19, #0
 ; CHECK64-NEXT:    bl __arm_tpidr2_restore
-; CHECK64-NEXT:  .LBB33_2: // %entry
+; CHECK64-NEXT:  .LBB33_2: // %after.restore.za
 ; CHECK64-NEXT:    mov w0, w20
 ; CHECK64-NEXT:    msr TPIDR2_EL0, xzr
 ; CHECK64-NEXT:    sub sp, x29, #128
@@ -2983,29 +2983,29 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK1024-NEXT:    .cfi_offset b15, -1136
 ; CHECK1024-NEXT:    sub sp, sp, #1040
 ; CHECK1024-NEXT:    rdsvl x8, #1
+; CHECK1024-NEXT:    mov x10, #15 // =0xf
 ; CHECK1024-NEXT:    mov x9, sp
+; CHECK1024-NEXT:    madd x10, x8, x8, x10
 ; CHECK1024-NEXT:    mov w20, w0
-; CHECK1024-NEXT:    msub x9, x8, x8, x9
 ; CHECK1024-NEXT:    mov x19, sp
+; CHECK1024-NEXT:    and x10, x10, #0xfffffffffffffff0
+; CHECK1024-NEXT:    sub x9, x9, x10
 ; CHECK1024-NEXT:    mov sp, x9
-; CHECK1024-NEXT:    str x9, [x19]
-; CHECK1024-NEXT:    add x9, x19, #0
-; CHECK1024-NEXT:    strh wzr, [x19, #10]
-; CHECK1024-NEXT:    str wzr, [x19, #12]
-; CHECK1024-NEXT:    strh w8, [x19, #8]
-; CHECK1024-NEXT:    msr TPIDR2_EL0, x9
+; CHECK1024-NEXT:    add x10, x19, #0
+; CHECK1024-NEXT:    stp x9, x8, [x19]
+; CHECK1024-NEXT:    msr TPIDR2_EL0, x10
 ; CHECK1024-NEXT:    .cfi_offset vg, -32
 ; CHECK1024-NEXT:    smstop sm
 ; CHECK1024-NEXT:    bl other
 ; CHECK1024-NEXT:    smstart sm
 ; CHECK1024-NEXT:    .cfi_restore vg
-; CHECK1024-NEXT:    smstart za
 ; CHECK1024-NEXT:    mrs x8, TPIDR2_EL0
-; CHECK1024-NEXT:    add x0, x19, #0
+; CHECK1024-NEXT:    smstart za
 ; CHECK1024-NEXT:    cbnz x8, .LBB33_2
-; CHECK1024-NEXT:  // %bb.1: // %entry
+; CHECK1024-NEXT:  // %bb.1: // %restore.za
+; CHECK1024-NEXT:    add x0, x19, #0
 ; CHECK1024-NEXT:    bl __arm_tpidr2_restore
-; CHECK1024-NEXT:  .LBB33_2: // %entry
+; CHECK1024-NEXT:  .LBB33_2: // %after.restore.za
 ; CHECK1024-NEXT:    mov w0, w20
 ; CHECK1024-NEXT:    msr TPIDR2_EL0, xzr
 ; CHECK1024-NEXT:    sub sp, x29, #1088
@@ -3036,7 +3036,9 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK1024-NEXT:    .cfi_restore b15
 ; CHECK1024-NEXT:    ret
 entry:
+  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   tail call void @other()
+  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret i32 %x
 }
 declare void @other()
