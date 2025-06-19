@@ -220,8 +220,6 @@ static void insertSMEAnnotations(SMEAnnotationContext &Ctx) {
       }
     }
   }
-
-  return;
 }
 
 } // namespace

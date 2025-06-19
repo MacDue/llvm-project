@@ -201,10 +201,6 @@ public:
     return caller().hasZT0State() && !caller().hasZAState() &&
            callee().hasPrivateZAInterface() && !callee().isSMEABIRoutine();
   }
-
-  bool requiresEnablingZAAfterCall() const {
-    return requiresDisablingZABeforeCall();
-  }
 };
 
 } // namespace llvm

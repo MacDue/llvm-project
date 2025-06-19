@@ -8952,6 +8952,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     return R;
   };
 
+  // x || y
+
   bool CallPresentInIR = CLI.CB != nullptr;
   bool RequiresLazySave = !CallPresentInIR && CallAttrs.requiresLazySave();
   bool RequiresSaveAllZA =
@@ -9521,7 +9523,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     }
   }
 
-  if (RequiresLazySave || CallAttrs.requiresEnablingZAAfterCall())
+  if (RequiresLazySave || DisableZA)
     // Unconditionally resume ZA.
     Result = DAG.getNode(
         AArch64ISD::SMSTART, DL, DAG.getVTList(MVT::Other, MVT::Glue), Result,
