@@ -76,6 +76,8 @@ public:
   ScheduleDAGInstrs *
   createPostMachineScheduler(MachineSchedContext *C) const override;
 
+  static bool usesZALiveness();
+
 private:
   bool isLittle;
 };

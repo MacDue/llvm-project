@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AArch64.h"
+#include "AArch64TargetMachine.h"
 #include "Utils/AArch64SMEAttributes.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/IntervalMap.h"
@@ -202,21 +203,21 @@ public:
 // to use the ssa.copy (and we then ignore phi uses for live range calculation).
 // After this pass, the "za.phi" blocks will either be empty (and optimize
 // away), or contain a ZA restore.
-static void preprocessPhisForZASaveRestore(DominatorTree &DT, Module *M,
+static bool preprocessPhisForZASaveRestore(DominatorTree &DT, Module *M,
                                            Function *F, Type *ZaType,
                                            IRBuilder<> &Builder) {
-  SmallVector<PHINode *> Worklist;
+  SmallVector<PHINode *> ZAPhis;
   for (BasicBlock &Block : *F) {
     for (PHINode &Phi : Block.phis()) {
       if (Phi.getType() != ZaType)
         continue;
-      Worklist.push_back(&Phi);
+      ZAPhis.push_back(&Phi);
     }
   }
   Function *SSACopy =
       Intrinsic::getOrInsertDeclaration(M, Intrinsic::ssa_copy, ZaType);
   DomTreeUpdater DTU(&DT, DomTreeUpdater::UpdateStrategy::Eager);
-  for (PHINode *Phi : Worklist) {
+  for (PHINode *Phi : ZAPhis) {
     auto *PhiBlock = Phi->getParent();
     unsigned OpIdx = 0;
     for (auto [Predecessor, V] :
@@ -240,6 +241,7 @@ static void preprocessPhisForZASaveRestore(DominatorTree &DT, Module *M,
     }
   }
   assert(DT.verify());
+  return ZAPhis.size() > 0;
 }
 
 static Value *emitLazySaveBuffer(Module *M, Function *F, IRBuilder<> &Builder) {
@@ -418,9 +420,31 @@ static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
   llvm_unreachable("Don't know how to restore ZA state");
 }
 
+static bool eraseZALivenessAnnotations(Function *F, Type *ZaType) {
+  bool Changed = false;
+  auto *UndefZA = UndefValue::get(ZaType);
+  auto IsZAType = [&](Value *V) { return V->getType() == ZaType; };
+  for (BasicBlock &Block : *F) {
+    for (Instruction &Inst : make_early_inc_range(Block)) {
+      if (IsZAType(&Inst) || any_of(Inst.operands(), IsZAType)) {
+        for (Use &U : make_early_inc_range(Inst.uses()))
+          U.set(UndefZA);
+        [[maybe_unused]] bool IsLoadOrStore = isa<LoadInst, StoreInst>(Inst);
+        assert(!IsLoadOrStore &&
+               "ZA loads and stores should have been eliminated");
+        Inst.eraseFromParent();
+        Changed |= true;
+      }
+    }
+  }
+  return Changed;
+}
+
 static bool insertZASavesAndRestores(Module *M, Function *F,
-                                     IRBuilder<> &Builder) {
+                                     IRBuilder<> &Builder,
+                                     bool EnableZALiveness) {
   // TODO: Exit early if there are no clobbers.
+  bool Changed = false;
   Type *ZaType = TargetExtType::get(F->getContext(), "aarch64.za.generation");
   // TODO: Look up existing dominator tree?
   DominatorTree DT(*F);
@@ -438,13 +462,20 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
         ZaAllocas.push_back(AI);
     }
 
-    if (!ZaAllocas.empty())
+    if (!ZaAllocas.empty()) {
       PromoteMemToReg(ZaAllocas, DT);
+      Changed |= true;
+    }
+  }
+
+  if (!EnableZALiveness) {
+    Changed |= eraseZALivenessAnnotations(F, ZaType);
+    return Changed;
   }
 
   // We need to pre-process phis to correctly compute their liveness, since a
   // phi is a copy in a predecessor, its uses cannot be considered live-in.
-  preprocessPhisForZASaveRestore(DT, M, F, ZaType, Builder);
+  Changed |= preprocessPhisForZASaveRestore(DT, M, F, ZaType, Builder);
 
   TypeLiveness Liveness(F, ZaType);
   LiveRange::Allocator LiveRangeAllocator;
@@ -464,7 +495,6 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
   };
 
   // Compute live ranges for ZA state and collect clobbers.
-  SmallVector<Value *> ZADefs;
   SmallVector<CallBase *> Clobbers;
   for (BasicBlock &Block : *F) {
     auto &Info = Liveness.getBlockLiveness(&Block);
@@ -482,7 +512,6 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
         continue;
       Value *Def = cast<Value>(&Inst);
       defineOrUpdateValueLiveRange(Def, &Inst, Info, true);
-      ZADefs.push_back(Def);
     }
   }
 
@@ -608,27 +637,7 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
     }
   });
 
-  // Remove ZA liveness annotations from the function.
-  auto RemoveAnnoations = make_scope_exit([&] {
-    auto *UndefZA = UndefValue::get(ZaType);
-    SmallPtrSet<Instruction *, 8> ToErase;
-    for (Value *V : ZADefs) {
-      if (!V)
-        continue;
-
-      ToErase.insert(cast<Instruction>(V));
-      for (Use &U : make_early_inc_range(V->uses())) {
-        U.set(UndefZA);
-        ToErase.insert(cast<Instruction>(U.getUser()));
-      }
-    }
-    for (auto *Inst : ToErase) {
-      [[maybe_unused]] bool IsLoadOrStore = isa<LoadInst, StoreInst>(Inst);
-      assert(!IsLoadOrStore &&
-             "ZA loads and stores should have been eliminated");
-      Inst->eraseFromParent();
-    }
-  });
+  Changed |= !OffPoints.empty() || !SavePoints.empty();
 
   // "OffPoints" are clobbers that occurred where ZA is not live. At these
   // points we need to ensure ZA state is off before the call and then re-enable
@@ -638,23 +647,23 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
   for (CallBase *Clobber : OffPoints)
     emitZAOffAroundClobber(M, Clobber, Builder);
 
-  if (SavePoints.empty())
-    return true;
+  if (!SavePoints.empty()) {
+    SMEAttrs FnAttrs(*F);
+    Value *Buffer = emitZASaveBuffer(M, F, Builder, FnAttrs);
 
-  SMEAttrs FnAttrs(*F);
-  Value *Buffer = emitZASaveBuffer(M, F, Builder, FnAttrs);
+    for (auto *SavePoint : SavePoints) {
+      Builder.SetInsertPoint(SavePoint);
+      emitSaveZAState(M, F, Builder, Buffer, FnAttrs);
+    }
 
-  for (auto *SavePoint : SavePoints) {
-    Builder.SetInsertPoint(SavePoint);
-    emitSaveZAState(M, F, Builder, Buffer, FnAttrs);
+    for (auto *Restore : ReloadPoints) {
+      Builder.SetInsertPoint(Restore);
+      emitRestoreZAState(M, F, Builder, Buffer, FnAttrs);
+    }
   }
 
-  for (auto *Restore : ReloadPoints) {
-    Builder.SetInsertPoint(Restore);
-    emitRestoreZAState(M, F, Builder, Buffer, FnAttrs);
-  }
-
-  return true;
+  Changed |= eraseZALivenessAnnotations(F, ZaType);
+  return Changed;
 }
 
 struct SMEABI : public FunctionPass {
@@ -804,8 +813,9 @@ bool SMEABI::runOnFunction(Function &F) {
   bool Changed = false;
   SMEAttrs FnAttrs(F);
 
+  bool EnableZALiveness = AArch64TargetMachine::usesZALiveness();
   if (FnAttrs.hasZAState() || FnAttrs.hasAgnosticZAInterface())
-    Changed |= insertZASavesAndRestores(M, &F, Builder);
+    Changed |= insertZASavesAndRestores(M, &F, Builder, EnableZALiveness);
 
   if (FnAttrs.isNewZA() || FnAttrs.isNewZT0())
     Changed |= updateNewStateFunctions(M, &F, Builder, FnAttrs);

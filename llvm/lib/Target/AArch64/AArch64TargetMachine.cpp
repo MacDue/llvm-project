@@ -224,6 +224,11 @@ static cl::opt<bool>
                            cl::desc("Enable Machine Pipeliner for AArch64"),
                            cl::init(false), cl::Hidden);
 
+static cl::opt<bool> EnableZALiveness(
+    "aarch64-enable-za-liveness",
+    cl::desc("Enable (annotation-based) liveness tracking for ZA"),
+    cl::init(false), cl::Hidden);
+
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void
 LLVMInitializeAArch64Target() {
   // Register the target.
@@ -276,6 +281,8 @@ LLVMInitializeAArch64Target() {
 }
 
 void AArch64TargetMachine::reset() { SubtargetMap.clear(); }
+
+bool AArch64TargetMachine::usesZALiveness() { return EnableZALiveness; }
 
 //===----------------------------------------------------------------------===//
 // AArch64 Lowering public interface.
@@ -572,10 +579,12 @@ void AArch64TargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
 #define GET_PASS_REGISTRY "AArch64PassRegistry.def"
 #include "llvm/Passes/TargetPassRegistry.inc"
 
-  PB.registerPipelineStartEPCallback(
-      [](ModulePassManager &PM, OptimizationLevel Level) {
-        PM.addPass(createModuleToFunctionPassAdaptor(SMEAnnotationPass()));
-      });
+  if (EnableZALiveness) {
+    PB.registerPipelineStartEPCallback(
+        [](ModulePassManager &PM, OptimizationLevel Level) {
+          PM.addPass(createModuleToFunctionPassAdaptor(SMEAnnotationPass()));
+        });
+  }
   PB.registerLateLoopOptimizationsEPCallback(
       [=](LoopPassManager &LPM, OptimizationLevel Level) {
         LPM.addPass(LoopIdiomVectorizePass());
