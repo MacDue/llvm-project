@@ -202,8 +202,8 @@ static void insertSMEAnnotations(SMEAnnotationContext &Ctx) {
         Value *ZaState =
             Ctx.Builder.CreateLoad(Ctx.ZaType, Ctx.ZaAlloca, "za.state");
         if (Usage == ZAStateUsage::Update) {
-          Ctx.Builder.SetInsertPoint(I.getNextNode());
           Value *NewZaState = Ctx.CreateMarkUpdateZAStateIntr(ZaState);
+          Ctx.Builder.SetInsertPoint(I.getNextNode());
           Ctx.Builder.CreateStore(NewZaState, Ctx.ZaAlloca);
         } else {
           Ctx.CreateMarkUseZAStateIntr(ZaState);
