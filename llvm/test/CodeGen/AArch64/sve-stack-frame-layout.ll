@@ -591,9 +591,7 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK-NEXT:    .cfi_restore b15
 ; CHECK-NEXT:    ret
 entry:
-  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   tail call void @other()
-  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret i32 %x
 }
 declare void @other()

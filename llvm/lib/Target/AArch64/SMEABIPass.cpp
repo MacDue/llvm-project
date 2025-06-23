@@ -397,7 +397,16 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
         continue;
       }
 
-      if (succ_empty(Block)) {
+      // Avoid increasing code-size too much if all edges need a reload.
+      auto PreferReloadInCurrentBlock = [&] {
+        return all_of(successors(Block), [](BasicBlock *Succ) {
+          return !Succ->getSinglePredecessor() ||
+                 usesZAState(&*Succ->getFirstNonPHIIt());
+        });
+      };
+
+      if (succ_empty(Block) ||
+          (&Block->back() != Clobber && PreferReloadInCurrentBlock())) {
         ReloadPoints.insert(&Block->back());
         continue;
       }

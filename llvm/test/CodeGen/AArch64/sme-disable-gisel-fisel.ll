@@ -291,10 +291,8 @@ define double  @za_shared_caller_to_za_none_callee(double %x) nounwind noinline 
 ; CHECK-COMMON-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-COMMON-NEXT:    ret
 entry:
-  %za.state = tail call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %call = call double @normal_callee(double %x)
   %add = fadd double %call, 4.200000e+01
-  tail call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret double %add;
 }
 
@@ -330,9 +328,7 @@ define fp128 @f128_call_za(fp128 %a, fp128 %b) "aarch64_inout_za" nounwind {
 ; CHECK-COMMON-NEXT:    ldp x20, x19, [sp, #16] // 16-byte Folded Reload
 ; CHECK-COMMON-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-COMMON-NEXT:    ret
-  %za.state = tail call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = fadd fp128 %a, %b
-  tail call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret fp128 %res
 }
 
@@ -398,9 +394,7 @@ define double @frem_call_za(double %a, double %b) "aarch64_inout_za" nounwind {
 ; CHECK-COMMON-NEXT:    ldp x20, x19, [sp, #16] // 16-byte Folded Reload
 ; CHECK-COMMON-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-COMMON-NEXT:    ret
-  %za.state = tail call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = frem double %a, %b
-  tail call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret double %res
 }
 

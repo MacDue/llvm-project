@@ -2950,15 +2950,6 @@ let TargetPrefix = "aarch64" in {
     : DefaultAttrsIntrinsic<[llvm_aarch64_za_generation_ty],
         [llvm_aarch64_za_generation_ty, pred_ty, llvm_ptr_ty, llvm_i32_ty, llvm_i32_ty], [ImmArg<ArgIndex<3>>]>;
 
-  def int_aarch64_sme_current_za_state : DefaultAttrsIntrinsic<[llvm_aarch64_za_generation_ty],
-    [], [IntrInaccessibleMemOrArgMemOnly]>;
-
-  def int_aarch64_sme_mark_update_za_state : DefaultAttrsIntrinsic<[llvm_aarch64_za_generation_ty],
-    [llvm_aarch64_za_generation_ty], [IntrInaccessibleMemOrArgMemOnly]>;
-
-  def int_aarch64_sme_mark_use_za_state : DefaultAttrsIntrinsic<[],
-    [llvm_aarch64_za_generation_ty], [IntrInaccessibleMemOrArgMemOnly]>;
-
   def int_aarch64_sme_za_gen_ld1b_horiz : SME_Load_Intrinsic_ZA_Liveness<llvm_nxv16i1_ty>;
   def int_aarch64_sme_za_gen_st1b_horiz : SME_Store_Intrinsic_ZA_Liveness<llvm_nxv16i1_ty>;
 

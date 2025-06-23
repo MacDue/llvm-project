@@ -32,9 +32,7 @@ define void @disable_tailcallopt() "aarch64_inout_za" nounwind {
 ; CHECK-NEXT:    mov sp, x29
 ; CHECK-NEXT:    ldp x29, x30, [sp], #16 // 16-byte Folded Reload
 ; CHECK-NEXT:    ret
-  %in_za = tail call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   tail call void @private_za_callee() #3
-  tail call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %in_za)
   ret void
 }
 
@@ -70,8 +68,6 @@ define fp128 @f128_call_za(fp128 %a, fp128 %b) "aarch64_inout_za" nounwind {
 ; CHECK-NEXT:    ldr x19, [sp, #16] // 8-byte Folded Reload
 ; CHECK-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-NEXT:    ret
-  %in_za = tail call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = fadd fp128 %a, %b
-  tail call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %in_za)
   ret fp128 %res
 }

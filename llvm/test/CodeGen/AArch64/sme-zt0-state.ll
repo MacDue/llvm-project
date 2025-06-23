@@ -64,9 +64,7 @@ define void @za_zt0_shared_caller_no_state_callee(ptr %callee) "aarch64_inout_za
 ; CHECK-NEXT:    ldr x19, [sp, #16] // 8-byte Folded Reload
 ; CHECK-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
 ; CHECK-NEXT:    ret
-  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee();
-  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }
 
@@ -99,9 +97,7 @@ define void @za_zt0_shared_caller_za_shared_callee(ptr %callee) "aarch64_inout_z
 ; CHECK-NEXT:    ldp x30, x19, [sp, #64] // 16-byte Folded Reload
 ; CHECK-NEXT:    add sp, sp, #80
 ; CHECK-NEXT:    ret
-  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee() "aarch64_inout_za";
-  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }
 
@@ -113,9 +109,7 @@ define void @za_zt0_shared_caller_za_zt0_shared_callee(ptr %callee) "aarch64_ino
 ; CHECK-NEXT:    blr x0
 ; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-NEXT:    ret
-  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee() "aarch64_inout_za" "aarch64_in_zt0";
-  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }
 
@@ -254,9 +248,7 @@ define void @new_za_zt0_caller(ptr %callee) "aarch64_new_za" "aarch64_new_zt0" n
 ; CHECK-NEXT:    smstop za
 ; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-NEXT:    ret
-  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee() "aarch64_inout_za" "aarch64_in_zt0";
-  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }
 
@@ -269,9 +261,7 @@ define void @new_za_shared_zt0_caller(ptr %callee) "aarch64_new_za" "aarch64_in_
 ; CHECK-NEXT:    blr x0
 ; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-NEXT:    ret
-  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee() "aarch64_inout_za" "aarch64_in_zt0";
-  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }
 
@@ -284,8 +274,6 @@ define void @shared_za_new_zt0(ptr %callee) "aarch64_inout_za" "aarch64_new_zt0"
 ; CHECK-NEXT:    blr x0
 ; CHECK-NEXT:    ldr x30, [sp], #16 // 8-byte Folded Reload
 ; CHECK-NEXT:    ret
-  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void %callee() "aarch64_inout_za" "aarch64_in_zt0";
-  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void;
 }

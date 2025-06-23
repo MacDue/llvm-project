@@ -6,26 +6,20 @@ declare float @llvm.cos.f32(float)
 
 define void @test_lazy_save_1_callee() nounwind "aarch64_inout_za" {
 ; CHECK: remark: <unknown>:0:0: in function 'test_lazy_save_1_callee' lazy save for ZA required before call to 'private_za_callee'
-  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   call void @private_za_callee()
-  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void
 }
 
 define void @test_lazy_save_2_callees() nounwind "aarch64_inout_za" {
-  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
 ; CHECK: remark: <unknown>:0:0: in function 'test_lazy_save_2_callees' lazy save for ZA required before call to 'private_za_callee'
   call void @private_za_callee()
 ; CHECK-NOT: remark: <unknown>:0:0: in function 'test_lazy_save_2_callees' lazy save for ZA required before call to 'private_za_callee'
   call void @private_za_callee()
-  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret void
 }
 
 define float @test_lazy_save_expanded_intrinsic(float %a) nounwind "aarch64_inout_za" {
 ; CHECK: remark: <unknown>:0:0: call from 'test_lazy_save_expanded_intrinsic' to 'cosf' sets up a lazy save for ZA
-  %za.state = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
   %res = call float @llvm.cos.f32(float %a)
-  call void @llvm.aarch64.sme.mark.use.za.state(target("aarch64.za.generation") %za.state)
   ret float %res
 }
