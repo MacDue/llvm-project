@@ -35,8 +35,8 @@
 #include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
 using namespace llvm;
 
@@ -44,20 +44,20 @@ using namespace llvm;
 
 namespace {
 
-struct LiveRange {
+struct ValueRange {
   using RangeSet =
       llvm::IntervalMap<uint64_t, Value *, 16, llvm::IntervalMapInfo<unsigned>>;
   using Allocator = RangeSet::Allocator;
 
-  LiveRange(Allocator &allocator)
+  ValueRange(Allocator &allocator)
       : Ranges(std::make_unique<RangeSet>(allocator)) {}
 
-  void unionWith(LiveRange const &Other) {
+  void unionWith(ValueRange const &Other) {
     for (auto It = Other.Ranges->begin(); It != Other.Ranges->end(); ++It)
       Ranges->insert(It.start(), It.stop(), It.value());
   }
 
-  bool overlaps(LiveRange const &Other) const {
+  bool overlaps(ValueRange const &Other) const {
     return llvm::IntervalMapOverlaps<RangeSet, RangeSet>(*Ranges, *Other.Ranges)
         .valid();
   }
@@ -80,168 +80,96 @@ struct LiveRange {
   std::unique_ptr<RangeSet> Ranges;
 };
 
-class TypeLiveness {
-public:
-  struct BlockInfo {
-    using ValueSet = SmallPtrSet<Value *, 8>;
-
-    BlockInfo() = default;
-
-    BlockInfo(BasicBlock *Block, Type *Type) : Block(Block) {
-      // TODO: Need to pre-process the IR to handle PHI nodes correctly
-      // (as their uses don't make sense for live ranges -- really the
-      // arguments are copies/uses in a predecessor).
-      // -> split cond blocks -> insert uses before branches
-      // (then ignore PHI users elsewhere)
-      for (Instruction &Inst : *Block) {
-        // Collect uses of `Type`.
-        // Note: We ignore phi uses -- these require preprocessing as they are
-        // not dominated by the definition.
-        if (!isa<PHINode>(Inst)) {
-          for (size_t I = 0, N = Inst.getNumOperands(); I < N; ++I) {
-            auto *Op = Inst.getOperand(I);
-            if (Op->getType() != Type)
-              continue;
-            UseVals.insert(Op);
-          }
-        }
-
-        if (Inst.getType() != Type)
-          continue;
-
-        // Collect definitions of `Type`.
-        auto *Def = cast<Value>(&Inst);
-        DefVals.insert(Def);
-        // Collect out values for the current block.
-        for (auto *User : Def->users()) {
-          auto UserInst = cast<Instruction>(User);
-          if (!isa<PHINode>(UserInst) && UserInst->getParent() != Block)
-            LiveOut.insert(Def);
-        }
-      }
-      set_subtract(UseVals, DefVals);
-    }
-
-    bool updateLiveIn() {
-      ValueSet NewIn = UseVals;
-      set_union(NewIn, LiveOut);
-      set_subtract(NewIn, DefVals);
-
-      if (NewIn.size() == LiveIn.size())
-        return false;
-
-      LiveIn = std::move(NewIn);
-      return true;
-    }
-
-    void
-    updateLiveOut(const DenseMap<const BasicBlock *, BlockInfo> &BlockInfoMap) {
-      for (const BasicBlock *Succ : successors(Block)) {
-        const BlockInfo &Info = BlockInfoMap.at(Succ);
-        set_union(LiveOut, Info.LiveIn);
-      }
-    }
-
-    const BasicBlock *Block{nullptr};
-    ValueSet LiveIn;
-    ValueSet LiveOut;
-    ValueSet DefVals;
-    ValueSet UseVals;
-  };
-
-  // A map of basic block to liveness information.
-  DenseMap<const BasicBlock *, BlockInfo> BlockInfoMap;
-  // An order for instructions based on dominance.
-  DenseMap<const Instruction *, unsigned> InstructionOrder;
-
-public:
-  TypeLiveness(Function *F, Type *Type) {
-    unsigned NextInstructionId = 0;
-    SetVector<const BasicBlock *> Worklist;
-    for (auto *Block : depth_first(F)) {
-      auto &Info = BlockInfoMap.try_emplace(Block, Block, Type).first->second;
-      if (Info.updateLiveIn())
-        Worklist.insert(pred_begin(Block), pred_end(Block));
-      for (Instruction &Inst : *Block)
-        InstructionOrder.try_emplace(&Inst, NextInstructionId++);
-    }
-    while (!Worklist.empty()) {
-      const BasicBlock *Block = Worklist.pop_back_val();
-      BlockInfo &Info = const_cast<BlockInfo &>(BlockInfoMap.at(Block));
-      Info.updateLiveOut(BlockInfoMap);
-      if (Info.updateLiveIn()) {
-        Worklist.insert(pred_begin(Block), pred_end(Block));
-      }
-    }
+/// Does this intrinsic update ZA state? E.g. Load a tile slice.
+/// TODO: Somehow table-generate this?
+static bool isZAUpdate(Intrinsic::ID IID) {
+  switch (IID) {
+  default:
+    return false;
+  // Tile loads:
+  case Intrinsic::aarch64_sme_ld1b_horiz:
+  case Intrinsic::aarch64_sme_ld1b_vert:
+  case Intrinsic::aarch64_sme_ld1h_horiz:
+  case Intrinsic::aarch64_sme_ld1h_vert:
+  case Intrinsic::aarch64_sme_ld1w_horiz:
+  case Intrinsic::aarch64_sme_ld1w_vert:
+  case Intrinsic::aarch64_sme_ld1d_horiz:
+  case Intrinsic::aarch64_sme_ld1d_vert:
+  case Intrinsic::aarch64_sme_ld1q_horiz:
+  case Intrinsic::aarch64_sme_ld1q_vert:
+  // ZA fill:
+  case Intrinsic::aarch64_sme_ldr:
+  // Vector to tile:
+  case Intrinsic::aarch64_sme_write_horiz:
+  case Intrinsic::aarch64_sme_write_vert:
+  case Intrinsic::aarch64_sme_writeq_horiz:
+  case Intrinsic::aarch64_sme_writeq_vert:
+  // Zero:
+  case Intrinsic::aarch64_sme_zero:
+  // MOPA:
+  case Intrinsic::aarch64_sme_mopa:
+  case Intrinsic::aarch64_sme_mops:
+  case Intrinsic::aarch64_sme_mopa_wide:
+  case Intrinsic::aarch64_sme_mops_wide:
+  case Intrinsic::aarch64_sme_smopa_wide:
+  case Intrinsic::aarch64_sme_smops_wide:
+  case Intrinsic::aarch64_sme_umopa_wide:
+  case Intrinsic::aarch64_sme_umops_wide:
+  case Intrinsic::aarch64_sme_usmopa_wide:
+  case Intrinsic::aarch64_sme_usmops_wide:
+  case Intrinsic::aarch64_sme_sumopa_wide:
+  case Intrinsic::aarch64_sme_sumops_wide:
+    return true;
+    // TODO: Finish list...
   }
+}
 
-  const BlockInfo &getBlockLiveness(const BasicBlock *Block) const {
-    return BlockInfoMap.at(Block);
+/// Does this intrinsic use/read ZA state? E.g. Store a tile slice.
+/// TODO: Somehow table-generate this?
+static bool isZAUse(Intrinsic::ID IID) {
+  switch (IID) {
+  default:
+    return false;
+    // Tile stores:
+  case Intrinsic::aarch64_sme_st1b_horiz:
+  case Intrinsic::aarch64_sme_st1b_vert:
+  case Intrinsic::aarch64_sme_st1h_horiz:
+  case Intrinsic::aarch64_sme_st1h_vert:
+  case Intrinsic::aarch64_sme_st1w_horiz:
+  case Intrinsic::aarch64_sme_st1w_vert:
+  case Intrinsic::aarch64_sme_st1d_horiz:
+  case Intrinsic::aarch64_sme_st1d_vert:
+  case Intrinsic::aarch64_sme_st1q_horiz:
+  case Intrinsic::aarch64_sme_st1q_vert:
+    // ZA spill:
+  case Intrinsic::aarch64_sme_str:
+  // Tile to vector:
+  case Intrinsic::aarch64_sme_read_horiz:
+  case Intrinsic::aarch64_sme_read_vert:
+  case Intrinsic::aarch64_sme_readq_horiz:
+  case Intrinsic::aarch64_sme_readq_vert:
+  case Intrinsic::aarch64_sme_readz_horiz_x2:
+  case Intrinsic::aarch64_sme_readz_vert_x2:
+  case Intrinsic::aarch64_sme_readz_horiz_x4:
+  case Intrinsic::aarch64_sme_readz_vert_x4:
+  case Intrinsic::aarch64_sme_readz_horiz:
+  case Intrinsic::aarch64_sme_readz_vert:
+  case Intrinsic::aarch64_sme_readz_q_horiz:
+  case Intrinsic::aarch64_sme_readz_q_vert:
+  case Intrinsic::aarch64_sme_readz_x2:
+  case Intrinsic::aarch64_sme_readz_x4:
+    return true;
+    // TODO: Finish list...
   }
+}
 
-  const Instruction *getEndInstruction(const BlockInfo &Info, Value *V,
-                                       Instruction *Start) {
-    if (Info.LiveOut.contains(V))
-      return &Info.Block->back();
-    if (isa<Constant>(V))
-      return Start;
-    const Instruction *End = Start;
-    for (auto User : V->users()) {
-      auto &Inst = cast<Instruction>(*User);
-      if (!isa<PHINode>(Inst) && Inst.getParent() == Info.Block &&
-          InstructionOrder.at(End) < InstructionOrder.at(&Inst))
-        End = &Inst;
-    }
-    return End;
+static bool usesZAState(Instruction *Inst) {
+  if (auto *Intr = dyn_cast<IntrinsicInst>(Inst)) {
+    Intrinsic::ID IID = Intr->getIntrinsicID();
+    return isZAUpdate(IID) || isZAUse(IID);
   }
-};
-
-// We cannot compute live ranges of phi uses directly as the operands of phi
-// nodes do not necessarily dominate the phi. Instead, we model ZA phi's by
-// inserting "za.phi" blocks along predecessor edges. These blocks contain a
-// single ssa.copy instruction of the phi's operand -- the phi is then updated
-// to use the ssa.copy (and we then ignore phi uses for live range calculation).
-// After this pass, the "za.phi" blocks will either be empty (and optimize
-// away), or contain a ZA restore.
-static bool preprocessPhisForZASaveRestore(DominatorTree &DT, Module *M,
-                                           Function *F, Type *ZaType,
-                                           IRBuilder<> &Builder) {
-  SmallVector<PHINode *> ZAPhis;
-  for (BasicBlock &Block : *F) {
-    for (PHINode &Phi : Block.phis()) {
-      if (Phi.getType() != ZaType)
-        continue;
-      ZAPhis.push_back(&Phi);
-    }
-  }
-  Function *SSACopy =
-      Intrinsic::getOrInsertDeclaration(M, Intrinsic::ssa_copy, ZaType);
-  DomTreeUpdater DTU(&DT, DomTreeUpdater::UpdateStrategy::Eager);
-  for (PHINode *Phi : ZAPhis) {
-    auto *PhiBlock = Phi->getParent();
-    unsigned OpIdx = 0;
-    for (auto [Predecessor, V] :
-         zip_equal(Phi->blocks(), Phi->incoming_values())) {
-      auto *PredBlock = Predecessor;
-      // Update IR:
-      auto *CopyBlock =
-          BasicBlock::Create(F->getContext(), "za.phi", F, PhiBlock);
-      Builder.SetInsertPoint(CopyBlock);
-      auto *Copy =
-          Builder.CreateCall(SSACopy->getFunctionType(), SSACopy, V.get());
-      Builder.CreateBr(PhiBlock);
-      PredBlock->getTerminator()->replaceSuccessorWith(PhiBlock, CopyBlock);
-      PhiBlock->replacePhiUsesWith(PredBlock, CopyBlock);
-      Phi->setOperand(OpIdx, Copy);
-      // Update dominator tree:
-      DTU.applyUpdates({{DominatorTree::Delete, PredBlock, PhiBlock},
-                        {DominatorTree::Insert, PredBlock, CopyBlock},
-                        {DominatorTree::Insert, CopyBlock, PhiBlock}});
-      ++OpIdx;
-    }
-  }
-  assert(DT.verify());
-  return ZAPhis.size() > 0;
+  auto *CallInst = dyn_cast<CallBase>(Inst);
+  return CallInst && !SMECallAttrs(*CallInst).clobbersZAState();
 }
 
 static Value *emitLazySaveBuffer(Module *M, Function *F, IRBuilder<> &Builder) {
@@ -316,20 +244,6 @@ static void emitFullSaveRestoreZAState(Module *M, IRBuilder<> &Builder,
   CallBase *Call = Builder.CreateCall(CalleeDecl, {Buffer});
   Call->setCallingConv(
       CallingConv::AArch64_SME_ABI_Support_Routines_PreserveMost_From_X1);
-}
-
-static void emitZAOffAroundClobber(Module *M, Instruction *Clobber,
-                                   IRBuilder<> &Builder) {
-  Value *Null = Builder.getInt64(0);
-  Function *DisableZAIntr =
-      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_za_disable);
-  Function *EnableZAIntr =
-      Intrinsic::getOrInsertDeclaration(M, Intrinsic::aarch64_sme_za_enable);
-  Builder.SetInsertPoint(Clobber);
-  emitLazySaveZAState(M, Builder, Null);
-  Builder.CreateCall(DisableZAIntr->getFunctionType(), DisableZAIntr);
-  Builder.SetInsertPoint(Clobber->getNextNode());
-  Builder.CreateCall(EnableZAIntr->getFunctionType(), EnableZAIntr);
 }
 
 static void emitLazyRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
@@ -420,250 +334,122 @@ static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
   llvm_unreachable("Don't know how to restore ZA state");
 }
 
-static bool eraseZALivenessAnnotations(Function *F, Type *ZaType) {
-  bool Changed = false;
-  auto *UndefZA = UndefValue::get(ZaType);
-  auto IsZAType = [&](Value *V) { return V->getType() == ZaType; };
-  for (BasicBlock &Block : *F) {
-    for (Instruction &Inst : make_early_inc_range(Block)) {
-      if (IsZAType(&Inst) || any_of(Inst.operands(), IsZAType)) {
-        for (Use &U : make_early_inc_range(Inst.uses()))
-          U.set(UndefZA);
-        [[maybe_unused]] bool IsLoadOrStore = isa<LoadInst, StoreInst>(Inst);
-        assert(!IsLoadOrStore &&
-               "ZA loads and stores should have been eliminated");
-        Inst.eraseFromParent();
-        Changed |= true;
-      }
-    }
-  }
-  return Changed;
-}
-
 static bool insertZASavesAndRestores(Module *M, Function *F,
                                      IRBuilder<> &Builder,
                                      bool EnableZALiveness) {
-  // TODO: Exit early if there are no clobbers.
-  bool Changed = false;
-  Type *ZaType = TargetExtType::get(F->getContext(), "aarch64.za.generation");
-  // TODO: Look up existing dominator tree?
-  DominatorTree DT(*F);
-
-  {
-    // Eliminate any allocas of ZA annotations at this point. For -O1 and above
-    // this will have already been done by now, but we still need to do this for
-    // the -O0 case.
-    SmallVector<AllocaInst *> ZaAllocas;
-    auto &EntryBlock = F->getEntryBlock();
-    for (BasicBlock::iterator I = EntryBlock.begin(), E = EntryBlock.end();
-         I != E; ++I) {
-      if (AllocaInst *AI = dyn_cast<AllocaInst>(I);
-          AI && AI->getAllocatedType() == ZaType)
-        ZaAllocas.push_back(AI);
-    }
-
-    if (!ZaAllocas.empty()) {
-      PromoteMemToReg(ZaAllocas, DT);
-      Changed |= true;
-    }
-  }
-
-  if (!EnableZALiveness) {
-    Changed |= eraseZALivenessAnnotations(F, ZaType);
-    return Changed;
-  }
-
-  // We need to pre-process phis to correctly compute their liveness, since a
-  // phi is a copy in a predecessor, its uses cannot be considered live-in.
-  Changed |= preprocessPhisForZASaveRestore(DT, M, F, ZaType, Builder);
-
-  TypeLiveness Liveness(F, ZaType);
-  LiveRange::Allocator LiveRangeAllocator;
-  LiveRange ZALiveness(LiveRangeAllocator);
-  auto defineOrUpdateValueLiveRange = [&](Value *V, Instruction *FirstUseOrDef,
-                                          TypeLiveness::BlockInfo const &Info,
-                                          bool Def = false) {
-    // Find or create a live range for `value`.
-    auto LastUseInBlock = Liveness.getEndInstruction(Info, V, FirstUseOrDef);
-    unsigned Start =
-        Liveness.InstructionOrder.at(FirstUseOrDef) + (Def ? 1 : 0);
-    unsigned End = Liveness.InstructionOrder.at(LastUseInBlock);
-    if (ZALiveness.overlaps(Start, End))
-      reportFatalUsageError(
-          "Expected at most one live AArch64 SME ZA value at any point!");
-    ZALiveness.insert(Start, End, V);
-  };
-
-  // Compute live ranges for ZA state and collect clobbers.
+  unsigned NextInstructionId = 0;
   SmallVector<CallBase *> Clobbers;
-  for (BasicBlock &Block : *F) {
-    auto &Info = Liveness.getBlockLiveness(&Block);
-    for (Value *LiveIn : Info.LiveIn) {
-      assert(!isa<Constant>(LiveIn) && "Constant ZA values are not supported");
-      defineOrUpdateValueLiveRange(LiveIn, &Block.front(), Info);
-    }
-
-    for (Instruction &Inst : Block) {
+  DenseMap<const Instruction *, unsigned> InstructionOrder;
+  for (auto *Block : depth_first(F)) {
+    for (Instruction &Inst : *Block) {
       if (auto *Call = dyn_cast<CallBase>(&Inst)) {
         if (!isa<IntrinsicInst>(Call) && SMECallAttrs(*Call).clobbersZAState())
           Clobbers.push_back(Call);
       }
-      if (Inst.getType() != ZaType)
-        continue;
-      Value *Def = cast<Value>(&Inst);
-      defineOrUpdateValueLiveRange(Def, &Inst, Info, true);
+      InstructionOrder.try_emplace(&Inst, NextInstructionId++);
     }
   }
 
-  SmallVector<CallBase *> OffPoints;
-  SmallVector<Instruction *> SavePoints;
-  SmallPtrSet<Instruction *, 8> ReloadPoints;
-  LiveRange ClobberRange(LiveRangeAllocator);
+  if (Clobbers.empty())
+    return false;
 
-  // Sort clobbers by dominance.
   sort(Clobbers, [&](auto *A, auto *B) {
-    return Liveness.InstructionOrder.at(A) < Liveness.InstructionOrder.at(B);
+    return InstructionOrder.at(A) < InstructionOrder.at(B);
   });
 
+  ValueRange::Allocator Allocator;
+  ValueRange ClobberedRange(Allocator);
+  SmallPtrSet<Instruction *, 8> SavePoints, ReloadPoints;
+  SmallSet<std::pair<BasicBlock *, BasicBlock *>, 8> ReloadEdges;
+
   for (auto *Clobber : Clobbers) {
-    unsigned ClobberPoint = Liveness.InstructionOrder.at(Clobber);
-    if (ClobberRange.findLiveValue(ClobberPoint))
+    unsigned ClobberPoint = InstructionOrder.at(Clobber);
+    if (ClobberedRange.findLiveValue(ClobberPoint))
       continue;
-    Value *V = ZALiveness.findLiveValue(ClobberPoint);
-    if (!V) {
-      OffPoints.push_back(Clobber);
-      continue;
-    }
 
-    Instruction *SavePoint = Clobber;
-    auto *SaveBlock = SavePoint->getParent();
-    DenseMap<BasicBlock *, unsigned> BlockToMinReloadIndex;
-    SmallVector<Instruction *> ReloadCandidates;
-    unsigned MinDomLevel = DT.getNode(SaveBlock)->getLevel();
-    for (auto *User : V->users()) {
-      auto *Inst = cast<Instruction>(User);
-      if (!isPotentiallyReachable(Clobber, Inst,
-                                  /*ExclusionSet=*/nullptr, &DT)) {
+    SavePoints.insert(Clobber);
+
+    SmallVector<Instruction *> Worklist;
+    Worklist.push_back(Clobber);
+
+    while (!Worklist.empty()) {
+      auto *StartInst = Worklist.pop_back_val();
+      auto *Block = StartInst->getParent();
+      unsigned StartPoint = InstructionOrder.at(StartInst);
+
+      llvm::BasicBlock::iterator Start(StartInst);
+      Instruction *ReloadPoint = nullptr;
+      for (auto It = Start; It != Block->end(); ++It) {
+        Instruction *Inst = &*It;
+        if (!usesZAState(Inst))
+          continue;
+
+        ReloadPoint = Inst;
+        break;
+      }
+
+      unsigned EndPoint =
+          InstructionOrder.at(ReloadPoint ? ReloadPoint : &Block->back());
+
+      ClobberedRange.insert(StartPoint, EndPoint, Clobber);
+
+      if (ReloadPoint) {
+        ReloadPoints.insert(ReloadPoint);
         continue;
       }
-      // Phi's only use llvm.ssa.copy's of ZA which are live between the
-      // "za.phi" blocks and the phi. It should not be possible for a clobber to
-      // occur for a phi operand.
-      assert(!isa<PHINode>(Inst) &&
-             "Did not expect phi's operand to be clobbered");
-      unsigned ReloadIndex = Liveness.InstructionOrder.at(Inst);
-      auto *ReloadBlock = Inst->getParent();
-      auto [It, Inserted] = BlockToMinReloadIndex.insert(
-          std::make_pair(ReloadBlock, ReloadIndex));
-      if (!Inserted)
-        It->second = std::min(It->second, ReloadIndex);
-      ReloadCandidates.push_back(Inst);
-      MinDomLevel = std::min(MinDomLevel, DT.getNode(ReloadBlock)->getLevel());
-    }
-    SavePoints.push_back(SavePoint);
 
-    unsigned SaveIndex = Liveness.InstructionOrder.at(SavePoint);
-    SmallPtrSet<BasicBlock *, 8> ClobberedBlocks;
-    for (auto *Candidate : ReloadCandidates) {
-      bool IsDominatedByReload = false;
-      bool IsDominatedByClobber = false;
-      SmallVector<BasicBlock *> ClobberPath;
-      BasicBlock *CandidateBlock = Candidate->getParent();
-      BasicBlock *Block = CandidateBlock;
-      unsigned ReloadIndex = Liveness.InstructionOrder.at(Candidate);
-      while (Block) {
-        // Check for any other reloads that might dominate this reload. If this
-        // reload is dominated by another, we can ignore this candidate (and not
-        // clobber its section of the live range). If another clobber exists
-        // before/after this reload point an additional save/restore will still
-        // be inserted.
-        auto It = BlockToMinReloadIndex.find(Block);
-        if (It != BlockToMinReloadIndex.end()) {
-          if (CandidateBlock != Block || ReloadIndex > It->second) {
-            IsDominatedByReload = true;
-            break;
-          }
-        }
-        // Record the "clobber path" up to and including the SaveBlock.
-        if (!IsDominatedByClobber)
-          ClobberPath.push_back(Block);
-        if (Block == SaveBlock &&
-            (SaveBlock != CandidateBlock || SaveIndex < ReloadIndex)) {
-          IsDominatedByClobber = true;
-        }
-        auto *DomNode = DT.getNode(Block);
-        auto *IDom = DomNode->getIDom();
-        if (!IDom || IDom->getLevel() < MinDomLevel)
-          break;
-        Block = IDom->getBlock();
-      }
-      if (IsDominatedByReload)
+      if (succ_empty(Block)) {
+        ReloadPoints.insert(&Block->back());
         continue;
-      ReloadPoints.insert(Candidate);
-      if (IsDominatedByClobber)
-        ClobberedBlocks.insert_range(ClobberPath);
-    }
+      }
 
-    // Mark the ranges of ZA that are 'clobbered'. Any additional clobbers in in
-    // these ranges will not incur additional save/reloads.
-    for (auto *Block : ClobberedBlocks) {
-      unsigned BlockEndIndex = Liveness.InstructionOrder.at(&Block->back());
-      unsigned ClobberEndIndex =
-          BlockToMinReloadIndex.lookup_or(Block, BlockEndIndex);
-      if (Block == SaveBlock) {
-        ClobberRange.insert(SaveIndex, ClobberEndIndex, Clobber);
-      } else {
-        unsigned BlockStartIndex =
-            Liveness.InstructionOrder.at(&Block->front());
-        ClobberRange.insert(BlockStartIndex, ClobberEndIndex, Clobber);
+      for (auto *Succ : successors(Block)) {
+        if (!Succ->getSinglePredecessor()) {
+          ReloadEdges.insert({Block, Succ});
+        } else {
+          Worklist.push_back(&Succ->front());
+        }
       }
     }
   }
 
+  if (SavePoints.empty())
+    return false;
+
   LLVM_DEBUG({
-    dbgs() << "========== @" << F->getName() << ": ZA Liveness/Clobbers\n"
+    dbgs() << "========== @" << F->getName() << ": ZA Clobbers\n"
            << "Key:\n"
-           << "| - Live ZA value\n"
            << "x - Clobbered ZA value\n\n";
     for (BasicBlock &Block : *F) {
       dbgs() << Block.getNameOrAsOperand() << ":\n";
       for (Instruction &Inst : Block) {
-        unsigned Index = Liveness.InstructionOrder.at(&Inst);
-        dbgs() << (ClobberRange.findLiveValue(Index) ? 'x' : ' ');
-        dbgs() << (ZALiveness.findLiveValue(Index) ? '|' : ' ');
+        unsigned Index = InstructionOrder.at(&Inst);
+        dbgs() << (ClobberedRange.findLiveValue(Index) ? 'x' : ' ');
         Inst.dump();
       }
       dbgs() << "==========\n";
     }
   });
 
-  Changed |= !OffPoints.empty() || !SavePoints.empty();
-
-  // "OffPoints" are clobbers that occurred where ZA is not live. At these
-  // points we need to ensure ZA state is off before the call and then re-enable
-  // it after the call. FIXME: This may emit back-to-back SMSTOP/START ZA pairs.
-  // Note: These should not exist in shared or agnostic ZA functions emitted by
-  // Clang (but could occur in hand-crafted IR or private ZA functions).
-  for (CallBase *Clobber : OffPoints)
-    emitZAOffAroundClobber(M, Clobber, Builder);
-
-  if (!SavePoints.empty()) {
-    SMEAttrs FnAttrs(*F);
-    Value *Buffer = emitZASaveBuffer(M, F, Builder, FnAttrs);
-
-    for (auto *SavePoint : SavePoints) {
-      Builder.SetInsertPoint(SavePoint);
-      emitSaveZAState(M, F, Builder, Buffer, FnAttrs);
-    }
-
-    for (auto *Restore : ReloadPoints) {
-      Builder.SetInsertPoint(Restore);
-      emitRestoreZAState(M, F, Builder, Buffer, FnAttrs);
-    }
+  for (auto [Pred, Succ] : ReloadEdges) {
+    auto *ReloadBlock = SplitEdge(Pred, Succ);
+    ReloadPoints.insert(ReloadBlock->getTerminator());
   }
 
-  Changed |= eraseZALivenessAnnotations(F, ZaType);
-  return Changed;
+  SMEAttrs FnAttrs(*F);
+  Value *Buffer = emitZASaveBuffer(M, F, Builder, FnAttrs);
+
+  for (auto *SavePoint : SavePoints) {
+    Builder.SetInsertPoint(SavePoint);
+    emitSaveZAState(M, F, Builder, Buffer, FnAttrs);
+  }
+
+  for (auto *Restore : ReloadPoints) {
+    Builder.SetInsertPoint(Restore);
+    emitRestoreZAState(M, F, Builder, Buffer, FnAttrs);
+  }
+
+  return true;
 }
 
 struct SMEABI : public FunctionPass {
