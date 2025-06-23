@@ -8953,15 +8953,15 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     return R;
   };
 
-  bool UsesZALiveness = AArch64TargetMachine::usesZALiveness();
+  bool HasIRLazySaves = AArch64TargetMachine::hasGlobalZASaveRestore();
   bool CallPresentInIR = CLI.CB != nullptr;
-  bool ZASavedInIR = UsesZALiveness && CallPresentInIR;
+  bool ZASavedInIR = HasIRLazySaves && CallPresentInIR;
 
   bool RequiresLazySave = !ZASavedInIR && CallAttrs.requiresLazySave();
   bool RequiresSaveAllZA =
       !ZASavedInIR && CallAttrs.requiresPreservingAllZAState();
   bool ShouldSaveTPIDR2 =
-      UsesZALiveness && (RequiresLazySave || RequiresSaveAllZA);
+      HasIRLazySaves && (RequiresLazySave || RequiresSaveAllZA);
 
   SDValue PreviousTPIDR2;
   if (ShouldSaveTPIDR2) {

@@ -30,13 +30,6 @@ class AArch64TargetMachine;
 class FunctionPass;
 class InstructionSelector;
 
-class SMEAnnotationPass : public PassInfoMixin<SMEAnnotationPass> {
-public:
-  PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
-
-  static bool isRequired() { return true; }
-};
-
 FunctionPass *createAArch64DeadRegisterDefinitions();
 FunctionPass *createAArch64RedundantCopyEliminationPass();
 FunctionPass *createAArch64CondBrTuning();

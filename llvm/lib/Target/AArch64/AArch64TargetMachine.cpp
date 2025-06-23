@@ -224,9 +224,9 @@ static cl::opt<bool>
                            cl::desc("Enable Machine Pipeliner for AArch64"),
                            cl::init(false), cl::Hidden);
 
-static cl::opt<bool> EnableZALiveness(
-    "aarch64-enable-za-liveness",
-    cl::desc("Enable (annotation-based) liveness tracking for ZA"),
+static cl::opt<bool> EnableGlobalZASaveRestore(
+    "aarch64-enable-global-za-save-restore",
+    cl::desc("Enable global (function scope) ZA save/restore insertion"),
     cl::init(false), cl::Hidden);
 
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void
@@ -282,7 +282,9 @@ LLVMInitializeAArch64Target() {
 
 void AArch64TargetMachine::reset() { SubtargetMap.clear(); }
 
-bool AArch64TargetMachine::usesZALiveness() { return EnableZALiveness; }
+bool AArch64TargetMachine::hasGlobalZASaveRestore() {
+  return EnableGlobalZASaveRestore;
+}
 
 //===----------------------------------------------------------------------===//
 // AArch64 Lowering public interface.

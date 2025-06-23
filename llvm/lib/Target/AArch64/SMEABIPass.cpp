@@ -335,8 +335,7 @@ static void emitRestoreZAState(Module *M, Function *F, IRBuilder<> &Builder,
 }
 
 static bool insertZASavesAndRestores(Module *M, Function *F,
-                                     IRBuilder<> &Builder,
-                                     bool EnableZALiveness) {
+                                     IRBuilder<> &Builder) {
   unsigned NextInstructionId = 0;
   SmallVector<CallBase *> Clobbers;
   DenseMap<const Instruction *, unsigned> InstructionOrder;
@@ -431,9 +430,35 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
     }
   });
 
+  SmallPtrSet<BasicBlock *, 8> PredNeedsReload;
+  SmallPtrSet<LandingPadInst *, 8> LandingPads;
   for (auto [Pred, Succ] : ReloadEdges) {
-    auto *ReloadBlock = SplitEdge(Pred, Succ);
+    if (auto *LandingPad =
+            dyn_cast_or_null<LandingPadInst>(Succ->getFirstNonPHIIt())) {
+      PredNeedsReload.insert(Pred);
+      LandingPads.insert(LandingPad);
+      continue;
+    }
+    auto *ReloadBlock = ehAwareSplitEdge(Pred, Succ);
     ReloadPoints.insert(ReloadBlock->getTerminator());
+  }
+  // EH edges to landing pads are unfortunately quite awkward to spilt. We need
+  // to split the edges from every predecessor, not just the edge we wish to
+  // reload at.
+  for (LandingPadInst *LandingPad : LandingPads) {
+    BasicBlock *Succ = LandingPad->getParent();
+    PHINode *ReplPHI = PHINode::Create(LandingPad->getType(), 1, "");
+    ReplPHI->insertBefore(LandingPad->getIterator());
+    ReplPHI->takeName(LandingPad);
+    LandingPad->replaceAllUsesWith(ReplPHI);
+
+    for (BasicBlock *Pred : make_early_inc_range(predecessors(Succ))) {
+      auto *SplitBB = ehAwareSplitEdge(Pred, Succ, LandingPad, ReplPHI);
+      if (PredNeedsReload.contains(Pred))
+        ReloadPoints.insert(SplitBB->getTerminator());
+    }
+
+    LandingPad->eraseFromParent();
   }
 
   SMEAttrs FnAttrs(*F);
@@ -599,9 +624,9 @@ bool SMEABI::runOnFunction(Function &F) {
   bool Changed = false;
   SMEAttrs FnAttrs(F);
 
-  bool EnableZALiveness = AArch64TargetMachine::usesZALiveness();
-  if (FnAttrs.hasZAState() || FnAttrs.hasAgnosticZAInterface())
-    Changed |= insertZASavesAndRestores(M, &F, Builder, EnableZALiveness);
+  if (AArch64TargetMachine::hasGlobalZASaveRestore() &&
+      (FnAttrs.hasZAState() || FnAttrs.hasAgnosticZAInterface()))
+    Changed |= insertZASavesAndRestores(M, &F, Builder);
 
   if (FnAttrs.isNewZA() || FnAttrs.isNewZT0())
     Changed |= updateNewStateFunctions(M, &F, Builder, FnAttrs);

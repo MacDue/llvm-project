@@ -76,7 +76,7 @@ public:
   ScheduleDAGInstrs *
   createPostMachineScheduler(MachineSchedContext *C) const override;
 
-  static bool usesZALiveness();
+  static bool hasGlobalZASaveRestore();
 
 private:
   bool isLittle;
