@@ -337,7 +337,6 @@ def IIT_V6 : IIT_Vec<6, 60>;
 def IIT_V10 : IIT_Vec<10, 61>;
 def IIT_V2048: IIT_Vec<2048, 62>;
 def IIT_V4096: IIT_Vec<4096, 63>;
-def IIT_AARCH64_ZA_GENERATION : IIT_VT<aarch64zaGeneration, 64>;
 }
 
 defvar IIT_all_FixedTypes = !filter(iit, IIT_all,
@@ -526,7 +525,6 @@ def llvm_token_ty      : LLVMType<token>;        // token
 def llvm_x86mmx_ty     : LLVMType<x86mmx>;
 
 def llvm_aarch64_svcount_ty : LLVMType<aarch64svcount>;
-def llvm_aarch64_za_generation_ty : LLVMType<aarch64zaGeneration>;
 
 def llvm_x86amx_ty     : LLVMType<x86amx>;
 

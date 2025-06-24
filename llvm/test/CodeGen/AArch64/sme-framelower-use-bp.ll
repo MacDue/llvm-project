@@ -533,12 +533,7 @@ define void @quux() #1 {
 ; CHECK-NEXT:    str p1, [x9]
 ; CHECK-NEXT:    str p0, [x8]
 ; CHECK-NEXT:    b .LBB0_3
-; CHECK-NEXT:  .LBB0_3: // %za.phi
-; CHECK-NEXT:    b .LBB0_5
-; CHECK-NEXT:  .LBB0_4: // %za.phi1
-; CHECK-NEXT:    // in Loop: Header=BB0_5 Depth=1
-; CHECK-NEXT:    b .LBB0_5
-; CHECK-NEXT:  .LBB0_5: // %bb178
+; CHECK-NEXT:  .LBB0_3: // %bb178
 ; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    ldur x9, [x29, #-232] // 8-byte Folded Reload
 ; CHECK-NEXT:    sub x8, x29, #80
@@ -662,11 +657,8 @@ define void @quux() #1 {
 ; CHECK-NEXT:    ldr x8, [x9]
 ; CHECK-NEXT:    subs x8, x8, #1
 ; CHECK-NEXT:    str x8, [x9]
-; CHECK-NEXT:    b .LBB0_4
+; CHECK-NEXT:    b .LBB0_3
 bb:
-  %za.state = alloca target("aarch64.za.generation"), align 8
-  %0 = call target("aarch64.za.generation") @llvm.aarch64.sme.current.za.state()
-  store target("aarch64.za.generation") %0, ptr %za.state, align 8
   %alloca = alloca <vscale x 16 x i1>, align 2
   %alloca1 = alloca <vscale x 16 x i1>, align 2
   %alloca2 = alloca <vscale x 4 x float>, align 16
@@ -853,10 +845,7 @@ bb:
   %mul138 = mul i64 %load136, %load137
   %getelementptr139 = getelementptr inbounds float, ptr %getelementptr135, i64 %mul138
   store ptr %getelementptr139, ptr %alloca65, align 8
-  %za.state1 = load target("aarch64.za.generation"), ptr %za.state, align 8
-  %1 = call target("aarch64.za.generation") @llvm.aarch64.sme.mark.update.za.state(target("aarch64.za.generation") %za.state1)
   call void @llvm.aarch64.sme.zero(i32 255)
-  store target("aarch64.za.generation") %1, ptr %za.state, align 8
   store ptr null, ptr %alloca66, align 8
   %load140 = load i8, ptr %alloca42, align 1
   %trunc141 = trunc i8 %load140 to i1
@@ -956,10 +945,7 @@ bb178:                                            ; preds = %bb178, %bb
   %load212 = load <vscale x 4 x float>, ptr %alloca15, align 16
   %call213 = call <vscale x 4 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv4i1(<vscale x 16 x i1> %load209)
   %call214 = call <vscale x 4 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv4i1(<vscale x 16 x i1> %load210)
-  %za.state2 = load target("aarch64.za.generation"), ptr %za.state, align 8
-  %2 = call target("aarch64.za.generation") @llvm.aarch64.sme.mark.update.za.state(target("aarch64.za.generation") %za.state2)
   call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %call213, <vscale x 4 x i1> %call214, <vscale x 4 x float> %load211, <vscale x 4 x float> %load212)
-  store target("aarch64.za.generation") %2, ptr %za.state, align 8
   %load215 = load <vscale x 32 x i1>, ptr %alloca31, align 2
   %call216 = call <vscale x 16 x i1> @llvm.vector.extract.nxv16i1.nxv32i1(<vscale x 32 x i1> %load215, i64 16)
   %load217 = load <vscale x 32 x i1>, ptr %alloca32, align 2
@@ -978,10 +964,7 @@ bb178:                                            ; preds = %bb178, %bb
   %load226 = load <vscale x 4 x float>, ptr %alloca11, align 16
   %call227 = call <vscale x 4 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv4i1(<vscale x 16 x i1> %load223)
   %call228 = call <vscale x 4 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv4i1(<vscale x 16 x i1> %load224)
-  %za.state3 = load target("aarch64.za.generation"), ptr %za.state, align 8
-  %3 = call target("aarch64.za.generation") @llvm.aarch64.sme.mark.update.za.state(target("aarch64.za.generation") %za.state3)
   call void @llvm.aarch64.sme.mopa.nxv4f32(i32 1, <vscale x 4 x i1> %call227, <vscale x 4 x i1> %call228, <vscale x 4 x float> %load225, <vscale x 4 x float> %load226)
-  store target("aarch64.za.generation") %3, ptr %za.state, align 8
   %load229 = load <vscale x 32 x i1>, ptr %alloca31, align 2
   %call230 = call <vscale x 16 x i1> @llvm.vector.extract.nxv16i1.nxv32i1(<vscale x 32 x i1> %load229, i64 0)
   %load231 = load <vscale x 32 x i1>, ptr %alloca32, align 2
@@ -1000,10 +983,7 @@ bb178:                                            ; preds = %bb178, %bb
   %load240 = load <vscale x 4 x float>, ptr %alloca7, align 16
   %call241 = call <vscale x 4 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv4i1(<vscale x 16 x i1> %load237)
   %call242 = call <vscale x 4 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv4i1(<vscale x 16 x i1> %load238)
-  %za.state4 = load target("aarch64.za.generation"), ptr %za.state, align 8
-  %4 = call target("aarch64.za.generation") @llvm.aarch64.sme.mark.update.za.state(target("aarch64.za.generation") %za.state4)
   call void @llvm.aarch64.sme.mopa.nxv4f32(i32 2, <vscale x 4 x i1> %call241, <vscale x 4 x i1> %call242, <vscale x 4 x float> %load239, <vscale x 4 x float> %load240)
-  store target("aarch64.za.generation") %4, ptr %za.state, align 8
   %load243 = load <vscale x 32 x i1>, ptr %alloca31, align 2
   %call244 = call <vscale x 16 x i1> @llvm.vector.extract.nxv16i1.nxv32i1(<vscale x 32 x i1> %load243, i64 16)
   %load245 = load <vscale x 32 x i1>, ptr %alloca32, align 2
@@ -1022,10 +1002,7 @@ bb178:                                            ; preds = %bb178, %bb
   %load254 = load <vscale x 4 x float>, ptr %alloca3, align 16
   %call255 = call <vscale x 4 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv4i1(<vscale x 16 x i1> %load251)
   %call256 = call <vscale x 4 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv4i1(<vscale x 16 x i1> %load252)
-  %za.state5 = load target("aarch64.za.generation"), ptr %za.state, align 8
-  %5 = call target("aarch64.za.generation") @llvm.aarch64.sme.mark.update.za.state(target("aarch64.za.generation") %za.state5)
   call void @llvm.aarch64.sme.mopa.nxv4f32(i32 3, <vscale x 4 x i1> %call255, <vscale x 4 x i1> %call256, <vscale x 4 x float> %load253, <vscale x 4 x float> %load254)
-  store target("aarch64.za.generation") %5, ptr %za.state, align 8
   %load257 = load i64, ptr %alloca24, align 8
   %add258 = add i64 %load257, -1
   store i64 %add258, ptr %alloca24, align 8

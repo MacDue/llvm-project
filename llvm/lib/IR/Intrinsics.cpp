@@ -257,10 +257,6 @@ DecodeIITType(unsigned &NextElt, ArrayRef<unsigned char> Infos,
   case IIT_AARCH64_SVCOUNT:
     OutputTable.push_back(IITDescriptor::get(IITDescriptor::AArch64Svcount, 0));
     return;
-  case IIT_AARCH64_ZA_GENERATION:
-    OutputTable.push_back(
-        IITDescriptor::get(IITDescriptor::AArch64ZaGeneration, 0));
-    return;
   case IIT_I8:
     OutputTable.push_back(IITDescriptor::get(IITDescriptor::Integer, 8));
     return;
@@ -527,8 +523,6 @@ static Type *DecodeFixedType(ArrayRef<Intrinsic::IITDescriptor> &Infos,
     return Type::getPPC_FP128Ty(Context);
   case IITDescriptor::AArch64Svcount:
     return TargetExtType::get(Context, "aarch64.svcount");
-  case IITDescriptor::AArch64ZaGeneration:
-    return TargetExtType::get(Context, "aarch64.za.generation");
 
   case IITDescriptor::Integer:
     return IntegerType::get(Context, D.Integer_Width);
@@ -865,9 +859,6 @@ matchIntrinsicType(Type *Ty, ArrayRef<Intrinsic::IITDescriptor> &Infos,
   case IITDescriptor::AArch64Svcount:
     return !isa<TargetExtType>(Ty) ||
            cast<TargetExtType>(Ty)->getName() != "aarch64.svcount";
-  case IITDescriptor::AArch64ZaGeneration:
-    return !isa<TargetExtType>(Ty) ||
-           cast<TargetExtType>(Ty)->getName() != "aarch64.za.generation";
   case IITDescriptor::Vector: {
     VectorType *VT = dyn_cast<VectorType>(Ty);
     return !VT || VT->getElementCount() != D.Vector_Width ||

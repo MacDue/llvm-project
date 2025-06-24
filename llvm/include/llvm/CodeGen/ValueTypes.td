@@ -344,7 +344,6 @@ def amdgpuBufferFatPointer : ValueType<160, 239>;
 def amdgpuBufferStridedPointer : ValueType<192, 240>;
 
 def aarch64mfp8 : ValueType<8,  241>;  // 8-bit value in FPR (AArch64)
-def aarch64zaGeneration : ValueType<64, 242>;
 
 let isNormalValueType = false in {
 def token      : ValueType<0, 504>;  // TokenTy

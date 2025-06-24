@@ -367,29 +367,24 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
       continue;
 
     SavePoints.insert(Clobber);
-
-    SmallVector<Instruction *> Worklist;
-    Worklist.push_back(Clobber);
-
+    SmallVector<Instruction *> Worklist{Clobber};
     while (!Worklist.empty()) {
       auto *StartInst = Worklist.pop_back_val();
-      auto *Block = StartInst->getParent();
       unsigned StartPoint = InstructionOrder.at(StartInst);
 
-      llvm::BasicBlock::iterator Start(StartInst);
+      auto *Block = StartInst->getParent();
       Instruction *ReloadPoint = nullptr;
-      for (auto It = Start; It != Block->end(); ++It) {
+      llvm::BasicBlock::iterator StartIt(StartInst);
+      for (auto It = StartIt; It != Block->end(); ++It) {
         Instruction *Inst = &*It;
         if (!usesZAState(Inst))
           continue;
-
         ReloadPoint = Inst;
         break;
       }
 
       unsigned EndPoint =
           InstructionOrder.at(ReloadPoint ? ReloadPoint : &Block->back());
-
       ClobberedRange.insert(StartPoint, EndPoint, Clobber);
 
       if (ReloadPoint) {
@@ -397,16 +392,18 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
         continue;
       }
 
-      // Avoid increasing code-size too much if all edges need a reload.
+      // Prefer reloading in the current block rather than placing reloads along
+      // edges or in the entries of successors -- this avoids bloating code with
+      // reloads along many paths.
       auto PreferReloadInCurrentBlock = [&] {
-        return all_of(successors(Block), [](BasicBlock *Succ) {
-          return !Succ->getSinglePredecessor() ||
-                 usesZAState(&*Succ->getFirstNonPHIIt());
-        });
+        return &Block->back() != Clobber &&
+               all_of(successors(Block), [](BasicBlock *Succ) {
+                 return !Succ->getSinglePredecessor() ||
+                        usesZAState(&*Succ->getFirstNonPHIIt());
+               });
       };
 
-      if (succ_empty(Block) ||
-          (&Block->back() != Clobber && PreferReloadInCurrentBlock())) {
+      if (succ_empty(Block) || PreferReloadInCurrentBlock()) {
         ReloadPoints.insert(&Block->back());
         continue;
       }
@@ -451,9 +448,9 @@ static bool insertZASavesAndRestores(Module *M, Function *F,
     auto *ReloadBlock = ehAwareSplitEdge(Pred, Succ);
     ReloadPoints.insert(ReloadBlock->getTerminator());
   }
-  // EH edges to landing pads are unfortunately quite awkward to spilt. We need
-  // to split the edges from every predecessor, not just the edge we wish to
-  // reload at.
+  // Edges to landing pads are more difficult to split. We need to duplicate
+  // the landing pad for each predecessor and replace the original landing pad
+  // with a phi node.
   for (LandingPadInst *LandingPad : LandingPads) {
     BasicBlock *Succ = LandingPad->getParent();
     PHINode *ReplPHI = PHINode::Create(LandingPad->getType(), 1, "");
