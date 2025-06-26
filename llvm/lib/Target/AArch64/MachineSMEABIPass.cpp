@@ -22,7 +22,7 @@ using namespace llvm;
 
 namespace {
 
-enum ZAState { ANY = 0, LOCAL_SAVED, ACTIVE, OFF, NUM_ZA_STATE };
+enum ZAState { ANY = 0, CALLER_DORMANT, ACTIVE, LOCAL_SAVED, OFF, NUM_ZA_STATE };
 
 StringRef getZAStateString(ZAState State) {
   switch (State) {
@@ -40,7 +40,7 @@ StringRef getZAStateString(ZAState State) {
 }
 
 static ZAState getInstNeededZAState(const TargetRegisterInfo &TRI,
-                                    MachineInstr &MI) {
+                                    MachineInstr &MI, bool ZALiveAtReturn) {
   if (MI.getOpcode() == AArch64::InOutZAUsePseudo)
     return ZAState::ACTIVE;
 
@@ -48,7 +48,7 @@ static ZAState getInstNeededZAState(const TargetRegisterInfo &TRI,
     return ZAState::LOCAL_SAVED;
 
   if (MI.isReturn())
-    return ZAState::ACTIVE; // Assume inout ZA
+    return ZALiveAtReturn ? ZAState::ACTIVE : ZAState::OFF;
 
   for (auto &MO : MI.operands()) {
     if (!MO.isReg() || !MO.getReg().isPhysical())
@@ -57,10 +57,8 @@ static ZAState getInstNeededZAState(const TargetRegisterInfo &TRI,
         any_of(TRI.subregs_inclusive(MO.getReg()), [](const MCPhysReg &SR) {
           return AArch64::MPR128RegClass.contains(SR);
         });
-    if (UsesZA) {
-      llvm::dbgs() << "Found ZA Inst\n";
+    if (UsesZA)
       return ZAState::ACTIVE;
-    }
   }
 
   return ZAState::ANY;
@@ -83,7 +81,7 @@ struct MachineSMEABI : public MachineFunctionPass {
     MachineFunctionPass::getAnalysisUsage(AU);
   }
 
-  void collectNeededZAStates(MachineFunction &MF);
+  void collectNeededZAStates(MachineFunction &MF, SMEAttrs);
   void pickBundleZAStates();
   void insertStateChanges(MachineFunction &MF);
 
@@ -98,8 +96,7 @@ private:
   };
 
   struct BlockInfo {
-    bool FixedEntryState = false;
-    ZAState NeededEntryState{ZAState::ANY};
+    ZAState FixedEntryState{ZAState::ANY};
     SmallVector<InstInfo> Insts;
   };
 
@@ -108,28 +105,28 @@ private:
   EdgeBundles *Bundles = nullptr;
 };
 
-void MachineSMEABI::collectNeededZAStates(MachineFunction &MF) {
+void MachineSMEABI::collectNeededZAStates(MachineFunction &MF,
+                                          SMEAttrs SMEFnAttrs) {
   const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
+  assert(SMEFnAttrs.hasZAState());
   Blocks.resize(MF.getNumBlockIDs());
   for (MachineBasicBlock &MBB : MF) {
     BlockInfo &Block = Blocks[MBB.getNumber()];
     if (&MBB == &MF.front()) {
-      Block.NeededEntryState = ZAState::ACTIVE; // assume inout entry
-      Block.FixedEntryState = true;
+      // Entry block:
+      Block.FixedEntryState = SMEFnAttrs.hasPrivateZAInterface()
+                                   ? ZAState::CALLER_DORMANT
+                                   : ZAState::ACTIVE;
     } else if (MBB.isEHPad()) {
-      Block.NeededEntryState = ZAState::LOCAL_SAVED;
-      Block.FixedEntryState = true;
+      // EH entry block:
+      Block.FixedEntryState = ZAState::LOCAL_SAVED;
     }
 
     for (MachineBasicBlock::iterator I = MBB.begin(); I != MBB.end(); ++I) {
-      ZAState NeededState = getInstNeededZAState(TRI, *I);
+      ZAState NeededState = getInstNeededZAState(
+          TRI, *I, /*ZALiveAtReturn=*/SMEFnAttrs.hasSharedZAInterface());
       if (NeededState != ZAState::ANY)
         Block.Insts.push_back({NeededState, I});
-    }
-
-    if (Block.Insts.size() > 0) {
-      if (Block.NeededEntryState == ZAState::ANY)
-        Block.NeededEntryState = Block.Insts.front().NeededState;
     }
   }
 }
@@ -140,12 +137,12 @@ void MachineSMEABI::pickBundleZAStates() {
     int StateCounts[ZAState::NUM_ZA_STATE] = {0};
     for (unsigned ID : Bundles->getBlocks(I)) {
       BlockInfo &Block = Blocks[ID];
-      if (Block.NeededEntryState != ZAState::ANY)
-        StateCounts[Block.NeededEntryState]++;
+      for (auto& Inst : Block.Insts)
+        StateCounts[Inst.NeededState]++;
     }
     ZAState BundleState = ZAState(max_element(StateCounts) - StateCounts);
 
-    // TODO: Propagate.
+    // TODO: Something better here (to avoid extra mode switches).
     if (BundleState == ZAState::ANY)
       BundleState =
           ZAState::ACTIVE; // Force ZA active in basic blocks that don't care
@@ -169,15 +166,9 @@ void MachineSMEABI::insertStateChanges(MachineFunction &MF) {
     ZAState OutState =
         BundleStates[Bundles->getBundle(MBB.getNumber(), /*Out=true*/ true)];
 
-    if (Block.NeededEntryState == ZAState::ANY)
-      Block.NeededEntryState =
-          InState; // This block should be in InState due to preds;
-
-    if (!Block.FixedEntryState && InState != Block.NeededEntryState)
-      handleStateChange(MBB, MBB.getFirstNonPHI(), InState,
-                        Block.NeededEntryState);
-
-    ZAState CurrentState = Block.NeededEntryState;
+    ZAState CurrentState = Block.FixedEntryState;
+    if (CurrentState == ZAState::ANY)
+      CurrentState = InState;
 
     for (auto &Inst : Block.Insts) {
       if (CurrentState != Inst.NeededState)
@@ -186,13 +177,10 @@ void MachineSMEABI::insertStateChanges(MachineFunction &MF) {
     }
 
     if (CurrentState != OutState)
-      handleStateChange(MBB, MBB.getLastNonDebugInstr(), CurrentState,
+      handleStateChange(MBB, MBB.getFirstInstrTerminator(), CurrentState,
                         OutState);
   }
 }
-
-// LOCAL_SAVED,
-// ACTIVE,
 
 void MachineSMEABI::handleStateChange(MachineBasicBlock &MBB,
                                       MachineBasicBlock::iterator InsertPt,
@@ -226,12 +214,18 @@ bool MachineSMEABI::runOnMachineFunction(MachineFunction &MF) {
   if (!MF.getSubtarget<AArch64Subtarget>().hasSME())
     return false;
 
+  auto *AFI = MF.getInfo<AArch64FunctionInfo>();
+  SMEAttrs SMEFnAttrs = AFI->getSMEFnAttrs();
+
+  if (!SMEFnAttrs.hasZAState())
+    return false;
+
   assert(MF.getRegInfo().isSSA() && "Expected to be run on SSA form!");
 
   Blocks.clear();
   Bundles = &getAnalysis<EdgeBundlesWrapperLegacy>().getEdgeBundles();
 
-  collectNeededZAStates(MF);
+  collectNeededZAStates(MF, SMEFnAttrs);
   pickBundleZAStates();
   insertStateChanges(MF);
 
