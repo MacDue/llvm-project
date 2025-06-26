@@ -110,9 +110,7 @@ raw_ostream &WriteGraph<>(raw_ostream &O, const EdgeBundles &G,
 } // end namespace llvm
 
 /// view - Visualize the annotated bipartite CFG with Graphviz.
-void EdgeBundles::view() const {
-  ViewGraph(*this, "EdgeBundles");
-}
+void EdgeBundles::view() const { WriteGraph(*this, "EdgeBundles"); }
 
 bool EdgeBundles::invalidate(MachineFunction &MF, const PreservedAnalyses &PA,
                              MachineFunctionAnalysisManager::Invalidator &Inv) {

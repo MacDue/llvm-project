@@ -60,6 +60,19 @@ let usesCustomInserter = 1 in {
   def InitTPIDR2Obj : Pseudo<(outs), (ins GPR64:$buffer), [(AArch64InitTPIDR2Obj GPR64:$buffer)]>, Sched<[WriteI]> {}
 }
 
+def SetupLazySaveZAPseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
+def RestoreLazySaveZAPseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
+
+def AArch64InOutZAUse : SDNode<"AArch64ISD::INOUT_ZA_USE", SDTypeProfile<0, 0,
+                              []>, [SDNPHasChain, SDNPOutGlue]>;
+def InOutZAUsePseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
+def : Pat<(AArch64InOutZAUse), (InOutZAUsePseudo)>;
+
+def AArch64RequiresZASave : SDNode<"AArch64ISD::REQUIRES_ZA_SAVE", SDTypeProfile<0, 0,
+                              []>, [SDNPHasChain, SDNPOutGlue]>;
+def RequiresZASavePseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
+def : Pat<(AArch64RequiresZASave), (RequiresZASavePseudo)>;
+
 // Nodes to allocate a save buffer for SME.
 // Needed for __arm_agnostic("sme_za_state").
 def AArch64SMESaveSize : SDNode<"AArch64ISD::GET_SME_SAVE_SIZE", SDTypeProfile<1, 0,

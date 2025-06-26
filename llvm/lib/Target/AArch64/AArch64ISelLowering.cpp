@@ -8973,40 +8973,46 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     return R;
   };
 
-  bool RequiresLazySave = CallAttrs.requiresLazySave();
-  bool RequiresSaveAllZA = CallAttrs.requiresPreservingAllZAState();
-  if (RequiresLazySave) {
-    const TPIDR2Object &TPIDR2 = FuncInfo->getTPIDR2Obj();
-    MachinePointerInfo MPI =
-        MachinePointerInfo::getStack(MF, TPIDR2.FrameIndex);
-    SDValue TPIDR2ObjAddr = DAG.getFrameIndex(
-        TPIDR2.FrameIndex,
-        DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
-    SDValue NumZaSaveSlicesAddr =
-        DAG.getNode(ISD::ADD, DL, TPIDR2ObjAddr.getValueType(), TPIDR2ObjAddr,
-                    DAG.getConstant(8, DL, TPIDR2ObjAddr.getValueType()));
-    SDValue NumZaSaveSlices = DAG.getNode(AArch64ISD::RDSVL, DL, MVT::i64,
-                                          DAG.getConstant(1, DL, MVT::i32));
-    Chain = DAG.getTruncStore(Chain, DL, NumZaSaveSlices, NumZaSaveSlicesAddr,
-                              MPI, MVT::i16);
-    Chain = DAG.getNode(
-        ISD::INTRINSIC_VOID, DL, MVT::Other, Chain,
-        DAG.getConstant(Intrinsic::aarch64_sme_set_tpidr2, DL, MVT::i32),
-        TPIDR2ObjAddr);
-    OptimizationRemarkEmitter ORE(&MF.getFunction());
-    ORE.emit([&]() {
-      auto R = CLI.CB ? OptimizationRemarkAnalysis("sme", "SMELazySaveZA",
-                                                   CLI.CB)
-                      : OptimizationRemarkAnalysis("sme", "SMELazySaveZA",
-                                                   &MF.getFunction());
-      return DescribeCallsite(R) << " sets up a lazy save for ZA";
-    });
-  } else if (RequiresSaveAllZA) {
-    assert(!CallAttrs.callee().hasSharedZAInterface() &&
-           "Cannot share state that may not exist");
-    Chain = emitSMEStateSaveRestore(*this, DAG, FuncInfo, DL, Chain,
-                                    /*IsSave=*/true);
-  }
+  bool RequiresSaveZA =
+      CallAttrs.requiresLazySave() || CallAttrs.requiresPreservingAllZAState();
+  // if (RequiresLazySave) {
+  //   const TPIDR2Object &TPIDR2 = FuncInfo->getTPIDR2Obj();
+  //   MachinePointerInfo MPI =
+  //       MachinePointerInfo::getStack(MF, TPIDR2.FrameIndex);
+  //   SDValue TPIDR2ObjAddr = DAG.getFrameIndex(
+  //       TPIDR2.FrameIndex,
+  //       DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
+  //   SDValue NumZaSaveSlicesAddr =
+  //       DAG.getNode(ISD::ADD, DL, TPIDR2ObjAddr.getValueType(),
+  //       TPIDR2ObjAddr,
+  //                   DAG.getConstant(8, DL, TPIDR2ObjAddr.getValueType()));
+  //   SDValue NumZaSaveSlices = DAG.getNode(AArch64ISD::RDSVL, DL, MVT::i64,
+  //                                         DAG.getConstant(1, DL, MVT::i32));
+  //   Chain = DAG.getTruncStore(Chain, DL, NumZaSaveSlices,
+  //   NumZaSaveSlicesAddr,
+  //                             MPI, MVT::i16);
+  //   Chain = DAG.getNode(
+  //       ISD::INTRINSIC_VOID, DL, MVT::Other, Chain,
+  //       DAG.getConstant(Intrinsic::aarch64_sme_set_tpidr2, DL, MVT::i32),
+  //       TPIDR2ObjAddr);
+  //   OptimizationRemarkEmitter ORE(&MF.getFunction());
+  //   ORE.emit([&]() {
+  //     auto R = CLI.CB ? OptimizationRemarkAnalysis("sme", "SMELazySaveZA",
+  //                                                  CLI.CB)
+  //                     : OptimizationRemarkAnalysis("sme", "SMELazySaveZA",
+  //                                                  &MF.getFunction());
+  //     return DescribeCallsite(R) << " sets up a lazy save for ZA";
+  //   });
+  // } else if (RequiresSaveAllZA) {
+  //   assert(!CallAttrs.callee().hasSharedZAInterface() &&
+  //          "Cannot share state that may not exist");
+  //   Chain = emitSMEStateSaveRestore(*this, DAG, FuncInfo, DL, Chain,
+  //                                   /*IsSave=*/true);
+  // }
+
+  Chain = DAG.getNode(RequiresSaveZA ? AArch64ISD::REQUIRES_ZA_SAVE
+                                     : AArch64ISD::INOUT_ZA_USE,
+                      DL, DAG.getVTList(MVT::Other, MVT::Glue), {Chain});
 
   SDValue PStateSM;
   bool RequiresSMChange = CallAttrs.requiresSMChange();
@@ -9047,8 +9053,8 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   // If caller shares ZT0 but the callee is not shared ZA, we need to stop
   // PSTATE.ZA before the call if there is no lazy-save active.
   bool DisableZA = CallAttrs.requiresDisablingZABeforeCall();
-  assert((!DisableZA || !RequiresLazySave) &&
-         "Lazy-save should have PSTATE.SM=1 on entry to the function");
+  // assert((!DisableZA || !RequiresLazySave) &&
+  //        "Lazy-save should have PSTATE.SM=1 on entry to the function");
 
   if (DisableZA)
     Chain = DAG.getNode(
@@ -9541,42 +9547,42 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
         DAG.getNode(AArch64ISD::RESTORE_ZT, DL, DAG.getVTList(MVT::Other),
                     {Result, DAG.getConstant(0, DL, MVT::i32), ZTFrameIdx});
 
-  if (RequiresLazySave) {
-    // Conditionally restore the lazy save using a pseudo node.
-    TPIDR2Object &TPIDR2 = FuncInfo->getTPIDR2Obj();
-    SDValue RegMask = DAG.getRegisterMask(
-        TRI->SMEABISupportRoutinesCallPreservedMaskFromX0());
-    SDValue RestoreRoutine = DAG.getTargetExternalSymbol(
-        "__arm_tpidr2_restore", getPointerTy(DAG.getDataLayout()));
-    SDValue TPIDR2_EL0 = DAG.getNode(
-        ISD::INTRINSIC_W_CHAIN, DL, MVT::i64, Result,
-        DAG.getConstant(Intrinsic::aarch64_sme_get_tpidr2, DL, MVT::i32));
+  // if (RequiresLazySave) {
+  //   // Conditionally restore the lazy save using a pseudo node.
+  //   TPIDR2Object &TPIDR2 = FuncInfo->getTPIDR2Obj();
+  //   SDValue RegMask = DAG.getRegisterMask(
+  //       TRI->SMEABISupportRoutinesCallPreservedMaskFromX0());
+  //   SDValue RestoreRoutine = DAG.getTargetExternalSymbol(
+  //       "__arm_tpidr2_restore", getPointerTy(DAG.getDataLayout()));
+  //   SDValue TPIDR2_EL0 = DAG.getNode(
+  //       ISD::INTRINSIC_W_CHAIN, DL, MVT::i64, Result,
+  //       DAG.getConstant(Intrinsic::aarch64_sme_get_tpidr2, DL, MVT::i32));
 
-    // Copy the address of the TPIDR2 block into X0 before 'calling' the
-    // RESTORE_ZA pseudo.
-    SDValue Glue;
-    SDValue TPIDR2Block = DAG.getFrameIndex(
-        TPIDR2.FrameIndex,
-        DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
-    Result = DAG.getCopyToReg(Result, DL, AArch64::X0, TPIDR2Block, Glue);
-    Result =
-        DAG.getNode(AArch64ISD::RESTORE_ZA, DL, MVT::Other,
-                    {Result, TPIDR2_EL0, DAG.getRegister(AArch64::X0, MVT::i64),
-                     RestoreRoutine, RegMask, Result.getValue(1)});
+  //   // Copy the address of the TPIDR2 block into X0 before 'calling' the
+  //   // RESTORE_ZA pseudo.
+  //   SDValue Glue;
+  //   SDValue TPIDR2Block = DAG.getFrameIndex(
+  //       TPIDR2.FrameIndex,
+  //       DAG.getTargetLoweringInfo().getFrameIndexTy(DAG.getDataLayout()));
+  //   Result = DAG.getCopyToReg(Result, DL, AArch64::X0, TPIDR2Block, Glue);
+  //   Result =
+  //       DAG.getNode(AArch64ISD::RESTORE_ZA, DL, MVT::Other,
+  //                   {Result, TPIDR2_EL0, DAG.getRegister(AArch64::X0,
+  //                   MVT::i64),
+  //                    RestoreRoutine, RegMask, Result.getValue(1)});
 
-    // Finally reset the TPIDR2_EL0 register to 0.
-    Result = DAG.getNode(
-        ISD::INTRINSIC_VOID, DL, MVT::Other, Result,
-        DAG.getConstant(Intrinsic::aarch64_sme_set_tpidr2, DL, MVT::i32),
-        DAG.getConstant(0, DL, MVT::i64));
-    TPIDR2.Uses++;
-  } else if (RequiresSaveAllZA) {
-    Result = emitSMEStateSaveRestore(*this, DAG, FuncInfo, DL, Result,
-                                     /*IsSave=*/false);
-  }
+  //   // Finally reset the TPIDR2_EL0 register to 0.
+  //   Result = DAG.getNode(
+  //       ISD::INTRINSIC_VOID, DL, MVT::Other, Result,
+  //       DAG.getConstant(Intrinsic::aarch64_sme_set_tpidr2, DL, MVT::i32),
+  //       DAG.getConstant(0, DL, MVT::i64));
+  //   TPIDR2.Uses++;
+  // } else if (RequiresSaveAllZA) {
+  //   Result = emitSMEStateSaveRestore(*this, DAG, FuncInfo, DL, Result,
+  //                                    /*IsSave=*/false);
+  // }
 
-  if (RequiresSMChange || RequiresLazySave || ShouldPreserveZT0 ||
-      RequiresSaveAllZA) {
+  if (RequiresSMChange || RequiresSaveZA || ShouldPreserveZT0) {
     for (unsigned I = 0; I < InVals.size(); ++I) {
       // The smstart/smstop is chained as part of the call, but when the
       // resulting chain is discarded (which happens when the call is not part

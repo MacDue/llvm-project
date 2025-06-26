@@ -263,6 +263,7 @@ LLVMInitializeAArch64Target() {
   initializeLDTLSCleanupPass(PR);
   initializeKCFIPass(PR);
   initializeSMEABIPass(PR);
+  initializeMachineSMEABIPass(PR);
   initializeSMEPeepholeOptPass(PR);
   initializeSVEIntrinsicOptsPass(PR);
   initializeAArch64SpeculationHardeningPass(PR);
