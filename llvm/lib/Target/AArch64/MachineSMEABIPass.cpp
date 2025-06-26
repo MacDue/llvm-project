@@ -22,7 +22,14 @@ using namespace llvm;
 
 namespace {
 
-enum ZAState { ANY = 0, CALLER_DORMANT, ACTIVE, LOCAL_SAVED, OFF, NUM_ZA_STATE };
+enum ZAState {
+  ANY = 0,
+  CALLER_DORMANT,
+  ACTIVE,
+  LOCAL_SAVED,
+  OFF,
+  NUM_ZA_STATE
+};
 
 StringRef getZAStateString(ZAState State) {
   switch (State) {
@@ -115,8 +122,8 @@ void MachineSMEABI::collectNeededZAStates(MachineFunction &MF,
     if (&MBB == &MF.front()) {
       // Entry block:
       Block.FixedEntryState = SMEFnAttrs.hasPrivateZAInterface()
-                                   ? ZAState::CALLER_DORMANT
-                                   : ZAState::ACTIVE;
+                                  ? ZAState::CALLER_DORMANT
+                                  : ZAState::ACTIVE;
     } else if (MBB.isEHPad()) {
       // EH entry block:
       Block.FixedEntryState = ZAState::LOCAL_SAVED;
@@ -137,7 +144,7 @@ void MachineSMEABI::pickBundleZAStates() {
     int StateCounts[ZAState::NUM_ZA_STATE] = {0};
     for (unsigned ID : Bundles->getBlocks(I)) {
       BlockInfo &Block = Blocks[ID];
-      for (auto& Inst : Block.Insts)
+      for (auto &Inst : Block.Insts)
         StateCounts[Inst.NeededState]++;
     }
     ZAState BundleState = ZAState(max_element(StateCounts) - StateCounts);
