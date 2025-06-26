@@ -24,9 +24,9 @@ namespace {
 
 enum ZAState {
   ANY = 0,
-  CALLER_DORMANT,
-  ACTIVE,
   LOCAL_SAVED,
+  ACTIVE,
+  CALLER_DORMANT,
   OFF,
   NUM_ZA_STATE
 };
@@ -141,27 +141,38 @@ void MachineSMEABI::collectNeededZAStates(MachineFunction &MF,
 void MachineSMEABI::pickBundleZAStates() {
   BundleStates.resize(Bundles->getNumBundles());
   for (unsigned I = 0, E = Bundles->getNumBundles(); I != E; ++I) {
-    int StateCounts[ZAState::NUM_ZA_STATE] = {0};
-    for (unsigned ID : Bundles->getBlocks(I)) {
-      BlockInfo &Block = Blocks[ID];
-      for (auto &Inst : Block.Insts)
-        StateCounts[Inst.NeededState]++;
-    }
-    ZAState BundleState = ZAState(max_element(StateCounts) - StateCounts);
+    // Attempt to pick a ZA state for this bundle that minimizes state
+    // transitions.
+    // TODO: Use loop info/trip count to inform this.
+    int EdgeStateCounts[ZAState::NUM_ZA_STATE] = {0};
+    for (unsigned BlockID : Bundles->getBlocks(I)) {
+      BlockInfo &Block = Blocks[BlockID];
+      if (Block.Insts.empty())
+        continue;
 
+      bool InEdge = Bundles->getBundle(BlockID, /*Out=*/false) == I;
+      bool OutEdge = Bundles->getBundle(ID, /*Out=*/true) == I;
+      if (InEdge)
+        EdgeStateCounts[Block.Insts.front().NeededState]++;
+      if (OutEdge)
+        EdgeStateCounts[Block.Insts.back().NeededState]++;
+    }
+
+    ZAState BundleState = ZAState(max_element(EdgeStateCounts) - EdgeStateCounts);
+
+    // Force ZA active in basic blocks that don't care.
     // TODO: Something better here (to avoid extra mode switches).
     if (BundleState == ZAState::ANY)
-      BundleState =
-          ZAState::ACTIVE; // Force ZA active in basic blocks that don't care
+      BundleState = ZAState::ACTIVE;
 
     BundleStates[I] = BundleState;
 
     llvm::dbgs() << "Bundle state: " << I << " is "
                  << getZAStateString(BundleState) << '\n';
     int S = 0;
-    for (auto C : StateCounts)
+    for (auto C : EdgeStateCounts)
       llvm::dbgs() << getZAStateString(ZAState(S++)) << " " << C << " ";
-    llvm::dbgs() << '\n';
+    llvm::dbgs() << "\n\n";
   }
 }
 
@@ -182,6 +193,9 @@ void MachineSMEABI::insertStateChanges(MachineFunction &MF) {
         handleStateChange(MBB, Inst.InsertPt, CurrentState, Inst.NeededState);
       CurrentState = Inst.NeededState;
     }
+
+    if (MBB.succ_empty())
+      continue;
 
     if (CurrentState != OutState)
       handleStateChange(MBB, MBB.getFirstInstrTerminator(), CurrentState,
