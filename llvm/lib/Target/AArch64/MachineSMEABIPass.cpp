@@ -11,12 +11,12 @@
 #include "AArch64Subtarget.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/EdgeBundles.h"
+#include "llvm/CodeGen/LiveRegUnits.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineLoopInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
-#include "llvm/CodeGen/LiveRegUnits.h"
 
 using namespace llvm;
 
@@ -110,7 +110,8 @@ struct MachineSMEABI : public MachineFunctionPass {
   void insertStateChanges(MachineFunction &MF);
 
   void emitRestoreLazySave(MachineBasicBlock &MBB,
-                           MachineBasicBlock::iterator MBBI);
+                           MachineBasicBlock::iterator MBBI,
+                           LiveRegUnits const &LiveRegs);
   void emitSetupLazySave(MachineBasicBlock &MBB,
                          MachineBasicBlock::iterator MBBI);
 
@@ -121,7 +122,7 @@ struct MachineSMEABI : public MachineFunctionPass {
                                   MachineBasicBlock::iterator MBBI);
 
   void emitStateChange(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
-                       ZAState From, ZAState To);
+                       ZAState From, ZAState To, LiveRegUnits const &LiveRegs);
 
   TPIDR2State getTPIDR2Block(MachineFunction &MF);
 
@@ -232,29 +233,50 @@ void MachineSMEABI::pickBundleZAStates(MachineFunction &MF) {
 }
 
 void MachineSMEABI::insertStateChanges(MachineFunction &MF) {
+  const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
+
+  struct StateChange {
+    ZAState From, To;
+    MachineBasicBlock::iterator InsertPt;
+  };
+
   for (MachineBasicBlock &MBB : MF) {
     BlockInfo &Block = Blocks[MBB.getNumber()];
     ZAState InState =
         BundleStates[Bundles->getBundle(MBB.getNumber(), /*Out=*/false)];
     ZAState OutState =
-        BundleStates[Bundles->getBundle(MBB.getNumber(), /*Out=true*/ true)];
+        BundleStates[Bundles->getBundle(MBB.getNumber(), /*Out=*/true)];
 
+    SmallVector<StateChange> StateChanges;
     ZAState CurrentState = Block.FixedEntryState;
     if (CurrentState == ZAState::ANY)
       CurrentState = InState;
 
     for (auto &Inst : Block.Insts) {
       if (CurrentState != Inst.NeededState)
-        emitStateChange(MBB, Inst.InsertPt, CurrentState, Inst.NeededState);
+        StateChanges.push_back({CurrentState, Inst.NeededState, Inst.InsertPt});
       CurrentState = Inst.NeededState;
     }
 
-    if (MBB.succ_empty())
-      continue;
+    if (!MBB.succ_empty() && CurrentState != OutState)
+      StateChanges.push_back(
+          {CurrentState, OutState, MBB.getFirstTerminator()});
 
-    if (CurrentState != OutState)
-      emitStateChange(MBB, MBB.getFirstInstrTerminator(), CurrentState,
-                      OutState);
+    // Unfortunately, we need to know the live regs so we can preserve the
+    // status flags :(.
+    LiveRegUnits LiveRegs(TRI);
+    LiveRegs.addLiveOuts(MBB);
+    auto It = MBB.end();
+    for (StateChange Change : reverse(StateChanges)) {
+      while (It != Change.InsertPt)
+        LiveRegs.stepBackward(*--It);
+      MachineInstr *BeforeInsert = nullptr;
+      if (It != MBB.begin())
+        BeforeInsert = &*--It;
+      emitStateChange(MBB, Change.InsertPt, Change.From, Change.To, LiveRegs);
+      if (BeforeInsert)
+        LiveRegs.stepBackward(*BeforeInsert);
+    }
   }
 }
 
@@ -285,11 +307,10 @@ void MachineSMEABI::emitSetupLazySave(MachineBasicBlock &MBB,
   Register TPIDR2 = MRI.createVirtualRegister(&AArch64::GPR64spRegClass);
   Register TPIDR2Ptr = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
   BuildMI(MBB, MBBI, DL, TII.get(AArch64::ADDXri), TPIDR2)
-    .addFrameIndex(getTPIDR2Block(MF).FrameIndex)
-    .addImm(0)
-    .addImm(0);
- BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::COPY), TPIDR2Ptr)
-        .addReg(TPIDR2);
+      .addFrameIndex(getTPIDR2Block(MF).FrameIndex)
+      .addImm(0)
+      .addImm(0);
+  BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::COPY), TPIDR2Ptr).addReg(TPIDR2);
   // Set TPIDR2_EL0 to point to TPIDR2 block.
   BuildMI(MBB, MBBI, DL, TII.get(AArch64::MSR))
       .addImm(AArch64SysReg::TPIDR2_EL0)
@@ -297,7 +318,8 @@ void MachineSMEABI::emitSetupLazySave(MachineBasicBlock &MBB,
 }
 
 void MachineSMEABI::emitRestoreLazySave(MachineBasicBlock &MBB,
-                                        MachineBasicBlock::iterator MBBI) {
+                                        MachineBasicBlock::iterator MBBI,
+                                        LiveRegUnits const &LiveRegs) {
   MachineFunction &MF = *MBB.getParent();
   auto &Subtarget = MF.getSubtarget<AArch64Subtarget>();
   const AArch64RegisterInfo &TRI = *Subtarget.getRegisterInfo();
@@ -307,12 +329,14 @@ void MachineSMEABI::emitRestoreLazySave(MachineBasicBlock &MBB,
   DebugLoc DL = getDebugLoc(MBB, MBBI);
   Register TPIDR2EL0 = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
   Register TPIDR2 = MRI.createVirtualRegister(&AArch64::GPR64spRegClass);
-  Register Flags = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
+  Register StatusFlags = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
 
-        // BuildMI(MBB, MBBI, DL, TII.get(AArch64::MRS))
-        //     .addReg(Flags, RegState::Define)
-        //     .addImm(AArch64SysReg::NZCV)
-        //     .addReg(AArch64::NZCV, RegState::Implicit);
+  bool MustSaveNZCV = !LiveRegs.available(AArch64::NZCV);
+  if (MustSaveNZCV)
+    BuildMI(MBB, MBBI, DL, TII.get(AArch64::MRS))
+        .addReg(StatusFlags, RegState::Define)
+        .addImm(AArch64SysReg::NZCV)
+        .addReg(AArch64::NZCV, RegState::Implicit);
 
   // Enable ZA.
   BuildMI(MBB, MBBI, DL, TII.get(AArch64::MSRpstatesvcrImm1))
@@ -324,9 +348,9 @@ void MachineSMEABI::emitRestoreLazySave(MachineBasicBlock &MBB,
       .addImm(AArch64SysReg::TPIDR2_EL0);
   // Get pointer to TPIDR2 block.
   BuildMI(MBB, MBBI, DL, TII.get(AArch64::ADDXri), TPIDR2)
-    .addFrameIndex(getTPIDR2Block(MF).FrameIndex)
-    .addImm(0)
-    .addImm(0);
+      .addFrameIndex(getTPIDR2Block(MF).FrameIndex)
+      .addImm(0)
+      .addImm(0);
   // (Conditionally) restore ZA state.
   BuildMI(MBB, MBBI, DL, TII.get(AArch64::RestoreZAPseudo))
       .addReg(TPIDR2EL0)
@@ -338,10 +362,11 @@ void MachineSMEABI::emitRestoreLazySave(MachineBasicBlock &MBB,
       .addImm(AArch64SysReg::TPIDR2_EL0)
       .addReg(AArch64::XZR);
 
-// BuildMI(MBB, MBBI, DL, TII.get(AArch64::MSR))
-//                                 .addImm(AArch64SysReg::NZCV)
-//                                 .addReg(Flags)
-//                                 .addReg(AArch64::NZCV, RegState::ImplicitDefine);
+  if (MustSaveNZCV)
+    BuildMI(MBB, MBBI, DL, TII.get(AArch64::MSR))
+        .addImm(AArch64SysReg::NZCV)
+        .addReg(StatusFlags)
+        .addReg(AArch64::NZCV, RegState::ImplicitDefine);
 }
 
 void MachineSMEABI::emitAllocateLazySaveBuffer(
@@ -398,9 +423,9 @@ void MachineSMEABI::emitAllocateLazySaveBuffer(
     // Get pointer to TPIDR2 block.
     Register TPIDR2 = MRI.createVirtualRegister(&AArch64::GPR64spRegClass);
     BuildMI(MBB, MBBI, DL, TII.get(AArch64::ADDXri), TPIDR2)
-      .addFrameIndex(getTPIDR2Block(MF).FrameIndex)
-      .addImm(0)
-      .addImm(0);
+        .addFrameIndex(getTPIDR2Block(MF).FrameIndex)
+        .addImm(0)
+        .addImm(0);
     // Store buffer pointer and num_za_save_slices.
     // Bytes 10-15 are implicitly zeroed.
     BuildMI(MBB, MBBI, DL, TII.get(AArch64::STPXi))
@@ -413,7 +438,8 @@ void MachineSMEABI::emitAllocateLazySaveBuffer(
 
 void MachineSMEABI::emitStateChange(MachineBasicBlock &MBB,
                                     MachineBasicBlock::iterator InsertPt,
-                                    ZAState From, ZAState To) {
+                                    ZAState From, ZAState To,
+                                    LiveRegUnits const &LiveRegs) {
 
   // ZA not used.
   if (From == ZAState::ANY || To == ZAState::ANY)
@@ -422,7 +448,7 @@ void MachineSMEABI::emitStateChange(MachineBasicBlock &MBB,
   if (From == ZAState::ACTIVE && To == ZAState::LOCAL_SAVED)
     emitSetupLazySave(MBB, InsertPt);
   else if (From == ZAState::LOCAL_SAVED && To == ZAState::ACTIVE)
-    emitRestoreLazySave(MBB, InsertPt);
+    emitRestoreLazySave(MBB, InsertPt, LiveRegs);
   else
     assert(false && "not done");
 }
