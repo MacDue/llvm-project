@@ -194,7 +194,7 @@ public:
   }
 
   bool requiresEnablingZAAfterCall() const {
-    return requiresLazySave() || requiresDisablingZABeforeCall();
+    return /*requiresLazySave() ||*/ requiresDisablingZABeforeCall();
   }
 
   bool requiresPreservingAllZAState() const {
