@@ -14,12 +14,10 @@ define void @disable_tailcallopt() "aarch64_inout_za" nounwind {
 ; CHECK-NEXT:    mov x9, sp
 ; CHECK-NEXT:    msub x9, x8, x8, x9
 ; CHECK-NEXT:    mov sp, x9
-; CHECK-NEXT:    stur x9, [x29, #-16]
-; CHECK-NEXT:    sub x9, x29, #16
-; CHECK-NEXT:    sturh wzr, [x29, #-6]
-; CHECK-NEXT:    stur wzr, [x29, #-4]
-; CHECK-NEXT:    sturh w8, [x29, #-8]
-; CHECK-NEXT:    msr TPIDR2_EL0, x9
+; CHECK-NEXT:    sub x10, x29, #16
+; CHECK-NEXT:    sub x11, x29, #16
+; CHECK-NEXT:    stp x9, x8, [x10]
+; CHECK-NEXT:    msr TPIDR2_EL0, x11
 ; CHECK-NEXT:    bl private_za_callee
 ; CHECK-NEXT:    smstart za
 ; CHECK-NEXT:    mrs x8, TPIDR2_EL0
@@ -41,22 +39,19 @@ define fp128 @f128_call_za(fp128 %a, fp128 %b) "aarch64_inout_za" nounwind {
 ; CHECK-LABEL: f128_call_za:
 ; CHECK:       // %bb.0:
 ; CHECK-NEXT:    stp x29, x30, [sp, #-16]! // 16-byte Folded Spill
-; CHECK-NEXT:    mov x29, sp
-; CHECK-NEXT:    sub sp, sp, #16
 ; CHECK-NEXT:    rdsvl x8, #1
 ; CHECK-NEXT:    mov x9, sp
+; CHECK-NEXT:    mov x29, sp
 ; CHECK-NEXT:    msub x9, x8, x8, x9
 ; CHECK-NEXT:    mov sp, x9
-; CHECK-NEXT:    stur x9, [x29, #-16]
-; CHECK-NEXT:    sub x9, x29, #16
-; CHECK-NEXT:    sturh wzr, [x29, #-6]
-; CHECK-NEXT:    stur wzr, [x29, #-4]
-; CHECK-NEXT:    sturh w8, [x29, #-8]
-; CHECK-NEXT:    msr TPIDR2_EL0, x9
+; CHECK-NEXT:    add x10, x29, #0
+; CHECK-NEXT:    add x11, x29, #0
+; CHECK-NEXT:    stp x9, x8, [x10]
+; CHECK-NEXT:    msr TPIDR2_EL0, x11
 ; CHECK-NEXT:    bl __addtf3
 ; CHECK-NEXT:    smstart za
 ; CHECK-NEXT:    mrs x8, TPIDR2_EL0
-; CHECK-NEXT:    sub x0, x29, #16
+; CHECK-NEXT:    add x0, x29, #0
 ; CHECK-NEXT:    cbnz x8, .LBB1_2
 ; CHECK-NEXT:  // %bb.1:
 ; CHECK-NEXT:    bl __arm_tpidr2_restore

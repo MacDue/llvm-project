@@ -533,20 +533,24 @@ void MachineSMEABI::emitStateChange(MachineBasicBlock &MBB,
              "CALLER_DORMANT state only valid in entry block");
       emitNewZAPrologue(MBB, MBB.getFirstNonPHI());
     }
+    if (To == ZAState::ACTIVE)
+      return; // Nothing more to to (ZA is active after the prologue).
     // Note: "emitNewZAPrologue" zeros ZA, so we may need to setup a lazy save
     // if "To" os "ZAState::LOCAL_SAVED". If may be possible to improve this
     // case by changing the placement of the zero instruction.
+    From = ZAState::ACTIVE;
   }
 
-  if ((From == ZAState::CALLER_DORMANT || From == ZAState::ACTIVE) &&
-      To == ZAState::LOCAL_SAVED)
+  if (From == ZAState::ACTIVE && To == ZAState::LOCAL_SAVED)
     emitSetupLazySave(MBB, InsertPt);
   else if (From == ZAState::LOCAL_SAVED && To == ZAState::ACTIVE)
     emitRestoreLazySave(MBB, InsertPt, NZCVLive);
   else if (To == ZAState::OFF)
     emitZAOff(MBB, InsertPt, /*ClearTPIDR2=*/From == ZAState::LOCAL_SAVED);
-  else
+  else {
+    dbgs() << "Error: Tansition from " << getZAStateString(From) << " to " << getZAStateString(To) << '\n';
     assert(false && "Unimplemented state transition");
+  }
 }
 
 } // end anonymous namespace
@@ -555,9 +559,6 @@ INITIALIZE_PASS(MachineSMEABI, "aarch64-machine-sme-abi", "Machine SME ABI",
                 false, false)
 
 bool MachineSMEABI::runOnMachineFunction(MachineFunction &MF) {
-  if (skipFunction(MF.getFunction()))
-    return false;
-
   if (!MF.getSubtarget<AArch64Subtarget>().hasSME())
     return false;
 
