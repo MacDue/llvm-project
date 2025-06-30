@@ -45,21 +45,6 @@ def AArch64VGSave : SDNode<"AArch64ISD::VG_SAVE", SDTypeProfile<0, 0, []>,
 def AArch64VGRestore : SDNode<"AArch64ISD::VG_RESTORE", SDTypeProfile<0, 0, []>,
                               [SDNPHasChain, SDNPSideEffect, SDNPOptInGlue, SDNPOutGlue]>;
 
-def AArch64AllocateZABuffer : SDNode<"AArch64ISD::ALLOCATE_ZA_BUFFER", SDTypeProfile<1, 1,
-                              [SDTCisInt<0>, SDTCisInt<1>]>,
-                              [SDNPHasChain, SDNPSideEffect]>;
-let usesCustomInserter = 1, Defs = [SP], Uses = [SP] in {
-  def AllocateZABuffer : Pseudo<(outs GPR64sp:$dst), (ins GPR64:$size), []>, Sched<[WriteI]> {}
-}
-def : Pat<(i64 (AArch64AllocateZABuffer GPR64:$size)),
-          (AllocateZABuffer $size)>;
-
-def AArch64InitTPIDR2Obj  : SDNode<"AArch64ISD::INIT_TPIDR2OBJ", SDTypeProfile<0, 1,
-                              [SDTCisInt<0>]>, [SDNPHasChain, SDNPMayStore]>;
-let usesCustomInserter = 1 in {
-  def InitTPIDR2Obj : Pseudo<(outs), (ins GPR64:$buffer), [(AArch64InitTPIDR2Obj GPR64:$buffer)]>, Sched<[WriteI]> {}
-}
-
 let hasSideEffects = 1 in {
   def InOutZAUsePseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
   def RequiresZASavePseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
@@ -71,23 +56,6 @@ def : Pat<(AArch64InOutZAUse), (InOutZAUsePseudo)>;
 def AArch64RequiresZASave : SDNode<"AArch64ISD::REQUIRES_ZA_SAVE", SDTypeProfile<0, 0,
                               []>, [SDNPHasChain, SDNPOutGlue]>;
 def : Pat<(AArch64RequiresZASave), (RequiresZASavePseudo)>;
-
-// Nodes to allocate a save buffer for SME.
-// Needed for __arm_agnostic("sme_za_state").
-def AArch64SMESaveSize : SDNode<"AArch64ISD::GET_SME_SAVE_SIZE", SDTypeProfile<1, 0,
-                               [SDTCisInt<0>]>, [SDNPHasChain]>;
-let usesCustomInserter = 1, Defs = [X0] in {
-  def GetSMESaveSize : Pseudo<(outs GPR64:$dst), (ins), []>, Sched<[]> {}
-}
-def : Pat<(i64 AArch64SMESaveSize), (GetSMESaveSize)>;
-
-def AArch64AllocateSMESaveBuffer : SDNode<"AArch64ISD::ALLOC_SME_SAVE_BUFFER", SDTypeProfile<1, 1,
-                                          [SDTCisInt<0>, SDTCisInt<1>]>, [SDNPHasChain]>;
-let usesCustomInserter = 1, Defs = [SP] in {
-  def AllocateSMESaveBuffer : Pseudo<(outs GPR64sp:$dst), (ins GPR64:$size), []>, Sched<[WriteI]> {}
-}
-def : Pat<(i64 (AArch64AllocateSMESaveBuffer GPR64:$size)),
-          (AllocateSMESaveBuffer $size)>;
 
 //===----------------------------------------------------------------------===//
 // Instruction naming conventions.
