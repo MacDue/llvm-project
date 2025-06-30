@@ -39,25 +39,34 @@ enum ZAState {
   NUM_ZA_STATE
 };
 
+static bool isLegalEdgeBundleZAState(ZAState State) {
+  switch (State) {
+  case ZAState::ACTIVE:
+    return true;
+  case ZAState::LOCAL_SAVED:
+    return true;
+  default:
+    return false;
+  }
+}
 struct TPIDR2State {
   int FrameIndex = -1;
 };
 
 StringRef getZAStateString(ZAState State) {
+#define MAKE_CASE(V)                                                           \
+  case V:                                                                      \
+    return #V;
   switch (State) {
-  case ZAState::ANY:
-    return "ANY";
-  case ZAState::LOCAL_SAVED:
-    return "LOCAL_SAVED";
-  case ZAState::ACTIVE:
-    return "ACTIVE";
-  case ZAState::OFF:
-    return "OFF";
-  case ZAState::CALLER_DORMANT:
-    return "CALLER_DORMANT";
+    MAKE_CASE(ZAState::ANY)
+    MAKE_CASE(ZAState::ACTIVE)
+    MAKE_CASE(ZAState::LOCAL_SAVED)
+    MAKE_CASE(ZAState::CALLER_DORMANT)
+    MAKE_CASE(ZAState::OFF)
   default:
-    return "???";
+    llvm_unreachable("Unexpected ZAState");
   }
+#undef MAKE_CASE
 }
 
 static bool isZARegOp(const TargetRegisterInfo &TRI, const MachineOperand &MO) {
@@ -209,14 +218,14 @@ void MachineSMEABI::pickBundleZAStates(MachineFunction &MF) {
         LLVM_DEBUG(dbgs() << " IsLoop");
 
       LLVM_DEBUG(dbgs() << " (EdgeWeight: " << EdgeWeight << ')');
-      if (InEdge) {
-        ZAState DesiredIncomingState = Block.Insts.front().NeededState;
+      ZAState DesiredIncomingState = Block.Insts.front().NeededState;
+      if (InEdge && isLegalEdgeBundleZAState(DesiredIncomingState)) {
         EdgeStateCounts[DesiredIncomingState] += EdgeWeight;
         LLVM_DEBUG(dbgs() << " DesiredIncomingState: "
                           << getZAStateString(DesiredIncomingState));
       }
-      if (OutEdge) {
-        ZAState DesiredOutgoingState = Block.Insts.front().NeededState;
+      ZAState DesiredOutgoingState = Block.Insts.front().NeededState;
+      if (OutEdge && isLegalEdgeBundleZAState(DesiredOutgoingState)) {
         EdgeStateCounts[DesiredOutgoingState] += EdgeWeight;
         LLVM_DEBUG(dbgs() << " DesiredOutgoingState: "
                           << getZAStateString(DesiredOutgoingState));
@@ -323,6 +332,7 @@ void MachineSMEABI::emitRestoreLazySave(MachineBasicBlock &MBB,
   Register TPIDR2 = MRI.createVirtualRegister(&AArch64::GPR64spRegClass);
   Register StatusFlags = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
 
+  // TODO: Emit these within the restore MBB to prevent unnecessary saves.
   if (NZCVLive)
     BuildMI(MBB, MBBI, DL, TII.get(AArch64::MRS))
         .addReg(StatusFlags, RegState::Define)
