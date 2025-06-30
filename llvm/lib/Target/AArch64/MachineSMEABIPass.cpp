@@ -110,8 +110,7 @@ struct MachineSMEABI : public MachineFunctionPass {
   void insertStateChanges(MachineFunction &MF);
 
   void emitRestoreLazySave(MachineBasicBlock &MBB,
-                           MachineBasicBlock::iterator MBBI,
-                           LiveRegUnits const &LiveRegs);
+                           MachineBasicBlock::iterator MBBI, bool NZCVLive);
   void emitSetupLazySave(MachineBasicBlock &MBB,
                          MachineBasicBlock::iterator MBBI);
 
@@ -122,7 +121,7 @@ struct MachineSMEABI : public MachineFunctionPass {
                                   MachineBasicBlock::iterator MBBI);
 
   void emitStateChange(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
-                       ZAState From, ZAState To, LiveRegUnits const &LiveRegs);
+                       ZAState From, ZAState To, bool NZCVLive);
 
   TPIDR2State getTPIDR2Block(MachineFunction &MF);
 
@@ -130,11 +129,13 @@ private:
   struct InstInfo {
     ZAState NeededState{ZAState::ANY};
     MachineBasicBlock::iterator InsertPt;
+    bool NZCVLive = false;
   };
 
   struct BlockInfo {
     ZAState FixedEntryState{ZAState::ANY};
     SmallVector<InstInfo> Insts;
+    bool NZCVLiveAtExit = false;
   };
 
   SmallVector<BlockInfo> Blocks;
@@ -163,11 +164,22 @@ void MachineSMEABI::collectNeededZAStates(MachineFunction &MF,
       Block.FixedEntryState = ZAState::LOCAL_SAVED;
     }
 
-    for (MachineBasicBlock::iterator I = MBB.begin(); I != MBB.end(); ++I) {
+    LiveRegUnits LiveRegs(TRI);
+    LiveRegs.addLiveOuts(MBB);
+
+    Block.NZCVLiveAtExit = !LiveRegs.available(AArch64::NZCV);
+    auto FirstTerminatorInsertPt = MBB.getFirstTerminator();
+    for (MachineInstr &MI : reverse(MBB)) {
+      LiveRegs.stepBackward(MI);
       ZAState NeededState = getInstNeededZAState(
-          TRI, *I, /*ZALiveAtReturn=*/SMEFnAttrs.hasSharedZAInterface());
+          TRI, MI, /*ZALiveAtReturn=*/SMEFnAttrs.hasSharedZAInterface());
+      MachineBasicBlock::iterator InsertPt(MI);
+      // TODO: Do something to avoid state changes where NZCV is live.
+      bool NZCVLive = !LiveRegs.available(AArch64::NZCV);
+      if (InsertPt == FirstTerminatorInsertPt)
+        Block.NZCVLiveAtExit = NZCVLive;
       if (NeededState != ZAState::ANY)
-        Block.Insts.push_back({NeededState, I});
+        Block.Insts.push_back({NeededState, InsertPt, NZCVLive});
     }
   }
 }
@@ -233,13 +245,6 @@ void MachineSMEABI::pickBundleZAStates(MachineFunction &MF) {
 }
 
 void MachineSMEABI::insertStateChanges(MachineFunction &MF) {
-  const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
-
-  struct StateChange {
-    ZAState From, To;
-    MachineBasicBlock::iterator InsertPt;
-  };
-
   for (MachineBasicBlock &MBB : MF) {
     BlockInfo &Block = Blocks[MBB.getNumber()];
     ZAState InState =
@@ -247,36 +252,23 @@ void MachineSMEABI::insertStateChanges(MachineFunction &MF) {
     ZAState OutState =
         BundleStates[Bundles->getBundle(MBB.getNumber(), /*Out=*/true)];
 
-    SmallVector<StateChange> StateChanges;
     ZAState CurrentState = Block.FixedEntryState;
     if (CurrentState == ZAState::ANY)
       CurrentState = InState;
 
     for (auto &Inst : Block.Insts) {
       if (CurrentState != Inst.NeededState)
-        StateChanges.push_back({CurrentState, Inst.NeededState, Inst.InsertPt});
+        emitStateChange(MBB, Inst.InsertPt, CurrentState, Inst.NeededState,
+                        Inst.NZCVLive);
       CurrentState = Inst.NeededState;
     }
 
-    if (!MBB.succ_empty() && CurrentState != OutState)
-      StateChanges.push_back(
-          {CurrentState, OutState, MBB.getFirstTerminator()});
+    if (MBB.succ_empty())
+      continue;
 
-    // Unfortunately, we need to know the live regs so we can preserve the
-    // status flags :(.
-    LiveRegUnits LiveRegs(TRI);
-    LiveRegs.addLiveOuts(MBB);
-    auto It = MBB.end();
-    for (StateChange Change : reverse(StateChanges)) {
-      while (It != Change.InsertPt)
-        LiveRegs.stepBackward(*--It);
-      MachineInstr *BeforeInsert = nullptr;
-      if (It != MBB.begin())
-        BeforeInsert = &*--It;
-      emitStateChange(MBB, Change.InsertPt, Change.From, Change.To, LiveRegs);
-      if (BeforeInsert)
-        LiveRegs.stepBackward(*BeforeInsert);
-    }
+    if (CurrentState != OutState)
+      emitStateChange(MBB, MBB.getFirstTerminator(), CurrentState, OutState,
+                      Block.NZCVLiveAtExit);
   }
 }
 
@@ -319,7 +311,7 @@ void MachineSMEABI::emitSetupLazySave(MachineBasicBlock &MBB,
 
 void MachineSMEABI::emitRestoreLazySave(MachineBasicBlock &MBB,
                                         MachineBasicBlock::iterator MBBI,
-                                        LiveRegUnits const &LiveRegs) {
+                                        bool NZCVLive) {
   MachineFunction &MF = *MBB.getParent();
   auto &Subtarget = MF.getSubtarget<AArch64Subtarget>();
   const AArch64RegisterInfo &TRI = *Subtarget.getRegisterInfo();
@@ -331,8 +323,7 @@ void MachineSMEABI::emitRestoreLazySave(MachineBasicBlock &MBB,
   Register TPIDR2 = MRI.createVirtualRegister(&AArch64::GPR64spRegClass);
   Register StatusFlags = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
 
-  bool MustSaveNZCV = !LiveRegs.available(AArch64::NZCV);
-  if (MustSaveNZCV)
+  if (NZCVLive)
     BuildMI(MBB, MBBI, DL, TII.get(AArch64::MRS))
         .addReg(StatusFlags, RegState::Define)
         .addImm(AArch64SysReg::NZCV)
@@ -362,7 +353,7 @@ void MachineSMEABI::emitRestoreLazySave(MachineBasicBlock &MBB,
       .addImm(AArch64SysReg::TPIDR2_EL0)
       .addReg(AArch64::XZR);
 
-  if (MustSaveNZCV)
+  if (NZCVLive)
     BuildMI(MBB, MBBI, DL, TII.get(AArch64::MSR))
         .addImm(AArch64SysReg::NZCV)
         .addReg(StatusFlags)
@@ -438,8 +429,7 @@ void MachineSMEABI::emitAllocateLazySaveBuffer(
 
 void MachineSMEABI::emitStateChange(MachineBasicBlock &MBB,
                                     MachineBasicBlock::iterator InsertPt,
-                                    ZAState From, ZAState To,
-                                    LiveRegUnits const &LiveRegs) {
+                                    ZAState From, ZAState To, bool NZCVLive) {
 
   // ZA not used.
   if (From == ZAState::ANY || To == ZAState::ANY)
@@ -448,9 +438,9 @@ void MachineSMEABI::emitStateChange(MachineBasicBlock &MBB,
   if (From == ZAState::ACTIVE && To == ZAState::LOCAL_SAVED)
     emitSetupLazySave(MBB, InsertPt);
   else if (From == ZAState::LOCAL_SAVED && To == ZAState::ACTIVE)
-    emitRestoreLazySave(MBB, InsertPt, LiveRegs);
+    emitRestoreLazySave(MBB, InsertPt, NZCVLive);
   else
-    assert(false && "not done");
+    assert(false && "Unimplemented state transition");
 }
 
 } // end anonymous namespace
