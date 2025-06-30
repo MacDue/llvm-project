@@ -513,6 +513,8 @@ void MachineSMEABI::emitStateChange(MachineBasicBlock &MBB,
   if (From == ZAState::ANY || To == ZAState::ANY)
     return;
 
+  // TODO: Avoid setting up the save buffer if there's no transition to
+  // LOCAL_SAVED.
   if (From == ZAState::CALLER_DORMANT) {
     // Note: CALLER_DORMANT -> OFF would only occur for a single BB function
     // that does not use ZA.
