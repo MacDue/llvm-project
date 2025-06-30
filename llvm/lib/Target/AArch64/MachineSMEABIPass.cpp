@@ -32,10 +32,10 @@ namespace {
 
 enum ZAState {
   ANY = 0,
-  ACTIVE,
-  LOCAL_SAVED,
-  CALLER_DORMANT,
-  OFF,
+  ACTIVE,         // 1
+  LOCAL_SAVED,    // 2
+  CALLER_DORMANT, // 3
+  OFF,            // 4
   NUM_ZA_STATE
 };
 
@@ -123,14 +123,17 @@ struct MachineSMEABI : public MachineFunctionPass {
   void emitSetupLazySave(MachineBasicBlock &MBB,
                          MachineBasicBlock::iterator MBBI);
 
-  MachineBasicBlock *emitCommitLazySave(MachineBasicBlock &MBB,
-                                        MachineBasicBlock::iterator MBBI);
+  void emitNewZAPrologue(MachineBasicBlock &MBB,
+                         MachineBasicBlock::iterator MBBI);
 
   void emitAllocateLazySaveBuffer(MachineBasicBlock &MBB,
                                   MachineBasicBlock::iterator MBBI);
 
   void emitStateChange(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
                        ZAState From, ZAState To, bool NZCVLive);
+
+  void emitZAOff(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+                 bool ClearTPIDR2);
 
   TPIDR2State getTPIDR2Block(MachineFunction &MF);
 
@@ -190,6 +193,9 @@ void MachineSMEABI::collectNeededZAStates(MachineFunction &MF,
       if (NeededState != ZAState::ANY)
         Block.Insts.push_back({NeededState, InsertPt, NZCVLive});
     }
+
+    // Reverse vector (as we had to iterate backwards for liveness).
+    std::reverse(Block.Insts.begin(), Block.Insts.end());
   }
 }
 
@@ -329,8 +335,8 @@ void MachineSMEABI::emitRestoreLazySave(MachineBasicBlock &MBB,
 
   DebugLoc DL = getDebugLoc(MBB, MBBI);
   Register TPIDR2EL0 = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
-  Register TPIDR2 = MRI.createVirtualRegister(&AArch64::GPR64spRegClass);
   Register StatusFlags = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
+  Register TPIDR2 = AArch64::X0;
 
   // TODO: Emit these within the restore MBB to prevent unnecessary saves.
   if (NZCVLive)
@@ -370,9 +376,29 @@ void MachineSMEABI::emitRestoreLazySave(MachineBasicBlock &MBB,
         .addReg(AArch64::NZCV, RegState::ImplicitDefine);
 }
 
+void MachineSMEABI::emitZAOff(MachineBasicBlock &MBB,
+                              MachineBasicBlock::iterator MBBI,
+                              bool ClearTPIDR2) {
+  MachineFunction &MF = *MBB.getParent();
+  auto &Subtarget = MF.getSubtarget<AArch64Subtarget>();
+  const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
+  DebugLoc DL = getDebugLoc(MBB, MBBI);
+
+  // Clear TPIDR2.
+  if (ClearTPIDR2)
+    DebugLoc DL = getDebugLoc(MBB, MBBI);
+  BuildMI(MBB, MBBI, DL, TII.get(AArch64::MSR))
+      .addImm(AArch64SysReg::TPIDR2_EL0)
+      .addReg(AArch64::XZR);
+
+  // Disable ZA.
+  BuildMI(MBB, MBBI, DL, TII.get(AArch64::MSRpstatesvcrImm1))
+      .addImm(AArch64SVCR::SVCRZA)
+      .addImm(0);
+}
+
 void MachineSMEABI::emitAllocateLazySaveBuffer(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI) {
-
   MachineFunction &MF = *MBB.getParent();
   MachineFrameInfo &MFI = MF.getFrameInfo();
   auto &Subtarget = MF.getSubtarget<AArch64Subtarget>();
@@ -437,6 +463,48 @@ void MachineSMEABI::emitAllocateLazySaveBuffer(
   }
 }
 
+static void emitZeroZA(const TargetInstrInfo &TII, DebugLoc DL,
+                       MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+                       unsigned Mask) {
+  MachineInstrBuilder MIB =
+      BuildMI(MBB, MBBI, DL, TII.get(AArch64::ZERO_M)).addImm(Mask);
+  for (unsigned I = 0; I < 8; I++) {
+    if (Mask & (1 << I))
+      MIB.addDef(AArch64::ZAD0 + I, RegState::ImplicitDefine);
+  }
+}
+
+void MachineSMEABI::emitNewZAPrologue(MachineBasicBlock &MBB,
+                                      MachineBasicBlock::iterator MBBI) {
+  MachineFunction &MF = *MBB.getParent();
+  auto &Subtarget = MF.getSubtarget<AArch64Subtarget>();
+  const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const AArch64RegisterInfo &TRI = *Subtarget.getRegisterInfo();
+  DebugLoc DL = getDebugLoc(MBB, MBBI);
+
+  // Get current TPIDR2_EL0.
+  Register TPIDR2EL0 = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
+  BuildMI(MBB, MBBI, DL, TII.get(AArch64::MRS))
+      .addReg(TPIDR2EL0, RegState::Define)
+      .addImm(AArch64SysReg::TPIDR2_EL0);
+  // If TPIDR2_EL0 is non-zero, commit the lazy save.
+  BuildMI(MBB, MBBI, DL, TII.get(AArch64::CommitZAPseudo))
+      .addReg(TPIDR2EL0)
+      .addExternalSymbol("__arm_tpidr2_save")
+      .addRegMask(TRI.SMEABISupportRoutinesCallPreservedMaskFromX0());
+  // Clear TPIDR2_EL0.
+  BuildMI(MBB, MBBI, DL, TII.get(AArch64::MSR))
+      .addImm(AArch64SysReg::TPIDR2_EL0)
+      .addReg(AArch64::XZR);
+  // Enable ZA (as ZA could have previously been in the OFF state).
+  BuildMI(MBB, MBBI, DL, TII.get(AArch64::MSRpstatesvcrImm1))
+      .addImm(AArch64SVCR::SVCRZA)
+      .addImm(1);
+  // Zero ZA (all tiles).
+  emitZeroZA(TII, DL, MBB, MBBI, /*Mask=*/0b11111111);
+}
+
 void MachineSMEABI::emitStateChange(MachineBasicBlock &MBB,
                                     MachineBasicBlock::iterator InsertPt,
                                     ZAState From, ZAState To, bool NZCVLive) {
@@ -445,10 +513,26 @@ void MachineSMEABI::emitStateChange(MachineBasicBlock &MBB,
   if (From == ZAState::ANY || To == ZAState::ANY)
     return;
 
-  if (From == ZAState::ACTIVE && To == ZAState::LOCAL_SAVED)
+  if (From == ZAState::CALLER_DORMANT) {
+    // Note: CALLER_DORMANT -> OFF would only occur for a single BB function
+    // that does not use ZA.
+    if (To != ZAState::OFF) {
+      assert(&MBB == &MBB.getParent()->front() &&
+             "CALLER_DORMANT state only valid in entry block");
+      emitNewZAPrologue(MBB, MBB.getFirstNonPHI());
+    }
+    // Note: "emitNewZAPrologue" zeros ZA, so we may need to setup a lazy save
+    // if "To" os "ZAState::LOCAL_SAVED". If may be possible to improve this
+    // case by changing the placement of the zero instruction.
+  }
+
+  if ((From == ZAState::CALLER_DORMANT || From == ZAState::ACTIVE) &&
+      To == ZAState::LOCAL_SAVED)
     emitSetupLazySave(MBB, InsertPt);
   else if (From == ZAState::LOCAL_SAVED && To == ZAState::ACTIVE)
     emitRestoreLazySave(MBB, InsertPt, NZCVLive);
+  else if (To == ZAState::OFF)
+    emitZAOff(MBB, InsertPt, /*ClearTPIDR2=*/From == ZAState::LOCAL_SAVED);
   else
     assert(false && "Unimplemented state transition");
 }
@@ -467,8 +551,7 @@ bool MachineSMEABI::runOnMachineFunction(MachineFunction &MF) {
 
   auto *AFI = MF.getInfo<AArch64FunctionInfo>();
   SMEAttrs SMEFnAttrs = AFI->getSMEFnAttrs();
-
-  if (!SMEFnAttrs.hasZAState())
+  if (!SMEFnAttrs.hasZAState() && !SMEFnAttrs.hasZT0State())
     return false;
 
   assert(MF.getRegInfo().isSSA() && "Expected to be run on SSA form!");
