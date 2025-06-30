@@ -79,11 +79,20 @@ static bool isZARegOp(const TargetRegisterInfo &TRI, const MachineOperand &MO) {
 
 static ZAState getInstNeededZAState(const TargetRegisterInfo &TRI,
                                     MachineInstr &MI, bool ZALiveAtReturn) {
-  if (MI.getOpcode() == AArch64::InOutZAUsePseudo)
-    return ZAState::ACTIVE;
-
-  if (MI.getOpcode() == AArch64::RequiresZASavePseudo)
-    return ZAState::LOCAL_SAVED;
+  if (MI.getOpcode() == AArch64::ADJCALLSTACKDOWN) {
+    MachineBasicBlock::iterator MBBI(MI);
+    // Note: The marker occurs after the ADJCALLSTACKDOWN (though we need to
+    // insert any state changes before the ADJCALLSTACKDOWN, not after).
+    auto MarkerNode = std::next(MBBI);
+    auto &MBB = *MI.getParent();
+    if (MarkerNode == MBB.end())
+      return ZAState::ANY;
+    if (MarkerNode->getOpcode() == AArch64::InOutZAUsePseudo)
+      return ZAState::ACTIVE;
+    if (MarkerNode->getOpcode() == AArch64::RequiresZASavePseudo)
+      return ZAState::LOCAL_SAVED;
+    return ZAState::ANY;
+  }
 
   if (MI.isReturn())
     return ZALiveAtReturn ? ZAState::ACTIVE : ZAState::OFF;
@@ -161,7 +170,8 @@ private:
 void MachineSMEABI::collectNeededZAStates(MachineFunction &MF,
                                           SMEAttrs SMEFnAttrs) {
   const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
-  assert(SMEFnAttrs.hasZAState() && "Expected function to have ZA state!");
+  assert((SMEFnAttrs.hasZT0State() || SMEFnAttrs.hasZAState()) &&
+         "Expected function to have ZA/ZT0 state!");
 
   Blocks.resize(MF.getNumBlockIDs());
   for (MachineBasicBlock &MBB : MF) {

@@ -50,11 +50,11 @@ let hasSideEffects = 1 in {
   def RequiresZASavePseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
 }
 def AArch64InOutZAUse : SDNode<"AArch64ISD::INOUT_ZA_USE", SDTypeProfile<0, 0,
-                              []>, [SDNPHasChain, SDNPOutGlue]>;
+                              []>, [SDNPHasChain, SDNPInGlue]>;
 def : Pat<(AArch64InOutZAUse), (InOutZAUsePseudo)>;
 
 def AArch64RequiresZASave : SDNode<"AArch64ISD::REQUIRES_ZA_SAVE", SDTypeProfile<0, 0,
-                              []>, [SDNPHasChain, SDNPOutGlue]>;
+                              []>, [SDNPHasChain, SDNPInGlue]>;
 def : Pat<(AArch64RequiresZASave), (RequiresZASavePseudo)>;
 
 //===----------------------------------------------------------------------===//

@@ -8697,6 +8697,9 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
                     *DAG.getContext());
   RetCCInfo.AnalyzeCallResult(Ins, RetCC);
 
+  // Determine whether we need any streaming mode changes.
+  SMECallAttrs CallAttrs = getSMECallAttrs(MF.getFunction(), CLI);
+
   // Check callee args/returns for SVE registers and set calling convention
   // accordingly.
   if (CallConv == CallingConv::C || CallConv == CallingConv::Fast) {
@@ -8710,14 +8713,17 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
       CallConv = CallingConv::AArch64_SVE_VectorCall;
   }
 
+  bool RequiresZAMarker =
+      CallAttrs.caller().hasZAState() || CallAttrs.callee().hasZT0State();
+
   if (IsTailCall) {
     // Check if it's really possible to do a tail call.
     IsTailCall = isEligibleForTailCallOptimization(CLI);
 
     // A sibling call is one where we're under the usual C ABI and not planning
     // to change that but can still do a tail call:
-    if (!TailCallOpt && IsTailCall && CallConv != CallingConv::Tail &&
-        CallConv != CallingConv::SwiftTail)
+    if (!RequiresZAMarker && !TailCallOpt && IsTailCall &&
+        CallConv != CallingConv::Tail && CallConv != CallingConv::SwiftTail)
       IsSibCall = true;
 
     if (IsTailCall)
@@ -8769,9 +8775,6 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     assert(FPDiff % 16 == 0 && "unaligned stack on tail call");
   }
 
-  // Determine whether we need any streaming mode changes.
-  SMECallAttrs CallAttrs = getSMECallAttrs(MF.getFunction(), CLI);
-
   auto DescribeCallsite =
       [&](OptimizationRemarkAnalysis &R) -> OptimizationRemarkAnalysis & {
     R << "call from '" << ore::NV("Caller", MF.getName()) << "' to '";
@@ -8784,14 +8787,6 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     R << "'";
     return R;
   };
-
-  bool RequiresSaveZA =
-      CallAttrs.requiresLazySave() || CallAttrs.requiresPreservingAllZAState();
-  if (CallAttrs.caller().hasZAState() || CallAttrs.callee().hasZT0State()) {
-    Chain = DAG.getNode(RequiresSaveZA ? AArch64ISD::REQUIRES_ZA_SAVE
-                                       : AArch64ISD::INOUT_ZA_USE,
-                        DL, DAG.getVTList(MVT::Other, MVT::Glue), {Chain});
-  }
 
   SDValue PStateSM;
   bool RequiresSMChange = CallAttrs.requiresSMChange();
@@ -8837,10 +8832,25 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
         AArch64ISD::SMSTOP, DL, DAG.getVTList(MVT::Other, MVT::Glue), Chain,
         DAG.getTargetConstant((int32_t)(AArch64SVCR::SVCRZA), DL, MVT::i32));
 
-  // Adjust the stack pointer for the new arguments...
+  // Adjust the stack pointer for the new arguments... and mark ZA uses.
   // These operations are automatically eliminated by the prolog/epilog pass
-  if (!IsSibCall)
+  assert((!IsSibCall || !RequiresZAMarker) &&
+         "ZA markers require CALLSEQ_START");
+  bool RequiresSaveZA =
+      CallAttrs.requiresLazySave() || CallAttrs.requiresPreservingAllZAState();
+  if (!IsSibCall) {
     Chain = DAG.getCALLSEQ_START(Chain, IsTailCall ? 0 : NumBytes, 0, DL);
+    if (RequiresZAMarker) {
+      // Note: We need the CALLSEQ_START to glue the
+      // REQUIRES_ZA_SAVE/INOUT_ZA_USE to, simply using a chain can result in
+      // incorrect scheduling. The markers referer to the position just before
+      // the CALLSEQ_START (though occur after as CALLSEQ_START lacks in-glue).
+      Chain = DAG.getNode(RequiresSaveZA ? AArch64ISD::REQUIRES_ZA_SAVE
+                                         : AArch64ISD::INOUT_ZA_USE,
+                          DL, DAG.getVTList(MVT::Other),
+                          {Chain, Chain.getValue(1)});
+    }
+  }
 
   SDValue StackPtr = DAG.getCopyFromReg(Chain, DL, AArch64::SP,
                                         getPointerTy(DAG.getDataLayout()));

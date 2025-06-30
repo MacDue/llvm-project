@@ -2803,42 +2803,37 @@ entry:
 define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "target-features"="+sme" {
 ; CHECK0-LABEL: vastate:
 ; CHECK0:       // %bb.0: // %entry
-; CHECK0-NEXT:    stp d15, d14, [sp, #-112]! // 16-byte Folded Spill
-; CHECK0-NEXT:    .cfi_def_cfa_offset 112
+; CHECK0-NEXT:    stp d15, d14, [sp, #-96]! // 16-byte Folded Spill
+; CHECK0-NEXT:    .cfi_def_cfa_offset 96
 ; CHECK0-NEXT:    cntd x9
 ; CHECK0-NEXT:    stp d13, d12, [sp, #16] // 16-byte Folded Spill
 ; CHECK0-NEXT:    stp d11, d10, [sp, #32] // 16-byte Folded Spill
 ; CHECK0-NEXT:    stp d9, d8, [sp, #48] // 16-byte Folded Spill
 ; CHECK0-NEXT:    stp x29, x30, [sp, #64] // 16-byte Folded Spill
-; CHECK0-NEXT:    str x9, [sp, #80] // 8-byte Folded Spill
-; CHECK0-NEXT:    stp x20, x19, [sp, #96] // 16-byte Folded Spill
+; CHECK0-NEXT:    stp x9, x19, [sp, #80] // 16-byte Folded Spill
 ; CHECK0-NEXT:    add x29, sp, #64
-; CHECK0-NEXT:    .cfi_def_cfa w29, 48
+; CHECK0-NEXT:    .cfi_def_cfa w29, 32
 ; CHECK0-NEXT:    .cfi_offset w19, -8
-; CHECK0-NEXT:    .cfi_offset w20, -16
-; CHECK0-NEXT:    .cfi_offset w30, -40
-; CHECK0-NEXT:    .cfi_offset w29, -48
-; CHECK0-NEXT:    .cfi_offset b8, -56
-; CHECK0-NEXT:    .cfi_offset b9, -64
-; CHECK0-NEXT:    .cfi_offset b10, -72
-; CHECK0-NEXT:    .cfi_offset b11, -80
-; CHECK0-NEXT:    .cfi_offset b12, -88
-; CHECK0-NEXT:    .cfi_offset b13, -96
-; CHECK0-NEXT:    .cfi_offset b14, -104
-; CHECK0-NEXT:    .cfi_offset b15, -112
+; CHECK0-NEXT:    .cfi_offset w30, -24
+; CHECK0-NEXT:    .cfi_offset w29, -32
+; CHECK0-NEXT:    .cfi_offset b8, -40
+; CHECK0-NEXT:    .cfi_offset b9, -48
+; CHECK0-NEXT:    .cfi_offset b10, -56
+; CHECK0-NEXT:    .cfi_offset b11, -64
+; CHECK0-NEXT:    .cfi_offset b12, -72
+; CHECK0-NEXT:    .cfi_offset b13, -80
+; CHECK0-NEXT:    .cfi_offset b14, -88
+; CHECK0-NEXT:    .cfi_offset b15, -96
 ; CHECK0-NEXT:    sub sp, sp, #16
 ; CHECK0-NEXT:    rdsvl x8, #1
 ; CHECK0-NEXT:    mov x9, sp
-; CHECK0-NEXT:    mov w20, w0
 ; CHECK0-NEXT:    msub x9, x8, x8, x9
 ; CHECK0-NEXT:    mov sp, x9
-; CHECK0-NEXT:    stur x9, [x29, #-80]
-; CHECK0-NEXT:    sub x9, x29, #80
-; CHECK0-NEXT:    sturh wzr, [x29, #-70]
-; CHECK0-NEXT:    stur wzr, [x29, #-68]
-; CHECK0-NEXT:    sturh w8, [x29, #-72]
-; CHECK0-NEXT:    msr TPIDR2_EL0, x9
-; CHECK0-NEXT:    .cfi_offset vg, -32
+; CHECK0-NEXT:    sub x10, x29, #80
+; CHECK0-NEXT:    sub x11, x29, #80
+; CHECK0-NEXT:    stp x9, x8, [x10]
+; CHECK0-NEXT:    msr TPIDR2_EL0, x11
+; CHECK0-NEXT:    .cfi_offset vg, -16
 ; CHECK0-NEXT:    smstop sm
 ; CHECK0-NEXT:    bl other
 ; CHECK0-NEXT:    smstart sm
@@ -2850,19 +2845,17 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK0-NEXT:  // %bb.1: // %entry
 ; CHECK0-NEXT:    bl __arm_tpidr2_restore
 ; CHECK0-NEXT:  .LBB33_2: // %entry
-; CHECK0-NEXT:    mov w0, w20
 ; CHECK0-NEXT:    msr TPIDR2_EL0, xzr
 ; CHECK0-NEXT:    sub sp, x29, #64
-; CHECK0-NEXT:    .cfi_def_cfa wsp, 112
-; CHECK0-NEXT:    ldp x20, x19, [sp, #96] // 16-byte Folded Reload
+; CHECK0-NEXT:    .cfi_def_cfa wsp, 96
 ; CHECK0-NEXT:    ldp x29, x30, [sp, #64] // 16-byte Folded Reload
+; CHECK0-NEXT:    ldr x19, [sp, #88] // 8-byte Folded Reload
 ; CHECK0-NEXT:    ldp d9, d8, [sp, #48] // 16-byte Folded Reload
 ; CHECK0-NEXT:    ldp d11, d10, [sp, #32] // 16-byte Folded Reload
 ; CHECK0-NEXT:    ldp d13, d12, [sp, #16] // 16-byte Folded Reload
-; CHECK0-NEXT:    ldp d15, d14, [sp], #112 // 16-byte Folded Reload
+; CHECK0-NEXT:    ldp d15, d14, [sp], #96 // 16-byte Folded Reload
 ; CHECK0-NEXT:    .cfi_def_cfa_offset 0
 ; CHECK0-NEXT:    .cfi_restore w19
-; CHECK0-NEXT:    .cfi_restore w20
 ; CHECK0-NEXT:    .cfi_restore w30
 ; CHECK0-NEXT:    .cfi_restore w29
 ; CHECK0-NEXT:    .cfi_restore b8
@@ -2877,43 +2870,38 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ;
 ; CHECK64-LABEL: vastate:
 ; CHECK64:       // %bb.0: // %entry
-; CHECK64-NEXT:    stp d15, d14, [sp, #-176]! // 16-byte Folded Spill
-; CHECK64-NEXT:    .cfi_def_cfa_offset 176
+; CHECK64-NEXT:    stp d15, d14, [sp, #-160]! // 16-byte Folded Spill
+; CHECK64-NEXT:    .cfi_def_cfa_offset 160
 ; CHECK64-NEXT:    cntd x9
 ; CHECK64-NEXT:    stp d13, d12, [sp, #16] // 16-byte Folded Spill
 ; CHECK64-NEXT:    stp d11, d10, [sp, #32] // 16-byte Folded Spill
 ; CHECK64-NEXT:    stp d9, d8, [sp, #48] // 16-byte Folded Spill
 ; CHECK64-NEXT:    stp x29, x30, [sp, #128] // 16-byte Folded Spill
-; CHECK64-NEXT:    stp x9, x20, [sp, #144] // 16-byte Folded Spill
-; CHECK64-NEXT:    str x19, [sp, #160] // 8-byte Folded Spill
+; CHECK64-NEXT:    stp x9, x19, [sp, #144] // 16-byte Folded Spill
 ; CHECK64-NEXT:    add x29, sp, #128
-; CHECK64-NEXT:    .cfi_def_cfa w29, 48
-; CHECK64-NEXT:    .cfi_offset w19, -16
-; CHECK64-NEXT:    .cfi_offset w20, -24
-; CHECK64-NEXT:    .cfi_offset w30, -40
-; CHECK64-NEXT:    .cfi_offset w29, -48
-; CHECK64-NEXT:    .cfi_offset b8, -120
-; CHECK64-NEXT:    .cfi_offset b9, -128
-; CHECK64-NEXT:    .cfi_offset b10, -136
-; CHECK64-NEXT:    .cfi_offset b11, -144
-; CHECK64-NEXT:    .cfi_offset b12, -152
-; CHECK64-NEXT:    .cfi_offset b13, -160
-; CHECK64-NEXT:    .cfi_offset b14, -168
-; CHECK64-NEXT:    .cfi_offset b15, -176
+; CHECK64-NEXT:    .cfi_def_cfa w29, 32
+; CHECK64-NEXT:    .cfi_offset w19, -8
+; CHECK64-NEXT:    .cfi_offset w30, -24
+; CHECK64-NEXT:    .cfi_offset w29, -32
+; CHECK64-NEXT:    .cfi_offset b8, -104
+; CHECK64-NEXT:    .cfi_offset b9, -112
+; CHECK64-NEXT:    .cfi_offset b10, -120
+; CHECK64-NEXT:    .cfi_offset b11, -128
+; CHECK64-NEXT:    .cfi_offset b12, -136
+; CHECK64-NEXT:    .cfi_offset b13, -144
+; CHECK64-NEXT:    .cfi_offset b14, -152
+; CHECK64-NEXT:    .cfi_offset b15, -160
 ; CHECK64-NEXT:    sub sp, sp, #80
 ; CHECK64-NEXT:    rdsvl x8, #1
 ; CHECK64-NEXT:    mov x9, sp
-; CHECK64-NEXT:    mov w20, w0
-; CHECK64-NEXT:    msub x9, x8, x8, x9
 ; CHECK64-NEXT:    mov x19, sp
+; CHECK64-NEXT:    msub x9, x8, x8, x9
 ; CHECK64-NEXT:    mov sp, x9
-; CHECK64-NEXT:    str x9, [x19]
-; CHECK64-NEXT:    add x9, x19, #0
-; CHECK64-NEXT:    strh wzr, [x19, #10]
-; CHECK64-NEXT:    str wzr, [x19, #12]
-; CHECK64-NEXT:    strh w8, [x19, #8]
-; CHECK64-NEXT:    msr TPIDR2_EL0, x9
-; CHECK64-NEXT:    .cfi_offset vg, -32
+; CHECK64-NEXT:    add x10, x19, #0
+; CHECK64-NEXT:    add x11, x19, #0
+; CHECK64-NEXT:    stp x9, x8, [x10]
+; CHECK64-NEXT:    msr TPIDR2_EL0, x11
+; CHECK64-NEXT:    .cfi_offset vg, -16
 ; CHECK64-NEXT:    smstop sm
 ; CHECK64-NEXT:    bl other
 ; CHECK64-NEXT:    smstart sm
@@ -2925,20 +2913,18 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK64-NEXT:  // %bb.1: // %entry
 ; CHECK64-NEXT:    bl __arm_tpidr2_restore
 ; CHECK64-NEXT:  .LBB33_2: // %entry
-; CHECK64-NEXT:    mov w0, w20
 ; CHECK64-NEXT:    msr TPIDR2_EL0, xzr
 ; CHECK64-NEXT:    sub sp, x29, #128
-; CHECK64-NEXT:    .cfi_def_cfa wsp, 176
-; CHECK64-NEXT:    ldp x20, x19, [sp, #152] // 16-byte Folded Reload
-; CHECK64-NEXT:    ldr d14, [sp, #8] // 8-byte Folded Reload
+; CHECK64-NEXT:    .cfi_def_cfa wsp, 160
 ; CHECK64-NEXT:    ldp x29, x30, [sp, #128] // 16-byte Folded Reload
+; CHECK64-NEXT:    ldr x19, [sp, #152] // 8-byte Folded Reload
 ; CHECK64-NEXT:    ldp d9, d8, [sp, #48] // 16-byte Folded Reload
+; CHECK64-NEXT:    ldr d14, [sp, #8] // 8-byte Folded Reload
 ; CHECK64-NEXT:    ldp d11, d10, [sp, #32] // 16-byte Folded Reload
 ; CHECK64-NEXT:    ldp d13, d12, [sp, #16] // 16-byte Folded Reload
-; CHECK64-NEXT:    ldr d15, [sp], #176 // 8-byte Folded Reload
+; CHECK64-NEXT:    ldr d15, [sp], #160 // 8-byte Folded Reload
 ; CHECK64-NEXT:    .cfi_def_cfa_offset 0
 ; CHECK64-NEXT:    .cfi_restore w19
-; CHECK64-NEXT:    .cfi_restore w20
 ; CHECK64-NEXT:    .cfi_restore w30
 ; CHECK64-NEXT:    .cfi_restore w29
 ; CHECK64-NEXT:    .cfi_restore b8
@@ -2964,12 +2950,10 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK1024-NEXT:    str x30, [sp, #1096] // 8-byte Folded Spill
 ; CHECK1024-NEXT:    str x9, [sp, #1104] // 8-byte Folded Spill
 ; CHECK1024-NEXT:    str x28, [sp, #1112] // 8-byte Folded Spill
-; CHECK1024-NEXT:    str x20, [sp, #1120] // 8-byte Folded Spill
-; CHECK1024-NEXT:    str x19, [sp, #1128] // 8-byte Folded Spill
+; CHECK1024-NEXT:    str x19, [sp, #1120] // 8-byte Folded Spill
 ; CHECK1024-NEXT:    add x29, sp, #1088
 ; CHECK1024-NEXT:    .cfi_def_cfa w29, 48
-; CHECK1024-NEXT:    .cfi_offset w19, -8
-; CHECK1024-NEXT:    .cfi_offset w20, -16
+; CHECK1024-NEXT:    .cfi_offset w19, -16
 ; CHECK1024-NEXT:    .cfi_offset w28, -24
 ; CHECK1024-NEXT:    .cfi_offset w30, -40
 ; CHECK1024-NEXT:    .cfi_offset w29, -48
@@ -2984,16 +2968,13 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK1024-NEXT:    sub sp, sp, #1040
 ; CHECK1024-NEXT:    rdsvl x8, #1
 ; CHECK1024-NEXT:    mov x9, sp
-; CHECK1024-NEXT:    mov w20, w0
-; CHECK1024-NEXT:    msub x9, x8, x8, x9
 ; CHECK1024-NEXT:    mov x19, sp
+; CHECK1024-NEXT:    msub x9, x8, x8, x9
 ; CHECK1024-NEXT:    mov sp, x9
-; CHECK1024-NEXT:    str x9, [x19]
-; CHECK1024-NEXT:    add x9, x19, #0
-; CHECK1024-NEXT:    strh wzr, [x19, #10]
-; CHECK1024-NEXT:    str wzr, [x19, #12]
-; CHECK1024-NEXT:    strh w8, [x19, #8]
-; CHECK1024-NEXT:    msr TPIDR2_EL0, x9
+; CHECK1024-NEXT:    add x10, x19, #0
+; CHECK1024-NEXT:    add x11, x19, #0
+; CHECK1024-NEXT:    stp x9, x8, [x10]
+; CHECK1024-NEXT:    msr TPIDR2_EL0, x11
 ; CHECK1024-NEXT:    .cfi_offset vg, -32
 ; CHECK1024-NEXT:    smstop sm
 ; CHECK1024-NEXT:    bl other
@@ -3006,14 +2987,12 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK1024-NEXT:  // %bb.1: // %entry
 ; CHECK1024-NEXT:    bl __arm_tpidr2_restore
 ; CHECK1024-NEXT:  .LBB33_2: // %entry
-; CHECK1024-NEXT:    mov w0, w20
 ; CHECK1024-NEXT:    msr TPIDR2_EL0, xzr
 ; CHECK1024-NEXT:    sub sp, x29, #1088
 ; CHECK1024-NEXT:    .cfi_def_cfa wsp, 1136
 ; CHECK1024-NEXT:    ldp d9, d8, [sp, #48] // 16-byte Folded Reload
-; CHECK1024-NEXT:    ldr x19, [sp, #1128] // 8-byte Folded Reload
+; CHECK1024-NEXT:    ldr x19, [sp, #1120] // 8-byte Folded Reload
 ; CHECK1024-NEXT:    ldp d11, d10, [sp, #32] // 16-byte Folded Reload
-; CHECK1024-NEXT:    ldr x20, [sp, #1120] // 8-byte Folded Reload
 ; CHECK1024-NEXT:    ldr x28, [sp, #1112] // 8-byte Folded Reload
 ; CHECK1024-NEXT:    ldr x30, [sp, #1096] // 8-byte Folded Reload
 ; CHECK1024-NEXT:    ldr x29, [sp, #1088] // 8-byte Folded Reload
@@ -3022,7 +3001,6 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK1024-NEXT:    add sp, sp, #1136
 ; CHECK1024-NEXT:    .cfi_def_cfa_offset 0
 ; CHECK1024-NEXT:    .cfi_restore w19
-; CHECK1024-NEXT:    .cfi_restore w20
 ; CHECK1024-NEXT:    .cfi_restore w28
 ; CHECK1024-NEXT:    .cfi_restore w30
 ; CHECK1024-NEXT:    .cfi_restore w29
