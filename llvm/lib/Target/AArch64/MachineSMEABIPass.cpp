@@ -548,7 +548,8 @@ void MachineSMEABI::emitStateChange(MachineBasicBlock &MBB,
   else if (To == ZAState::OFF)
     emitZAOff(MBB, InsertPt, /*ClearTPIDR2=*/From == ZAState::LOCAL_SAVED);
   else {
-    dbgs() << "Error: Tansition from " << getZAStateString(From) << " to " << getZAStateString(To) << '\n';
+    dbgs() << "Error: Tansition from " << getZAStateString(From) << " to "
+           << getZAStateString(To) << '\n';
     assert(false && "Unimplemented state transition");
   }
 }
