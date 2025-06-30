@@ -9010,9 +9010,10 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   //                                   /*IsSave=*/true);
   // }
 
-  Chain = DAG.getNode(RequiresSaveZA ? AArch64ISD::REQUIRES_ZA_SAVE
-                                     : AArch64ISD::INOUT_ZA_USE,
-                      DL, DAG.getVTList(MVT::Other, MVT::Glue), {Chain});
+  if (CallAttrs.caller().hasZAState() || CallAttrs.callee().hasZT0State())
+    Chain = DAG.getNode(RequiresSaveZA ? AArch64ISD::REQUIRES_ZA_SAVE
+                                       : AArch64ISD::INOUT_ZA_USE,
+                        DL, DAG.getVTList(MVT::Other, MVT::Glue), {Chain});
 
   SDValue PStateSM;
   bool RequiresSMChange = CallAttrs.requiresSMChange();
