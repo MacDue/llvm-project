@@ -35,17 +35,11 @@ define i64 @agnostic_caller_private_za_callee(i64 %v) nounwind "aarch64_za_state
 ; CHECK-NEXT:    bl __arm_sme_save
 ; CHECK-NEXT:    mov x0, x8
 ; CHECK-NEXT:    bl private_za_decl
-; CHECK-NEXT:    mov x1, x0
-; CHECK-NEXT:    mov x0, x19
-; CHECK-NEXT:    bl __arm_sme_restore
-; CHECK-NEXT:    mov x0, x19
-; CHECK-NEXT:    bl __arm_sme_save
-; CHECK-NEXT:    mov x0, x1
 ; CHECK-NEXT:    bl private_za_decl
-; CHECK-NEXT:    mov x1, x0
+; CHECK-NEXT:    mov x8, x0
 ; CHECK-NEXT:    mov x0, x19
 ; CHECK-NEXT:    bl __arm_sme_restore
-; CHECK-NEXT:    mov x0, x1
+; CHECK-NEXT:    mov x0, x8
 ; CHECK-NEXT:    mov sp, x29
 ; CHECK-NEXT:    ldr x19, [sp, #16] // 8-byte Folded Reload
 ; CHECK-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
@@ -107,20 +101,14 @@ define i64 @streaming_agnostic_caller_nonstreaming_private_za_callee(i64 %v) nou
 ; CHECK-NEXT:    smstop sm
 ; CHECK-NEXT:    mov x0, x8
 ; CHECK-NEXT:    bl private_za_decl
-; CHECK-NEXT:    mov x1, x0
 ; CHECK-NEXT:    smstart sm
-; CHECK-NEXT:    mov x0, x20
-; CHECK-NEXT:    bl __arm_sme_restore
-; CHECK-NEXT:    mov x0, x20
-; CHECK-NEXT:    bl __arm_sme_save
 ; CHECK-NEXT:    smstop sm
-; CHECK-NEXT:    mov x0, x1
 ; CHECK-NEXT:    bl private_za_decl
-; CHECK-NEXT:    mov x1, x0
 ; CHECK-NEXT:    smstart sm
+; CHECK-NEXT:    mov x8, x0
 ; CHECK-NEXT:    mov x0, x20
 ; CHECK-NEXT:    bl __arm_sme_restore
-; CHECK-NEXT:    mov x0, x1
+; CHECK-NEXT:    mov x0, x8
 ; CHECK-NEXT:    sub sp, x29, #64
 ; CHECK-NEXT:    ldp x20, x19, [sp, #96] // 16-byte Folded Reload
 ; CHECK-NEXT:    ldp x29, x30, [sp, #64] // 16-byte Folded Reload
@@ -153,10 +141,11 @@ define i64 @streaming_compatible_agnostic_caller_nonstreaming_private_za_callee(
 ; CHECK-NEXT:    bl __arm_sme_state_size
 ; CHECK-NEXT:    sub sp, sp, x0
 ; CHECK-NEXT:    mov x19, sp
+; CHECK-NEXT:    bl __arm_sme_state
+; CHECK-NEXT:    mov x9, x0
 ; CHECK-NEXT:    mov x0, x19
 ; CHECK-NEXT:    bl __arm_sme_save
-; CHECK-NEXT:    bl __arm_sme_state
-; CHECK-NEXT:    and x20, x0, #0x1
+; CHECK-NEXT:    and x20, x9, #0x1
 ; CHECK-NEXT:    tbz w20, #0, .LBB5_2
 ; CHECK-NEXT:  // %bb.1:
 ; CHECK-NEXT:    smstop sm
@@ -170,24 +159,25 @@ define i64 @streaming_compatible_agnostic_caller_nonstreaming_private_za_callee(
 ; CHECK-NEXT:  .LBB5_4:
 ; CHECK-NEXT:    mov x0, x19
 ; CHECK-NEXT:    bl __arm_sme_restore
+; CHECK-NEXT:    bl __arm_sme_state
+; CHECK-NEXT:    mov x8, x0
 ; CHECK-NEXT:    mov x0, x19
 ; CHECK-NEXT:    bl __arm_sme_save
-; CHECK-NEXT:    bl __arm_sme_state
-; CHECK-NEXT:    and x20, x0, #0x1
+; CHECK-NEXT:    and x20, x8, #0x1
 ; CHECK-NEXT:    tbz w20, #0, .LBB5_6
 ; CHECK-NEXT:  // %bb.5:
 ; CHECK-NEXT:    smstop sm
 ; CHECK-NEXT:  .LBB5_6:
 ; CHECK-NEXT:    mov x0, x2
 ; CHECK-NEXT:    bl private_za_decl
-; CHECK-NEXT:    mov x1, x0
 ; CHECK-NEXT:    tbz w20, #0, .LBB5_8
 ; CHECK-NEXT:  // %bb.7:
 ; CHECK-NEXT:    smstart sm
 ; CHECK-NEXT:  .LBB5_8:
+; CHECK-NEXT:    mov x8, x0
 ; CHECK-NEXT:    mov x0, x19
 ; CHECK-NEXT:    bl __arm_sme_restore
-; CHECK-NEXT:    mov x0, x1
+; CHECK-NEXT:    mov x0, x8
 ; CHECK-NEXT:    sub sp, x29, #64
 ; CHECK-NEXT:    ldp x20, x19, [sp, #96] // 16-byte Folded Reload
 ; CHECK-NEXT:    ldp x29, x30, [sp, #64] // 16-byte Folded Reload

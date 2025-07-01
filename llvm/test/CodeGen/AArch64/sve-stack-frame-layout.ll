@@ -545,28 +545,27 @@ define i32 @vastate(i32 %x) "aarch64_inout_za" "aarch64_pstate_sm_enabled" "targ
 ; CHECK-NEXT:    sub sp, sp, #16
 ; CHECK-NEXT:    rdsvl x8, #1
 ; CHECK-NEXT:    mov x9, sp
-; CHECK-NEXT:    mov w20, w0
 ; CHECK-NEXT:    msub x9, x8, x8, x9
 ; CHECK-NEXT:    mov sp, x9
-; CHECK-NEXT:    stur x9, [x29, #-80]
-; CHECK-NEXT:    sub x9, x29, #80
-; CHECK-NEXT:    sturh wzr, [x29, #-70]
-; CHECK-NEXT:    stur wzr, [x29, #-68]
-; CHECK-NEXT:    sturh w8, [x29, #-72]
-; CHECK-NEXT:    msr TPIDR2_EL0, x9
+; CHECK-NEXT:    sub x10, x29, #80
+; CHECK-NEXT:    mov w20, w0
+; CHECK-NEXT:    stp x9, x8, [x29, #-80]
+; CHECK-NEXT:    msr TPIDR2_EL0, x10
 ; CHECK-NEXT:    .cfi_offset vg, -32
 ; CHECK-NEXT:    smstop sm
 ; CHECK-NEXT:    bl other
 ; CHECK-NEXT:    smstart sm
+; CHECK-NEXT:    mov w0, w20
+; CHECK-NEXT:    mov w8, w0
 ; CHECK-NEXT:    .cfi_restore vg
 ; CHECK-NEXT:    smstart za
-; CHECK-NEXT:    mrs x8, TPIDR2_EL0
+; CHECK-NEXT:    mrs x9, TPIDR2_EL0
 ; CHECK-NEXT:    sub x0, x29, #80
-; CHECK-NEXT:    cbnz x8, .LBB8_2
+; CHECK-NEXT:    cbnz x9, .LBB8_2
 ; CHECK-NEXT:  // %bb.1: // %entry
 ; CHECK-NEXT:    bl __arm_tpidr2_restore
 ; CHECK-NEXT:  .LBB8_2: // %entry
-; CHECK-NEXT:    mov w0, w20
+; CHECK-NEXT:    mov w0, w8
 ; CHECK-NEXT:    msr TPIDR2_EL0, xzr
 ; CHECK-NEXT:    sub sp, x29, #64
 ; CHECK-NEXT:    .cfi_def_cfa wsp, 112

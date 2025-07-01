@@ -262,7 +262,7 @@ LLVMInitializeAArch64Target() {
   initializeFalkorMarkStridedAccessesLegacyPass(PR);
   initializeLDTLSCleanupPass(PR);
   initializeKCFIPass(PR);
-  initializeSMEABIPass(PR);
+  initializeMachineSMEABIPass(PR);
   initializeSMEPeepholeOptPass(PR);
   initializeSVEIntrinsicOptsPass(PR);
   initializeAArch64SpeculationHardeningPass(PR);
@@ -659,11 +659,6 @@ void AArch64PassConfig::addIRPasses() {
     addPass(createInterleavedAccessPass());
   }
 
-  // Expand any functions marked with SME attributes which require special
-  // changes for the calling convention or that require the lazy-saving
-  // mechanism specified in the SME ABI.
-  addPass(createSMEABIPass());
-
   // Add Control Flow Guard checks.
   if (TM->getTargetTriple().isOSWindows()) {
     if (TM->getTargetTriple().isWindowsArm64EC())
@@ -773,6 +768,9 @@ bool AArch64PassConfig::addGlobalInstructionSelect() {
 }
 
 void AArch64PassConfig::addMachineSSAOptimization() {
+  if (TM->getOptLevel() != CodeGenOptLevel::None)
+    addPass(createMachineSMEABIPass(TM->getOptLevel()));
+
   if (TM->getOptLevel() != CodeGenOptLevel::None && EnableSMEPeepholeOpt)
     addPass(createSMEPeepholeOptPass());
 
@@ -803,6 +801,9 @@ bool AArch64PassConfig::addILPOpts() {
 }
 
 void AArch64PassConfig::addPreRegAlloc() {
+  if (TM->getOptLevel() == CodeGenOptLevel::None)
+    addPass(createMachineSMEABIPass(CodeGenOptLevel::None));
+
   // Change dead register definitions to refer to the zero register.
   if (TM->getOptLevel() != CodeGenOptLevel::None &&
       EnableDeadRegisterElimination)
