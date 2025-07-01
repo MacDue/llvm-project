@@ -32,10 +32,10 @@ namespace {
 
 enum ZAState {
   ANY = 0,
-  ACTIVE,         // 1
-  LOCAL_SAVED,    // 2
-  CALLER_DORMANT, // 3
-  OFF,            // 4
+  ACTIVE,
+  LOCAL_SAVED,
+  CALLER_DORMANT,
+  OFF,
   NUM_ZA_STATE
 };
 
@@ -77,32 +77,26 @@ static bool isZARegOp(const TargetRegisterInfo &TRI, const MachineOperand &MO) {
   });
 }
 
-static ZAState getInstNeededZAState(const TargetRegisterInfo &TRI,
-                                    MachineInstr &MI, bool ZALiveAtReturn) {
-  if (MI.getOpcode() == AArch64::ADJCALLSTACKDOWN) {
-    MachineBasicBlock::iterator MBBI(MI);
-    // Note: The marker occurs after the ADJCALLSTACKDOWN (though we need to
-    // insert any state changes before the ADJCALLSTACKDOWN, not after).
-    auto MarkerNode = std::next(MBBI);
-    auto &MBB = *MI.getParent();
-    if (MarkerNode == MBB.end())
-      return ZAState::ANY;
-    if (MarkerNode->getOpcode() == AArch64::InOutZAUsePseudo)
-      return ZAState::ACTIVE;
-    if (MarkerNode->getOpcode() == AArch64::RequiresZASavePseudo)
-      return ZAState::LOCAL_SAVED;
-    return ZAState::ANY;
-  }
+static std::pair<ZAState, MachineBasicBlock::iterator>
+getInstNeededZAState(const TargetRegisterInfo &TRI, MachineInstr &MI,
+                     bool ZALiveAtReturn) {
+  MachineBasicBlock::iterator InsertPt(MI);
+
+  if (MI.getOpcode() == AArch64::InOutZAUsePseudo)
+    return {ZAState::ACTIVE, std::prev(InsertPt)};
+
+  if (MI.getOpcode() == AArch64::RequiresZASavePseudo)
+    return {ZAState::LOCAL_SAVED, std::prev(InsertPt)};
 
   if (MI.isReturn())
-    return ZALiveAtReturn ? ZAState::ACTIVE : ZAState::OFF;
+    return {ZALiveAtReturn ? ZAState::ACTIVE : ZAState::OFF, InsertPt};
 
   for (auto &MO : MI.operands()) {
     if (isZARegOp(TRI, MO))
-      return ZAState::ACTIVE;
+      return {ZAState::ACTIVE, InsertPt};
   }
 
-  return ZAState::ANY;
+  return {ZAState::ANY, InsertPt};
 }
 
 struct MachineSMEABI : public MachineFunctionPass {
@@ -192,13 +186,16 @@ void MachineSMEABI::collectNeededZAStates(MachineFunction &MF,
     Block.NZCVLiveAtExit = !LiveRegs.available(AArch64::NZCV);
     auto FirstTerminatorInsertPt = MBB.getFirstTerminator();
     for (MachineInstr &MI : reverse(MBB)) {
+      MachineBasicBlock::iterator MBBI(MI);
       LiveRegs.stepBackward(MI);
-      ZAState NeededState = getInstNeededZAState(
+      auto [NeededState, InsertPt] = getInstNeededZAState(
           TRI, MI, /*ZALiveAtReturn=*/SMEFnAttrs.hasSharedZAInterface());
-      MachineBasicBlock::iterator InsertPt(MI);
+      assert((InsertPt == MBBI ||
+              InsertPt->getOpcode() == AArch64::ADJCALLSTACKDOWN) &&
+             "Unexpected state change insertion point!");
       // TODO: Do something to avoid state changes where NZCV is live.
       bool NZCVLive = !LiveRegs.available(AArch64::NZCV);
-      if (InsertPt == FirstTerminatorInsertPt)
+      if (MBBI == FirstTerminatorInsertPt)
         Block.NZCVLiveAtExit = NZCVLive;
       if (NeededState != ZAState::ANY)
         Block.Insts.push_back({NeededState, InsertPt, NZCVLive});
