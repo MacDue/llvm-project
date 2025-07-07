@@ -102,6 +102,7 @@ def : Pat<(i64 (AArch64AllocateSMESaveBuffer GPR64:$size)),
 let hasSideEffects = 1, isMeta = 1 in {
   def InOutZAUsePseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
   def RequiresZASavePseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
+  def RequiresZACommitPseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
 }
 
 def SMEStateAllocPseudo : Pseudo<(outs), (ins), []>, Sched<[]>;
@@ -125,6 +126,10 @@ def AArch64_sme_state_alloc
   : SDNode<"AArch64ISD::SME_STATE_ALLOC", SDTypeProfile<0, 0,[]>,
            [SDNPHasChain]>;
 def : Pat<(AArch64_sme_state_alloc), (SMEStateAllocPseudo)>;
+
+def AArch64_requires_za_commit : SDNode<"AArch64ISD::REQUIRES_ZA_COMMIT", SDTypeProfile<0, 0,
+                              []>, [SDNPHasChain, SDNPInGlue]>;
+def : Pat<(AArch64_requires_za_commit), (RequiresZACommitPseudo)>;
 
 //===----------------------------------------------------------------------===//
 // Instruction naming conventions.

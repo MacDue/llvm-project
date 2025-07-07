@@ -1688,6 +1688,7 @@ bool AArch64ExpandPseudo::expandMI(MachineBasicBlock &MBB,
    }
    case AArch64::InOutZAUsePseudo:
    case AArch64::RequiresZASavePseudo:
+   case AArch64::RequiresZACommitPseudo:
    case AArch64::SMEStateAllocPseudo:
    case AArch64::COALESCER_BARRIER_FPR16:
    case AArch64::COALESCER_BARRIER_FPR32:

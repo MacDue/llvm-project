@@ -142,11 +142,11 @@ define dso_local void @try_catch() "aarch64_inout_za" personality ptr @__gxx_per
 ; CHECK-NEXT:    msub x9, x8, x8, x9
 ; CHECK-NEXT:    mov sp, x9
 ; CHECK-NEXT:    stp x9, x8, [x29, #-16]
-; CHECK-NEXT:  .Ltmp3:
+; CHECK-NEXT:  .Ltmp3: // EH_LABEL
 ; CHECK-NEXT:    sub x8, x29, #16
 ; CHECK-NEXT:    msr TPIDR2_EL0, x8
 ; CHECK-NEXT:    bl may_throw
-; CHECK-NEXT:  .Ltmp4:
+; CHECK-NEXT:  .Ltmp4: // EH_LABEL
 ; CHECK-NEXT:  .LBB1_1: // %after_catch
 ; CHECK-NEXT:    smstart za
 ; CHECK-NEXT:    mrs x8, TPIDR2_EL0
@@ -160,7 +160,7 @@ define dso_local void @try_catch() "aarch64_inout_za" personality ptr @__gxx_per
 ; CHECK-NEXT:    ldp x29, x30, [sp], #16 // 16-byte Folded Reload
 ; CHECK-NEXT:    b shared_za_call
 ; CHECK-NEXT:  .LBB1_4: // %catch
-; CHECK-NEXT:  .Ltmp5:
+; CHECK-NEXT:  .Ltmp5: // EH_LABEL
 ; CHECK-NEXT:    bl __cxa_begin_catch
 ; CHECK-NEXT:    smstart za
 ; CHECK-NEXT:    mrs x8, TPIDR2_EL0
@@ -197,7 +197,7 @@ after_catch:
 ; __arm_new("za") void try_catch_shared_za_callee()
 ; {
 ;    try {
-;        shared_za_call();
+;        agnostic_za_call();
 ;    } catch(...) {
 ;        noexcept_shared_za_call();
 ;    }
@@ -235,16 +235,16 @@ define void @try_catch_shared_za_callee() "aarch64_new_za" personality ptr @__gx
 ; CHECK-NEXT:    zero {za}
 ; CHECK-NEXT:  .LBB2_2:
 ; CHECK-NEXT:    smstart za
-; CHECK-NEXT:  .Ltmp6:
+; CHECK-NEXT:  .Ltmp6: // EH_LABEL
 ; CHECK-NEXT:    bl shared_za_call
-; CHECK-NEXT:  .Ltmp7:
+; CHECK-NEXT:  .Ltmp7: // EH_LABEL
 ; CHECK-NEXT:  .LBB2_3: // %exit
 ; CHECK-NEXT:    smstop za
 ; CHECK-NEXT:    mov sp, x29
 ; CHECK-NEXT:    ldp x29, x30, [sp], #16 // 16-byte Folded Reload
 ; CHECK-NEXT:    ret
 ; CHECK-NEXT:  .LBB2_4: // %catch
-; CHECK-NEXT:  .Ltmp8:
+; CHECK-NEXT:  .Ltmp8: // EH_LABEL
 ; CHECK-NEXT:    bl __cxa_begin_catch
 ; CHECK-NEXT:    smstart za
 ; CHECK-NEXT:    mrs x8, TPIDR2_EL0
@@ -275,6 +275,156 @@ exit:
   ret void
 }
 
+
+; This example corresponds to:
+;
+; __arm_agnostic("sme_za_state") void try_catch_agnostic_za_callee()
+; {
+;    try {
+;        agnostic_za_call();
+;    } catch(...) {
+;        noexcept_agnostic_za_call();
+;    }
+; }
+;
+; In this example we setup and commit a ZA save before agnostic_za_call(). This
+; is because on all normal returns from an agnostic ZA function ZA state should
+; be preserved. That means we need to make sure ZA state is saved in case
+; agnostic_za_call() throws, and we need to restore ZA after unwinding to the
+; catch block.
+
+define void @try_catch_agnostic_za_callee() "aarch64_za_state_agnostic" personality ptr @__gxx_personality_v0 {
+; CHECK-LABEL: try_catch_agnostic_za_callee:
+; CHECK:       .Lfunc_begin3:
+; CHECK-NEXT:    .cfi_startproc
+; CHECK-NEXT:    .cfi_personality 156, DW.ref.__gxx_personality_v0
+; CHECK-NEXT:    .cfi_lsda 28, .Lexception3
+; CHECK-NEXT:  // %bb.0:
+; CHECK-NEXT:    stp x29, x30, [sp, #-32]! // 16-byte Folded Spill
+; CHECK-NEXT:    str x19, [sp, #16] // 8-byte Folded Spill
+; CHECK-NEXT:    mov x29, sp
+; CHECK-NEXT:    .cfi_def_cfa w29, 32
+; CHECK-NEXT:    .cfi_offset w19, -16
+; CHECK-NEXT:    .cfi_offset w30, -24
+; CHECK-NEXT:    .cfi_offset w29, -32
+; CHECK-NEXT:    bl __arm_sme_state_size
+; CHECK-NEXT:    sub sp, sp, x0
+; CHECK-NEXT:    mov x19, sp
+; CHECK-NEXT:  .Ltmp9: // EH_LABEL
+; CHECK-NEXT:    mov x0, x19
+; CHECK-NEXT:    bl __arm_sme_save
+; CHECK-NEXT:    mrs x8, TPIDR2_EL0
+; CHECK-NEXT:    cbz x8, .LBB3_2
+; CHECK-NEXT:  // %bb.1:
+; CHECK-NEXT:    bl __arm_tpidr2_save
+; CHECK-NEXT:    msr TPIDR2_EL0, xzr
+; CHECK-NEXT:  .LBB3_2:
+; CHECK-NEXT:    smstop za
+; CHECK-NEXT:    bl agnostic_za_call
+; CHECK-NEXT:  .Ltmp10: // EH_LABEL
+; CHECK-NEXT:    mov x0, x19
+; CHECK-NEXT:    bl __arm_sme_restore
+; CHECK-NEXT:  .LBB3_3: // %exit
+; CHECK-NEXT:    mov sp, x29
+; CHECK-NEXT:    ldr x19, [sp, #16] // 8-byte Folded Reload
+; CHECK-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
+; CHECK-NEXT:    ret
+; CHECK-NEXT:  .LBB3_4: // %catch
+; CHECK-NEXT:  .Ltmp11: // EH_LABEL
+; CHECK-NEXT:    bl __cxa_begin_catch
+; CHECK-NEXT:    bl noexcept_agnostic_za_call
+; CHECK-NEXT:    bl __cxa_end_catch
+; CHECK-NEXT:    mov x0, x19
+; CHECK-NEXT:    bl __arm_sme_restore
+; CHECK-NEXT:    b .LBB3_3
+  invoke void @agnostic_za_call() #4
+          to label %exit unwind label %catch
+catch:
+  %eh_info = landingpad { ptr, i32 }
+          catch ptr null
+  %exception_ptr = extractvalue { ptr, i32 } %eh_info, 0
+  tail call ptr @__cxa_begin_catch(ptr %exception_ptr)
+  tail call void @noexcept_agnostic_za_call()
+  tail call void @__cxa_end_catch()
+  br label %exit
+
+exit:
+  ret void
+}
+
+; This example corresponds to:
+;
+; __arm_agnostic("sme_za_state") void try_catch_agnostic_za()
+; {
+;    try {
+;        agnostic_za_call();
+;    } catch(...) {
+;    }
+; }
+;
+; ...which is the same as the above, but without the noexcept_agnostic_za_call().
+; It just shows the ZA must be saved even with no later callees to ensure ZA
+; state is preserved on normal return from the function.
+
+define void @try_catch_agnostic_za() "aarch64_za_state_agnostic" personality ptr @__gxx_personality_v0 {
+; CHECK-LABEL: try_catch_agnostic_za:
+; CHECK:       .Lfunc_begin4:
+; CHECK-NEXT:    .cfi_startproc
+; CHECK-NEXT:    .cfi_personality 156, DW.ref.__gxx_personality_v0
+; CHECK-NEXT:    .cfi_lsda 28, .Lexception4
+; CHECK-NEXT:  // %bb.0: // %entry
+; CHECK-NEXT:    stp x29, x30, [sp, #-32]! // 16-byte Folded Spill
+; CHECK-NEXT:    str x19, [sp, #16] // 8-byte Folded Spill
+; CHECK-NEXT:    mov x29, sp
+; CHECK-NEXT:    .cfi_def_cfa w29, 32
+; CHECK-NEXT:    .cfi_offset w19, -16
+; CHECK-NEXT:    .cfi_offset w30, -24
+; CHECK-NEXT:    .cfi_offset w29, -32
+; CHECK-NEXT:    bl __arm_sme_state_size
+; CHECK-NEXT:    sub sp, sp, x0
+; CHECK-NEXT:    mov x19, sp
+; CHECK-NEXT:  .Ltmp12: // EH_LABEL
+; CHECK-NEXT:    mov x0, x19
+; CHECK-NEXT:    bl __arm_sme_save
+; CHECK-NEXT:    mrs x8, TPIDR2_EL0
+; CHECK-NEXT:    cbz x8, .LBB4_2
+; CHECK-NEXT:  // %bb.1: // %entry
+; CHECK-NEXT:    bl __arm_tpidr2_save
+; CHECK-NEXT:    msr TPIDR2_EL0, xzr
+; CHECK-NEXT:  .LBB4_2: // %entry
+; CHECK-NEXT:    smstop za
+; CHECK-NEXT:    bl agnostic_za_call
+; CHECK-NEXT:  .Ltmp13: // EH_LABEL
+; CHECK-NEXT:    mov x0, x19
+; CHECK-NEXT:    bl __arm_sme_restore
+; CHECK-NEXT:  .LBB4_3: // %exit
+; CHECK-NEXT:    mov sp, x29
+; CHECK-NEXT:    ldr x19, [sp, #16] // 8-byte Folded Reload
+; CHECK-NEXT:    ldp x29, x30, [sp], #32 // 16-byte Folded Reload
+; CHECK-NEXT:    ret
+; CHECK-NEXT:  .LBB4_4: // %catch
+; CHECK-NEXT:  .Ltmp14: // EH_LABEL
+; CHECK-NEXT:    bl __cxa_begin_catch
+; CHECK-NEXT:    bl __cxa_end_catch
+; CHECK-NEXT:    mov x0, x19
+; CHECK-NEXT:    bl __arm_sme_restore
+; CHECK-NEXT:    b .LBB4_3
+entry:
+  invoke void @agnostic_za_call()
+          to label %exit unwind label %catch
+
+catch:
+  %eh_info = landingpad { ptr, i32 }
+          catch ptr null
+  %exception_ptr = extractvalue { ptr, i32 } %eh_info, 0
+  tail call ptr @__cxa_begin_catch(ptr %exception_ptr)
+  tail call void @__cxa_end_catch()
+  br label %exit
+
+exit:
+  ret void
+}
+
 declare ptr @__cxa_allocate_exception(i64)
 declare void @__cxa_throw(ptr, ptr, ptr)
 declare ptr @__cxa_begin_catch(ptr)
@@ -284,3 +434,5 @@ declare i32 @__gxx_personality_v0(...)
 declare void @may_throw()
 declare void @shared_za_call() "aarch64_inout_za"
 declare void @noexcept_shared_za_call() "aarch64_inout_za"
+declare void @agnostic_za_call() "aarch64_za_state_agnostic"
+declare void @noexcept_agnostic_za_call() "aarch64_za_state_agnostic"

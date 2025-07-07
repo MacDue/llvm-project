@@ -9394,8 +9394,11 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   bool UseNewSMEABILowering = getTM().useNewSMEABILowering();
 
   if (UseNewSMEABILowering) {
-    if (CallAttrs.requiresLazySave() ||
-        CallAttrs.requiresPreservingAllZAState())
+    if (CallAttrs.caller().hasAgnosticZAInterface() &&
+        isa_and_nonnull<InvokeInst>(CLI.CB))
+      ZAMarkerNode = AArch64ISD::REQUIRES_ZA_COMMIT;
+    else if (CallAttrs.requiresLazySave() ||
+             CallAttrs.requiresPreservingAllZAState())
       ZAMarkerNode = AArch64ISD::REQUIRES_ZA_SAVE;
     else if (CallAttrs.caller().hasZAState() ||
              CallAttrs.caller().hasZT0State())
