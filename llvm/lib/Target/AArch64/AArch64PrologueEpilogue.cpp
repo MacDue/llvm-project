@@ -108,7 +108,7 @@ AArch64PrologueEpilogueCommon::AArch64PrologueEpilogueCommon(
   // parameters passed on the stack more expensive.
   //
   // We could consider rearranging the spills for simpler cases.
-  if (Subtarget.isTargetWindows() && AFI->getSVECalleeSavedStackSize()) {
+  if (AFL.hasSVECalleeSavesAboveFrameRecord(MF)) {
     if (AFI->hasStackHazardSlotIndex())
       reportFatalUsageError("SME hazard padding is not supported on Windows");
     SVELayout = SVEStackLayout::CalleeSavesAboveFrameRecord;
