@@ -83,6 +83,7 @@ add_llvm_target(AArch64CodeGen
   AArch64StackTaggingPreRA.cpp
   AArch64StorePairSuppress.cpp
   AArch64Subtarget.cpp
+  AArch64SVEFrameLowering.cpp
   AArch64TargetMachine.cpp
   AArch64TargetObjectFile.cpp
   AArch64TargetTransformInfo.cpp

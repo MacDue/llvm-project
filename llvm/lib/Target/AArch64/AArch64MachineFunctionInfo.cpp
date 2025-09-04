@@ -15,6 +15,7 @@
 
 #include "AArch64MachineFunctionInfo.h"
 #include "AArch64InstrInfo.h"
+#include "AArch64SVEFrameLowering.h"
 #include "AArch64Subtarget.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Metadata.h"
@@ -107,6 +108,11 @@ AArch64FunctionInfo::AArch64FunctionInfo(const Function &F,
 
   // Parse the SME function attributes.
   SMEFnAttrs = SMEAttrs(F);
+
+  if (STI->isTargetWindows())
+    SVEFrameLowering = &AArch64WindowsSVEFrameLowering::the();
+  else
+    SVEFrameLowering = &AArch64BaseSVEFrameLowering::the();
 
   // The default stack probe size is 4096 if the function has no
   // stack-probe-size attribute. This is a safe default because it is the

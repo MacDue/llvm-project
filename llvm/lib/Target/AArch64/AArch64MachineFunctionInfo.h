@@ -30,6 +30,8 @@
 
 namespace llvm {
 
+class AArch64BaseSVEFrameLowering;
+
 namespace yaml {
 struct AArch64FunctionInfo;
 } // end namespace yaml
@@ -248,6 +250,8 @@ class AArch64FunctionInfo final : public MachineFunctionInfo {
   // true if SMESaveBufferAddr is used.
   bool SMESaveBufferUsed = false;
 
+  AArch64BaseSVEFrameLowering *SVEFrameLowering = nullptr;
+
 public:
   AArch64FunctionInfo(const Function &F, const AArch64Subtarget *STI);
 
@@ -255,6 +259,11 @@ public:
   clone(BumpPtrAllocator &Allocator, MachineFunction &DestMF,
         const DenseMap<MachineBasicBlock *, MachineBasicBlock *> &Src2DstMBB)
       const override;
+
+  const AArch64BaseSVEFrameLowering &getSVEFrameLowering() const {
+    assert(SVEFrameLowering && "SVE frame lowering should not be null!");
+    return *SVEFrameLowering;
+  }
 
   // Old SME ABI lowering state getters/setters:
   Register getSMESaveBufferAddr() const { return SMESaveBufferAddr; };

@@ -19,8 +19,23 @@
 
 namespace llvm {
 
+class AArch64FunctionInfo;
+
+enum class FrameObjectType { Default = 0, Fixed, CSR, SVE };
+
 class AArch64FrameLowering : public TargetFrameLowering {
 public:
+  struct FrameFlags {
+    bool NeedsWinCFI = false;
+    bool HasWinCFI = false;
+    bool EmitCFI = false;
+    bool EmitAsyncCFI = false;
+    bool HasFP = false;
+
+    FrameFlags(MachineFunction &MF, const AArch64FunctionInfo &AFI,
+               const AArch64FrameLowering &AFL);
+  };
+
   explicit AArch64FrameLowering()
       : TargetFrameLowering(StackGrowsDown, Align(16), 0, Align(16),
                             true /*StackRealignable*/) {}
@@ -58,9 +73,9 @@ public:
                                          Register &FrameReg, bool PreferFP,
                                          bool ForSimm) const;
   StackOffset resolveFrameOffsetReference(const MachineFunction &MF,
-                                          int64_t ObjectOffset, bool isFixed,
-                                          bool isSVE, Register &FrameReg,
-                                          bool PreferFP, bool ForSimm) const;
+                                          int64_t ObjectOffset, FrameObjectType,
+                                          Register &FrameReg, bool PreferFP,
+                                          bool ForSimm) const;
   bool spillCalleeSavedRegisters(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator MI,
                                  ArrayRef<CalleeSavedInfo> CSI,
@@ -136,6 +151,14 @@ public:
 
   bool isFPReserved(const MachineFunction &MF) const;
 
+  static void
+  allocateStackSpace(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+                     int64_t RealignmentPadding, StackOffset AllocSize,
+                     bool NeedsWinCFI, bool *HasWinCFI, bool EmitCFI,
+                     StackOffset InitialOffset, bool FollowupAllocs);
+
+  static bool isSVECalleeSave(MachineBasicBlock::iterator I);
+
 protected:
   bool hasFPImpl(const MachineFunction &MF) const override;
 
@@ -167,11 +190,7 @@ private:
                                   MachineBasicBlock::iterator MBBI) const;
   void emitCalleeSavedSVERestores(MachineBasicBlock &MBB,
                                   MachineBasicBlock::iterator MBBI) const;
-  void allocateStackSpace(MachineBasicBlock &MBB,
-                          MachineBasicBlock::iterator MBBI,
-                          int64_t RealignmentPadding, StackOffset AllocSize,
-                          bool NeedsWinCFI, bool *HasWinCFI, bool EmitCFI,
-                          StackOffset InitialOffset, bool FollowupAllocs) const;
+
   /// Make a determination whether a Hazard slot is used and create it if
   /// needed.
   void determineStackHazardSlot(MachineFunction &MF,
