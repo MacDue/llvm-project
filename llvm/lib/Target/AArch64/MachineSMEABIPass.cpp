@@ -83,10 +83,16 @@ enum ZAState {
   // ZA is in use and active (i.e. within the accumulator)
   ACTIVE,
 
+  // ZA is active, but ZT0 has been saved.
+  // This handles the edge case of sharedZA && !sharesZT0.
+  ACTIVE_ZT0_SAVED,
+
   // A ZA save has been set up or committed (i.e. ZA is dormant or off)
+  // If the function uses ZT0 it must also be saved.
   LOCAL_SAVED,
 
   // ZA has been committed to the lazy save buffer of the current function.
+  // If the function uses ZT0 it must also be saved.
   // ZA is off when a save has been committed.
   LOCAL_COMMITTED,
 
@@ -170,6 +176,14 @@ public:
     return AgnosticZABufferPtr;
   }
 
+  int getZT0SaveSlot(MachineFunction &MF) {
+    if (ZT0SaveFI)
+      return *ZT0SaveFI;
+    MachineFrameInfo &MFI = MF.getFrameInfo();
+    ZT0SaveFI = MFI.CreateSpillStackObject(64, Align(16));
+    return *ZT0SaveFI;
+  }
+
   /// Returns true if the function must allocate a ZA save buffer on entry. This
   /// will be the case if, at any point in the function, a ZA save was emitted.
   bool needsSaveBuffer() const {
@@ -179,6 +193,7 @@ public:
   }
 
 private:
+  std::optional<int> ZT0SaveFI;
   std::optional<int> TPIDR2BlockFI;
   Register AgnosticZABufferPtr = AArch64::NoRegister;
 };
@@ -186,6 +201,7 @@ private:
 static bool isLegalEdgeBundleZAState(ZAState State) {
   switch (State) {
   case ZAState::ACTIVE:
+  case ZAState::ACTIVE_ZT0_SAVED:
   case ZAState::LOCAL_SAVED:
   case ZAState::LOCAL_COMMITTED:
     return true;
@@ -212,6 +228,7 @@ StringRef getZAStateString(ZAState State) {
   switch (State) {
     MAKE_CASE(ZAState::ANY)
     MAKE_CASE(ZAState::ACTIVE)
+    MAKE_CASE(ZAState::ACTIVE_ZT0_SAVED)
     MAKE_CASE(ZAState::LOCAL_SAVED)
     MAKE_CASE(ZAState::LOCAL_COMMITTED)
     MAKE_CASE(ZAState::CALLER_DORMANT)
@@ -235,21 +252,37 @@ static bool isZAorZTRegOp(const TargetRegisterInfo &TRI,
 /// Returns the required ZA state needed before \p MI and an iterator pointing
 /// to where any code required to change the ZA state should be inserted.
 static std::pair<ZAState, MachineBasicBlock::iterator>
-getZAStateBeforeInst(const TargetRegisterInfo &TRI, MachineInstr &MI,
-                     bool ZAOffAtReturn) {
+getInstNeededZAState(const TargetRegisterInfo &TRI, MachineInstr &MI,
+                     SMEAttrs SMEFnAttrs) {
   MachineBasicBlock::iterator InsertPt(MI);
 
   if (MI.getOpcode() == AArch64::InOutZAUsePseudo)
     return {ZAState::ACTIVE, std::prev(InsertPt)};
 
+  // Note: If we need to save both ZA and ZT0 we use RequiresZASavePseudo.
   if (MI.getOpcode() == AArch64::RequiresZASavePseudo)
     return {ZAState::LOCAL_SAVED, std::prev(InsertPt)};
+
+  // If we only need to save ZT0 there's two cases to consider:
+  //   1. The function has ZA state (that we don't need to save).
+  //      - In this case we switch to the "ACTIVE_ZT0_SAVED" state.
+  //        This only saves ZT0.
+  //   2. The function does not have ZA state
+  //      - In this case we switch to "LOCAL_COMMITTED" state.
+  //        This saves ZT0 and turns ZA off.
+  if (MI.getOpcode() == AArch64::RequiresZT0SavePseudo) {
+    return {SMEFnAttrs.hasZAState() ? ZAState::ACTIVE_ZT0_SAVED
+                                    : ZAState::LOCAL_COMMITTED,
+            std::prev(InsertPt)};
+  }
 
   if (MI.getOpcode() == AArch64::RequiresZACommitPseudo)
     return {ZAState::LOCAL_COMMITTED, std::prev(InsertPt)};
 
-  if (MI.isReturn())
+  if (MI.isReturn()) {
+    bool ZAOffAtReturn = SMEFnAttrs.hasPrivateZAInterface();
     return {ZAOffAtReturn ? ZAState::OFF : ZAState::ACTIVE, InsertPt};
+  }
 
   for (auto &MO : MI.operands()) {
     if (isZAorZTRegOp(TRI, MO))
@@ -291,6 +324,9 @@ struct MachineSMEABI : public MachineFunctionPass {
                           const EdgeBundles &Bundles,
                           ArrayRef<ZAState> BundleStates);
 
+  void emitZT0SaveRestore(EmitContext &, MachineBasicBlock &MBB,
+                          MachineBasicBlock::iterator MBBI, bool IsSave);
+
   // Emission routines for private and shared ZA functions (using lazy saves).
   void emitNewZAPrologue(MachineBasicBlock &MBB,
                          MachineBasicBlock::iterator MBBI);
@@ -301,8 +337,8 @@ struct MachineSMEABI : public MachineFunctionPass {
                          MachineBasicBlock::iterator MBBI);
   void emitAllocateLazySaveBuffer(EmitContext &, MachineBasicBlock &MBB,
                                   MachineBasicBlock::iterator MBBI);
-  void emitZAOff(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
-                 bool ClearTPIDR2);
+  void emitZAMode(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+                  bool ClearTPIDR2, bool On);
   void emitCommitZASave(MachineBasicBlock &MBB,
                         MachineBasicBlock::iterator MBBI, LiveRegs PhysLiveRegs,
                         bool ZeroZA = false);
@@ -383,7 +419,7 @@ FunctionInfo MachineSMEABI::collectNeededZAStates(SMEAttrs SMEFnAttrs) {
                                   : ZAState::ACTIVE;
     } else if (MBB.isEHPad()) {
       // EH entry block:
-      Block.FixedEntryState = ZAState::LOCAL_SAVED;
+      Block.FixedEntryState = ZAState::LOCAL_COMMITTED;
     }
 
     LiveRegUnits LiveUnits(*TRI);
@@ -418,8 +454,7 @@ FunctionInfo MachineSMEABI::collectNeededZAStates(SMEAttrs SMEFnAttrs) {
         PhysLiveRegsAfterSMEPrologue = PhysLiveRegs;
       }
       // Note: We treat Agnostic ZA as inout_za with an alternate save/restore.
-      auto [NeededState, InsertPt] = getZAStateBeforeInst(
-          *TRI, MI, /*ZAOffAtReturn=*/SMEFnAttrs.hasPrivateZAInterface());
+      auto [NeededState, InsertPt] = getInstNeededZAState(*TRI, MI, SMEFnAttrs);
       assert((InsertPt == MBBI ||
               InsertPt->getOpcode() == AArch64::ADJCALLSTACKDOWN) &&
              "Unexpected state change insertion point!");
@@ -639,9 +674,9 @@ void MachineSMEABI::emitRestoreLazySave(EmitContext &Context,
   restorePhyRegSave(RegSave, MBB, MBBI, DL);
 }
 
-void MachineSMEABI::emitZAOff(MachineBasicBlock &MBB,
-                              MachineBasicBlock::iterator MBBI,
-                              bool ClearTPIDR2) {
+void MachineSMEABI::emitZAMode(MachineBasicBlock &MBB,
+                               MachineBasicBlock::iterator MBBI,
+                               bool ClearTPIDR2, bool On) {
   DebugLoc DL = getDebugLoc(MBB, MBBI);
 
   if (ClearTPIDR2)
@@ -652,7 +687,7 @@ void MachineSMEABI::emitZAOff(MachineBasicBlock &MBB,
   // Disable ZA.
   BuildMI(MBB, MBBI, DL, TII->get(AArch64::MSRpstatesvcrImm1))
       .addImm(AArch64SVCR::SVCRZA)
-      .addImm(0);
+      .addImm(On ? 1 : 0);
 }
 
 void MachineSMEABI::emitCommitZASave(MachineBasicBlock &MBB,
@@ -743,6 +778,8 @@ void MachineSMEABI::emitNewZAPrologue(MachineBasicBlock &MBB,
   BuildMI(MBB, MBBI, DL, TII->get(AArch64::MSRpstatesvcrImm1))
       .addImm(AArch64SVCR::SVCRZA)
       .addImm(1);
+  // TODO: ZT0
+  // if (SMEFnAttrs.hasZT0State())
 }
 
 void MachineSMEABI::emitFullZASaveRestore(EmitContext &Context,
@@ -769,6 +806,28 @@ void MachineSMEABI::emitFullZASaveRestore(EmitContext &Context,
           CallingConv::AArch64_SME_ABI_Support_Routines_PreserveMost_From_X1));
 
   restorePhyRegSave(RegSave, MBB, MBBI, DL);
+}
+
+void MachineSMEABI::emitZT0SaveRestore(EmitContext &Context,
+                                       MachineBasicBlock &MBB,
+                                       MachineBasicBlock::iterator MBBI,
+                                       bool IsSave) {
+  DebugLoc DL = getDebugLoc(MBB, MBBI);
+  Register ZT0Save = MRI->createVirtualRegister(&AArch64::GPR64spRegClass);
+
+  BuildMI(MBB, MBBI, DL, TII->get(AArch64::ADDXri), ZT0Save)
+      .addFrameIndex(Context.getZT0SaveSlot(*MF))
+      .addImm(0)
+      .addImm(0);
+
+  if (IsSave) {
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::STR_TX))
+        .addReg(AArch64::ZT0)
+        .addReg(ZT0Save);
+  } else {
+    BuildMI(MBB, MBBI, DL, TII->get(AArch64::LDR_TX), AArch64::ZT0)
+        .addReg(ZT0Save);
+  }
 }
 
 void MachineSMEABI::emitAllocateFullZASaveBuffer(
@@ -829,10 +888,12 @@ void MachineSMEABI::emitStateChange(EmitContext &Context,
   if (From == ZAState::CALLER_DORMANT && To == ZAState::OFF)
     return;
 
+  SMEAttrs SMEFnAttrs = AFI->getSMEFnAttrs();
+
   // TODO: Avoid setting up the save buffer if there's no transition to
   // LOCAL_SAVED.
   if (From == ZAState::CALLER_DORMANT) {
-    assert(AFI->getSMEFnAttrs().hasPrivateZAInterface() &&
+    assert(SMEFnAttrs.hasPrivateZAInterface() &&
            "CALLER_DORMANT state requires private ZA interface");
     assert(&MBB == &MBB.getParent()->front() &&
            "CALLER_DORMANT state only valid in entry block");
@@ -846,6 +907,29 @@ void MachineSMEABI::emitStateChange(EmitContext &Context,
     From = ZAState::ACTIVE;
   }
 
+  bool IsAgnosticZA = SMEFnAttrs.hasAgnosticZAInterface();
+  bool HasZT0State = SMEFnAttrs.hasZT0State();
+  bool HasZAState = IsAgnosticZA || SMEFnAttrs.hasZAState();
+
+  auto emitActiveToLocalSaved = [&](ZAState From) {
+    assert(From == ZAState::ACTIVE || From == ZAState::ACTIVE_ZT0_SAVED);
+    if (HasZT0State && From == ZAState::ACTIVE)
+      emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/true);
+    if (HasZAState)
+      emitZASave(Context, MBB, InsertPt, PhysLiveRegs);
+    return ZAState::LOCAL_SAVED;
+  };
+
+  auto emitLocalSavedToActive = [&](ZAState To) {
+    assert(To == ZAState::ACTIVE || To == ZAState::ACTIVE_ZT0_SAVED);
+    if (HasZAState)
+      emitZARestore(Context, MBB, InsertPt, PhysLiveRegs);
+    else
+      emitZAMode(MBB, InsertPt, /*ClearTPIDR2=*/false, /*On=*/true);
+    if (HasZT0State && To == ZAState::ACTIVE)
+      emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/false);
+  };
+
   if (From == ZAState::LOCAL_COMMITTED) {
     // This is a no-op (LOCAL_COMMITTED is a subset of LOCAL_SAVED).
     if (To == ZAState::LOCAL_SAVED)
@@ -854,29 +938,43 @@ void MachineSMEABI::emitStateChange(EmitContext &Context,
     if (To == ZAState::OFF)
       return;
     // LOCAL_COMMITTED -> ACTIVE is the same as LOCAL_SAVED -> ACTIVE.
-    if (To == ZAState::ACTIVE)
+    if (To == ZAState::ACTIVE || To == ZAState::ACTIVE_ZT0_SAVED)
       From = ZAState::LOCAL_SAVED;
   }
 
   if (To == ZAState::LOCAL_COMMITTED && From == ZAState::ACTIVE) {
-    // To go from ACTIVE -> LOCAL_COMMITTED we first go ACTIVE -> LOCAL_SAVED.
-    emitZASave(Context, MBB, InsertPt, PhysLiveRegs);
-    From = ZAState::LOCAL_SAVED;
+    // To go from ACTIVE -> LOCAL_COMMITTED we first go to LOCAL_SAVED
+    From = emitActiveToLocalSaved(ZAState::ACTIVE);
+  } else if (To == ZAState::LOCAL_COMMITTED &&
+             From == ZAState::ACTIVE_ZT0_SAVED) {
+    // To go from ACTIVE_ZT0_SAVED -> LOCAL_COMMITTED we first go to
+    // LOCAL_SAVED.
+    From = emitActiveToLocalSaved(ZAState::ACTIVE_ZT0_SAVED);
   }
 
   if (To == ZAState::LOCAL_COMMITTED && From == ZAState::LOCAL_SAVED) {
-    emitCommitZASave(MBB, InsertPt, PhysLiveRegs);
-    emitZAOff(MBB, InsertPt, /*ClearTPIDR2=*/false);
+    if (HasZAState)
+      emitCommitZASave(MBB, InsertPt, PhysLiveRegs);
+    emitZAMode(MBB, InsertPt, /*ClearTPIDR2=*/false, /*On=*/false);
+  } else if (From == ZAState::ACTIVE && To == ZAState::ACTIVE_ZT0_SAVED) {
+    emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/true);
   } else if (From == ZAState::ACTIVE && To == ZAState::LOCAL_SAVED) {
-    emitZASave(Context, MBB, InsertPt, PhysLiveRegs);
+    emitActiveToLocalSaved(ZAState::ACTIVE);
+  } else if (From == ZAState::ACTIVE_ZT0_SAVED && To == ZAState::LOCAL_SAVED) {
+    emitActiveToLocalSaved(ZAState::ACTIVE_ZT0_SAVED);
   } else if (From == ZAState::LOCAL_SAVED && To == ZAState::ACTIVE) {
-    emitZARestore(Context, MBB, InsertPt, PhysLiveRegs);
+    emitLocalSavedToActive(ZAState::ACTIVE);
+  } else if (From == ZAState::LOCAL_SAVED && To == ZAState::ACTIVE_ZT0_SAVED) {
+    emitLocalSavedToActive(ZAState::ACTIVE_ZT0_SAVED);
+  } else if (From == ZAState::ACTIVE_ZT0_SAVED && To == ZAState::ACTIVE) {
+    emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/false);
   } else if (To == ZAState::OFF) {
     assert(From != ZAState::CALLER_DORMANT &&
            "CALLER_DORMANT to OFF should have already been handled");
     assert(!AFI->getSMEFnAttrs().hasAgnosticZAInterface() &&
            "Should not turn ZA off in agnostic ZA function");
-    emitZAOff(MBB, InsertPt, /*ClearTPIDR2=*/From == ZAState::LOCAL_SAVED);
+    emitZAMode(MBB, InsertPt, /*ClearTPIDR2=*/From == ZAState::LOCAL_SAVED,
+               /*On=*/false);
   } else {
     dbgs() << "Error: Transition from " << getZAStateString(From) << " to "
            << getZAStateString(To) << '\n';
