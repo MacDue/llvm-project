@@ -76,7 +76,7 @@ namespace {
 // "ACTIVE" state -- this _may_ not be the case (since OFF is also a
 // possibility, but for the purpose of placing ZA saves/restores, that does not
 // matter).
-enum ZAState {
+enum ZAState : uint8_t {
   // Any/unknown state (not valid)
   ANY = 0,
 
@@ -874,6 +874,17 @@ void MachineSMEABI::emitAllocateFullZASaveBuffer(
   restorePhyRegSave(RegSave, MBB, MBBI, DL);
 }
 
+struct FromState {
+  ZAState From;
+
+  constexpr uint16_t to(ZAState To) const {
+    static_assert(sizeof(ZAState) == 1, "expected ZAState to be a uint8_t");
+    return uint16_t(From) << 8 | uint16_t(To);
+  }
+};
+
+constexpr FromState transitionFrom(ZAState From) { return FromState{From}; }
+
 void MachineSMEABI::emitStateChange(EmitContext &Context,
                                     MachineBasicBlock &MBB,
                                     MachineBasicBlock::iterator InsertPt,
@@ -911,71 +922,74 @@ void MachineSMEABI::emitStateChange(EmitContext &Context,
   bool HasZT0State = SMEFnAttrs.hasZT0State();
   bool HasZAState = IsAgnosticZA || SMEFnAttrs.hasZAState();
 
-  auto emitActiveToLocalSaved = [&](ZAState From) {
-    assert(From == ZAState::ACTIVE || From == ZAState::ACTIVE_ZT0_SAVED);
-    if (HasZT0State && From == ZAState::ACTIVE)
+  switch (transitionFrom(From).to(To)) {
+  // This section handles: ACTIVE <-> ACTIVE_ZT0_SAVED
+  case transitionFrom(ZAState::ACTIVE).to(ZAState::ACTIVE_ZT0_SAVED):
+    emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/true);
+    break;
+  case transitionFrom(ZAState::ACTIVE_ZT0_SAVED).to(ZAState::ACTIVE):
+    emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/false);
+    break;
+
+  // This section handles: ACTIVE[_ZT0_SAVED] -> LOCAL_SAVED
+  case transitionFrom(ZAState::ACTIVE).to(ZAState::LOCAL_SAVED):
+    if (HasZT0State)
       emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/true);
+    // This goes ACTIVE -> ACTIVE_ZT0_SAVED.
+    // Fallthrough for ACTIVE_ZT0_SAVED -> LOCAL_SAVED.
+    LLVM_FALLTHROUGH;
+  case transitionFrom(ZAState::ACTIVE_ZT0_SAVED).to(ZAState::LOCAL_SAVED):
     if (HasZAState)
       emitZASave(Context, MBB, InsertPt, PhysLiveRegs);
-    return ZAState::LOCAL_SAVED;
-  };
+    break;
 
-  auto emitLocalSavedToActive = [&](ZAState To) {
-    assert(To == ZAState::ACTIVE || To == ZAState::ACTIVE_ZT0_SAVED);
+  // This section handles: (ACTIVE[_ZT0_SAVED], LOCAL_SAVED) -> LOCAL_COMMITTED
+  case transitionFrom(ZAState::ACTIVE).to(ZAState::LOCAL_COMMITTED):
+    if (HasZT0State)
+      emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/true);
+    // This goes ACTIVE -> ACTIVE_ZT0_SAVED.
+    // Fallthrough for ACTIVE_ZT0_SAVED -> LOCAL_COMMITTED.
+    LLVM_FALLTHROUGH;
+  case transitionFrom(ZAState::ACTIVE_ZT0_SAVED).to(ZAState::LOCAL_COMMITTED):
+    if (HasZAState)
+      emitZASave(Context, MBB, InsertPt, PhysLiveRegs);
+    // This goes ACTIVE_ZT0_SAVED -> LOCAL_SAVED.
+    // Fallthrough for LOCAL_SAVED -> LOCAL_COMMITTED.
+    LLVM_FALLTHROUGH;
+  case transitionFrom(ZAState::LOCAL_SAVED).to(ZAState::LOCAL_COMMITTED):
+    if (HasZAState)
+      emitCommitZASave(MBB, InsertPt, PhysLiveRegs);
+    emitZAMode(MBB, InsertPt, /*ClearTPIDR2=*/false, /*On=*/false);
+    break;
+
+  // This section handles: LOCAL_COMMITTED -> (OFF|LOCAL_SAVED)
+  case transitionFrom(ZAState::LOCAL_COMMITTED).to(ZAState::OFF):
+  case transitionFrom(ZAState::LOCAL_COMMITTED).to(ZAState::LOCAL_SAVED):
+    // These transistions are a no-op.
+    break;
+
+  // This section handles: LOCAL_(SAVED|COMMITTED) -> ACTIVE[_ZT0_SAVED]
+  case transitionFrom(ZAState::LOCAL_COMMITTED).to(ZAState::ACTIVE):
+  case transitionFrom(ZAState::LOCAL_COMMITTED).to(ZAState::ACTIVE_ZT0_SAVED):
+  case transitionFrom(ZAState::LOCAL_SAVED).to(ZAState::ACTIVE):
+  case transitionFrom(ZAState::LOCAL_SAVED).to(ZAState::ACTIVE_ZT0_SAVED):
     if (HasZAState)
       emitZARestore(Context, MBB, InsertPt, PhysLiveRegs);
     else
       emitZAMode(MBB, InsertPt, /*ClearTPIDR2=*/false, /*On=*/true);
     if (HasZT0State && To == ZAState::ACTIVE)
       emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/false);
-  };
-
-  if (From == ZAState::LOCAL_COMMITTED) {
-    // This is a no-op (LOCAL_COMMITTED is a subset of LOCAL_SAVED).
-    if (To == ZAState::LOCAL_SAVED)
-      return;
-    // ZA is off when a save has been committed.
-    if (To == ZAState::OFF)
-      return;
-    // LOCAL_COMMITTED -> ACTIVE is the same as LOCAL_SAVED -> ACTIVE.
-    if (To == ZAState::ACTIVE || To == ZAState::ACTIVE_ZT0_SAVED)
-      From = ZAState::LOCAL_SAVED;
-  }
-
-  if (To == ZAState::LOCAL_COMMITTED && From == ZAState::ACTIVE) {
-    // To go from ACTIVE -> LOCAL_COMMITTED we first go to LOCAL_SAVED
-    From = emitActiveToLocalSaved(ZAState::ACTIVE);
-  } else if (To == ZAState::LOCAL_COMMITTED &&
-             From == ZAState::ACTIVE_ZT0_SAVED) {
-    // To go from ACTIVE_ZT0_SAVED -> LOCAL_COMMITTED we first go to
-    // LOCAL_SAVED.
-    From = emitActiveToLocalSaved(ZAState::ACTIVE_ZT0_SAVED);
-  }
-
-  if (To == ZAState::LOCAL_COMMITTED && From == ZAState::LOCAL_SAVED) {
-    if (HasZAState)
-      emitCommitZASave(MBB, InsertPt, PhysLiveRegs);
-    emitZAMode(MBB, InsertPt, /*ClearTPIDR2=*/false, /*On=*/false);
-  } else if (From == ZAState::ACTIVE && To == ZAState::ACTIVE_ZT0_SAVED) {
-    emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/true);
-  } else if (From == ZAState::ACTIVE && To == ZAState::LOCAL_SAVED) {
-    emitActiveToLocalSaved(ZAState::ACTIVE);
-  } else if (From == ZAState::ACTIVE_ZT0_SAVED && To == ZAState::LOCAL_SAVED) {
-    emitActiveToLocalSaved(ZAState::ACTIVE_ZT0_SAVED);
-  } else if (From == ZAState::LOCAL_SAVED && To == ZAState::ACTIVE) {
-    emitLocalSavedToActive(ZAState::ACTIVE);
-  } else if (From == ZAState::LOCAL_SAVED && To == ZAState::ACTIVE_ZT0_SAVED) {
-    emitLocalSavedToActive(ZAState::ACTIVE_ZT0_SAVED);
-  } else if (From == ZAState::ACTIVE_ZT0_SAVED && To == ZAState::ACTIVE) {
-    emitZT0SaveRestore(Context, MBB, InsertPt, /*IsSave=*/false);
-  } else if (To == ZAState::OFF) {
-    assert(From != ZAState::CALLER_DORMANT &&
-           "CALLER_DORMANT to OFF should have already been handled");
-    assert(!AFI->getSMEFnAttrs().hasAgnosticZAInterface() &&
-           "Should not turn ZA off in agnostic ZA function");
-    emitZAMode(MBB, InsertPt, /*ClearTPIDR2=*/From == ZAState::LOCAL_SAVED,
-               /*On=*/false);
-  } else {
+    break;
+  default:
+    if (To == ZAState::OFF) {
+      assert(From != ZAState::CALLER_DORMANT &&
+             "CALLER_DORMANT to OFF should have already been handled");
+      assert(!AFI->getSMEFnAttrs().hasAgnosticZAInterface() &&
+             "Should not turn ZA off in agnostic ZA function");
+      emitZAMode(MBB, InsertPt, /*ClearTPIDR2=*/From == ZAState::LOCAL_SAVED,
+                 /*On=*/false);
+      break;
+    }
     dbgs() << "Error: Transition from " << getZAStateString(From) << " to "
            << getZAStateString(To) << '\n';
     llvm_unreachable("Unimplemented state transition");
