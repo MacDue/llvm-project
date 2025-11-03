@@ -62,7 +62,7 @@ body:             |
     ; CHECK-NEXT: RET undef $lr
     $x8 = MRS 56965, implicit-def $nzcv
 
-    CommitZASavePseudo $x8, 0, &__arm_tpidr2_save, csr_aarch64_sme_abi_support_routines_preservemost_from_x0
+    CommitZASavePseudo $x8, 0, 0, &__arm_tpidr2_save, csr_aarch64_sme_abi_support_routines_preservemost_from_x0
 
     RET_ReallyLR
 
@@ -94,7 +94,7 @@ body:             |
     ; CHECK-NEXT: RET undef $lr
     $x8 = MRS 56965, implicit-def $nzcv
 
-    CommitZASavePseudo $x8, 1, &__arm_tpidr2_save, csr_aarch64_sme_abi_support_routines_preservemost_from_x0, implicit-def $zab0
+    CommitZASavePseudo $x8, 1, 0, &__arm_tpidr2_save, csr_aarch64_sme_abi_support_routines_preservemost_from_x0, implicit-def $zab0
 
     RET_ReallyLR
 
