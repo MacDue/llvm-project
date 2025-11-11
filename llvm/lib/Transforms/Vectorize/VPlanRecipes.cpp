@@ -445,6 +445,7 @@ unsigned VPInstruction::getNumOperandsForOpcode(unsigned Opcode) {
   case VPInstruction::Not:
   case VPInstruction::ResumeForEpilogue:
   case VPInstruction::Unpack:
+  case VPInstruction::PopCount:
     return 1;
   case Instruction::ICmp:
   case Instruction::FCmp:
