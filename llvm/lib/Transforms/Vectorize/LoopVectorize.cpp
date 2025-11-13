@@ -1832,7 +1832,7 @@ public:
   /// completely.
   void create(Loop *L, const LoopAccessInfo &LAI,
               const SCEVPredicate &UnionPred, ElementCount VF, unsigned IC,
-              bool UseSafeEltsMask, OptimizationRemarkEmitter &ORE) {
+              OptimizationRemarkEmitter &ORE) {
 
     // Hard cutoff to limit compile-time increase in case a very large number of
     // runtime checks needs to be generated.
@@ -6770,9 +6770,7 @@ LoopVectorizationPlanner::planInVPlanNativePath(ElementCount UserVF) {
   return VectorizationFactor::Disabled();
 }
 
-void LoopVectorizationPlanner::plan(
-    ElementCount UserVF, unsigned UserIC,
-    std::optional<ArrayRef<PointerDiffInfo>> RTChecks) {
+void LoopVectorizationPlanner::plan(ElementCount UserVF, unsigned UserIC) {
   assert(OrigLoop->isInnermost() && "Inner loop expected.");
   CM.collectValuesToIgnore();
   CM.collectElementTypesForWidening();
@@ -8581,15 +8579,8 @@ VPlanPtr LoopVectorizationPlanner::tryToBuildVPlanWithVPRecipes(
     bool WithoutRuntimeCheck =
         Style == TailFoldingStyle::DataAndControlFlowWithoutRuntimeCheck;
 
-    ArrayRef<PointerDiffInfo> DiffChecks;
-    std::optional<ArrayRef<PointerDiffInfo>> RTChecks =
-        CM.Legal->getRuntimePointerChecking()->getDiffChecks();
-    if (RTChecks.has_value() &&
-        CM.getRTCheckStyle(TTI) == RTCheckStyle::UseSafeEltsMask)
-      DiffChecks = *RTChecks;
-
     VPlanTransforms::addActiveLaneMask(*Plan, ForControlFlow,
-                                       WithoutRuntimeCheck, PSE, DiffChecks);
+                                       WithoutRuntimeCheck);
   }
   VPlanTransforms::optimizeInductionExitUsers(*Plan, IVEndValues, *PSE.getSE());
 
@@ -9037,8 +9028,21 @@ void LoopVectorizationPlanner::attachRuntimeChecks(
             vputils::getOrCreateVPValueForSCEVExpr(Plan, Check.SinkStart);
         VPValue *Src =
             vputils::getOrCreateVPValueForSCEVExpr(Plan, Check.SrcStart);
-        VPAliasLaneMaskRecipe *M = new VPAliasLaneMaskRecipe(
-            Src, Sink, Check.AccessSize, Check.WriteAfterRead);
+
+        Type *PtrType = PointerType::getUnqual(Plan.getContext());
+        Sink = Builder.createScalarCast(Instruction::CastOps::IntToPtr, Sink,
+                                        PtrType, DebugLoc());
+        Src = Builder.createScalarCast(Instruction::CastOps::IntToPtr, Src,
+                                       PtrType, DebugLoc());
+
+        SmallVector<VPValue *, 3> Ops{
+            Src, Sink,
+            Plan.getConstantInt(IntegerType::getInt64Ty(Plan.getContext()),
+                                Check.AccessSize)};
+        VPWidenIntrinsicRecipe *M = new VPWidenIntrinsicRecipe(
+            Check.WriteAfterRead ? Intrinsic::loop_dependence_war_mask
+                                 : Intrinsic::loop_dependence_raw_mask,
+            Ops, IntegerType::getInt1Ty(Plan.getContext()));
         MemCheckBlockVP->appendRecipe(M);
         if (AliasMask)
           AliasMask = Builder.createAnd(AliasMask, M);
@@ -9057,7 +9061,7 @@ void LoopVectorizationPlanner::attachRuntimeChecks(
                                                {MaskPhi, AliasMask});
         MaskPhi->replaceUsesWithIf(And, [And](VPUser &U, unsigned) {
           auto *UR = dyn_cast<VPRecipeBase>(&U);
-          // If this is the first user, instert the AND.
+          // If this is the first user, insert the AND.
           if (UR && !And->getParent())
             And->insertBefore(UR);
           bool Replace = UR != And;
@@ -10073,8 +10077,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     UserIC = 1;
 
   // Plan how to best vectorize.
-  LVP.plan(UserVF, UserIC,
-           LVL.getLAI()->getRuntimePointerChecking()->getDiffChecks());
+  LVP.plan(UserVF, UserIC);
   VectorizationFactor VF = LVP.computeBestVF();
   unsigned IC = 1;
 
@@ -10087,15 +10090,13 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     IC = LVP.selectInterleaveCount(LVP.getPlanFor(VF.Width), VF.Width, VF.Cost);
 
     unsigned SelectedIC = std::max(IC, UserIC);
-    // Optimistically generate runtime checks if they are needed. Drop them if
+    //  Optimistically generate runtime checks if they are needed. Drop them if
     //  they turn out to not be profitable.
     if (VF.Width.isVector() || SelectedIC > 1) {
-      bool UseSafeEltsMask =
-          CM.getRTCheckStyle(*TTI) == RTCheckStyle::UseSafeEltsMask;
-      if (UseSafeEltsMask)
+      if (CM.getRTCheckStyle(*TTI) == RTCheckStyle::UseSafeEltsMask)
         LoopsAliasMasked++;
       Checks.create(L, *LVL.getLAI(), PSE.getPredicate(), VF.Width, SelectedIC,
-                    UseSafeEltsMask, *ORE);
+                    *ORE);
 
       // Bail out early if either the SCEV or memory runtime checks are known to
       // fail. In that case, the vector loop would never execute.
