@@ -310,4 +310,15 @@ entry:
   ret <vscale x 16 x i1> %0
 }
 
+define <vscale x 8 x i1> @whilewr_sub_mask(ptr %a, ptr %b) {
+; CHECK-LABEL: whilewr_sub_mask:
+; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    whilewr p0.b, x0, x1
+; CHECK-NEXT:    punpklo p0.h, p0.b
+; CHECK-NEXT:    ret
+entry:
+  %0 = call <vscale x 8 x i1> @llvm.loop.dependence.war.mask.nxv8i1(ptr %a, ptr %b, i64 1)
+  ret <vscale x 8 x i1> %0
+}
+
 attributes #0 = { vscale_range(1, 2) }

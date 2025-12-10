@@ -6022,13 +6022,13 @@ multiclass sve2_int_while_rr<bits<1> rw, string asm, SDPatternOperator op> {
   def _S : sve2_int_while_rr<0b10, rw, asm, PPR32>;
   def _D : sve2_int_while_rr<0b11, rw, asm, PPR64>;
 
-  def : Pat<(nxv16i1 (op i64:$Op1, i64:$Op2, (i64 1))),
+  def : Pat<(nxv16i1 (op i64:$Op1, i64:$Op2, (i64 1), (i64 0))),
             (!cast<Instruction>(NAME # _B) $Op1, $Op2)>;
-  def : Pat<(nxv8i1 (op i64:$Op1, i64:$Op2, (i64 2))),
+  def : Pat<(nxv8i1 (op i64:$Op1, i64:$Op2, (i64 2), (i64 0))),
             (!cast<Instruction>(NAME # _H) $Op1, $Op2)>;
-  def : Pat<(nxv4i1 (op i64:$Op1, i64:$Op2, (i64 4))),
+  def : Pat<(nxv4i1 (op i64:$Op1, i64:$Op2, (i64 4), (i64 0))),
             (!cast<Instruction>(NAME # _S) $Op1, $Op2)>;
-  def : Pat<(nxv2i1 (op i64:$Op1, i64:$Op2, (i64 8))),
+  def : Pat<(nxv2i1 (op i64:$Op1, i64:$Op2, (i64 8), (i64 0))),
             (!cast<Instruction>(NAME # _D) $Op1, $Op2)>;
 }
 
@@ -9507,7 +9507,7 @@ multiclass sve_fp8_dot<bit bf, ZPRRegOp dstrc, string asm, ValueType vt,
     let mayLoad  = 1;
     let mayStore = 0;
   }
-  
+
   def : SVE_3_Op_Pat<vt, op, vt, nxv16i8, nxv16i8, !cast<Instruction>(NAME)>;
 }
 
@@ -10993,7 +10993,7 @@ class sve2_fp8_cvt_single<bit L, bits<2> opc, string mnemonic,
 
 multiclass sve2_fp8_cvt_single<bit L, bits<2> opc, string mnemonic, ValueType vtd, SDPatternOperator op> {
   def _BtoH : sve2_fp8_cvt_single<L, opc, mnemonic, ZPR16, ZPR8>;
-  
+
   def : SVE_1_Op_Pat<vtd, op, nxv16i8, !cast<Instruction>(NAME # _BtoH)>;
 }
 
@@ -11038,7 +11038,7 @@ class sve2_fp8_down_cvt_single_top<bits<2> opc, string mnemonic, RegisterOperand
   let Constraints = "$Zd = $_Zd";
   let DestructiveInstType = DestructiveOther;
   let ElementSize         = ZPR8.ElementSize;
-  
+
   let Uses     = [FPMR, FPCR];
   let mayLoad  = 1;
   let mayStore = 0;

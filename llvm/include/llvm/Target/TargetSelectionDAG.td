@@ -840,9 +840,9 @@ def step_vector : SDNode<"ISD::STEP_VECTOR", SDTypeProfile<1, 1,
 def scalar_to_vector : SDNode<"ISD::SCALAR_TO_VECTOR", SDTypeProfile<1, 1, []>,
                               []>;
 
-def SDTLoopDepMask : SDTypeProfile<1, 3, [SDTCisVec<0>, SDTCisInt<1>,
-                                   SDTCisSameAs<2, 1>, SDTCisInt<3>,
-                                   SDTCVecEltisVT<0,i1>]>;
+def SDTLoopDepMask : SDTypeProfile<1, 4, [SDTCisVec<0>, SDTCVecEltisVT<0,i1>,
+                       /*PtrA*/SDTCisInt<1>,/*PtrB*/SDTCisInt<2>, SDTCisSameAs<2, 1>,
+                       /*EltSizeInBytes*/SDTCisInt<3>, /*LaneOffset*/SDTCisInt<4>]>;
 def loop_dependence_war_mask : SDNode<"ISD::LOOP_DEPENDENCE_WAR_MASK",
                                       SDTLoopDepMask, []>;
 def loop_dependence_raw_mask : SDNode<"ISD::LOOP_DEPENDENCE_RAW_MASK",
