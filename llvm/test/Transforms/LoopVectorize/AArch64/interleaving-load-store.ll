@@ -233,9 +233,9 @@ define void @interleave_single_load_store(ptr %src, ptr %dst, i64 %N, i8 %a, i8 
 ; INTERLEAVE-4-SVE:       vector.body:
 ; INTERLEAVE-4-SVE-NEXT:    [[INDEX:%.*]] = phi i64 [ 0, [[VECTOR_PH]] ], [ [[INDEX_NEXT:%.*]], [[VECTOR_BODY]] ]
 ; INTERLEAVE-4-SVE-NEXT:    [[TMP8:%.*]] = getelementptr inbounds i8, ptr [[SRC]], i64 [[INDEX]]
-; INTERLEAVE-4-SVE-NEXT:    [[TMP9:%.*]] = getelementptr inbounds i8, ptr [[TMP8]], i32 16
-; INTERLEAVE-4-SVE-NEXT:    [[TMP10:%.*]] = getelementptr inbounds i8, ptr [[TMP8]], i32 32
-; INTERLEAVE-4-SVE-NEXT:    [[TMP11:%.*]] = getelementptr inbounds i8, ptr [[TMP8]], i32 48
+; INTERLEAVE-4-SVE-NEXT:    [[TMP9:%.*]] = getelementptr inbounds i8, ptr [[TMP8]], i64 16
+; INTERLEAVE-4-SVE-NEXT:    [[TMP10:%.*]] = getelementptr inbounds i8, ptr [[TMP8]], i64 32
+; INTERLEAVE-4-SVE-NEXT:    [[TMP11:%.*]] = getelementptr inbounds i8, ptr [[TMP8]], i64 48
 ; INTERLEAVE-4-SVE-NEXT:    [[WIDE_LOAD:%.*]] = load <16 x i8>, ptr [[TMP8]], align 1
 ; INTERLEAVE-4-SVE-NEXT:    [[WIDE_LOAD7:%.*]] = load <16 x i8>, ptr [[TMP9]], align 1
 ; INTERLEAVE-4-SVE-NEXT:    [[WIDE_LOAD8:%.*]] = load <16 x i8>, ptr [[TMP10]], align 1
@@ -253,9 +253,9 @@ define void @interleave_single_load_store(ptr %src, ptr %dst, i64 %N, i8 %a, i8 
 ; INTERLEAVE-4-SVE-NEXT:    [[TMP22:%.*]] = select <16 x i1> [[TMP14]], <16 x i8> [[BROADCAST_SPLAT]], <16 x i8> [[TMP18]]
 ; INTERLEAVE-4-SVE-NEXT:    [[TMP23:%.*]] = select <16 x i1> [[TMP15]], <16 x i8> [[BROADCAST_SPLAT]], <16 x i8> [[TMP19]]
 ; INTERLEAVE-4-SVE-NEXT:    [[TMP24:%.*]] = getelementptr inbounds i8, ptr [[DST]], i64 [[INDEX]]
-; INTERLEAVE-4-SVE-NEXT:    [[TMP25:%.*]] = getelementptr inbounds i8, ptr [[TMP24]], i32 16
-; INTERLEAVE-4-SVE-NEXT:    [[TMP26:%.*]] = getelementptr inbounds i8, ptr [[TMP24]], i32 32
-; INTERLEAVE-4-SVE-NEXT:    [[TMP27:%.*]] = getelementptr inbounds i8, ptr [[TMP24]], i32 48
+; INTERLEAVE-4-SVE-NEXT:    [[TMP25:%.*]] = getelementptr inbounds i8, ptr [[TMP24]], i64 16
+; INTERLEAVE-4-SVE-NEXT:    [[TMP26:%.*]] = getelementptr inbounds i8, ptr [[TMP24]], i64 32
+; INTERLEAVE-4-SVE-NEXT:    [[TMP27:%.*]] = getelementptr inbounds i8, ptr [[TMP24]], i64 48
 ; INTERLEAVE-4-SVE-NEXT:    store <16 x i8> [[TMP20]], ptr [[TMP24]], align 1
 ; INTERLEAVE-4-SVE-NEXT:    store <16 x i8> [[TMP21]], ptr [[TMP25]], align 1
 ; INTERLEAVE-4-SVE-NEXT:    store <16 x i8> [[TMP22]], ptr [[TMP26]], align 1
