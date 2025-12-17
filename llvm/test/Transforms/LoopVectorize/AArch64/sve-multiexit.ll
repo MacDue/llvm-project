@@ -29,10 +29,11 @@ define void @multiple_exits_unique_exit_block(ptr %A, ptr %B, i32 %N) #0 {
 ; CHECK-NEXT:    [[TMP15:%.*]] = inttoptr i64 [[A2]] to ptr
 ; CHECK-NEXT:    [[TMP14:%.*]] = inttoptr i64 [[B1]] to ptr
 ; CHECK-NEXT:    [[ALIAS_LANE_MASK:%.*]] = call <vscale x 4 x i1> @llvm.loop.dependence.war.mask.nxv4i1(ptr [[TMP14]], ptr [[TMP15]], i64 4)
-; CHECK-NEXT:    [[TMP16:%.*]] = zext <vscale x 4 x i1> [[ALIAS_LANE_MASK]] to <vscale x 4 x i8>
-; CHECK-NEXT:    [[TMP17:%.*]] = call i8 @llvm.vector.reduce.add.nxv4i8(<vscale x 4 x i8> [[TMP16]])
-; CHECK-NEXT:    [[TMP11:%.*]] = zext i8 [[TMP17]] to i64
-; CHECK-NEXT:    [[TMP13:%.*]] = icmp eq i64 [[TMP11]], 0
+; CHECK-NEXT:    [[TMP16:%.*]] = call i32 @llvm.vscale.i32()
+; CHECK-NEXT:    [[TMP11:%.*]] = mul nuw i32 [[TMP16]], 4
+; CHECK-NEXT:    [[TMP12:%.*]] = sub i32 [[TMP11]], 1
+; CHECK-NEXT:    [[TMP17:%.*]] = extractelement <vscale x 4 x i1> [[ALIAS_LANE_MASK]], i32 [[TMP12]]
+; CHECK-NEXT:    [[TMP13:%.*]] = icmp eq i1 [[TMP17]], false
 ; CHECK-NEXT:    br i1 [[TMP13]], label [[SCALAR_PH]], label [[VECTOR_PH:%.*]]
 ; CHECK:       vector.ph:
 ; CHECK-NEXT:    [[TMP7:%.*]] = call i32 @llvm.vscale.i32()
@@ -54,8 +55,7 @@ define void @multiple_exits_unique_exit_block(ptr %A, ptr %B, i32 %N) #0 {
 ; CHECK-NEXT:    [[TMP30:%.*]] = getelementptr inbounds i32, ptr [[TMP25]], i64 [[TMP20]]
 ; CHECK-NEXT:    store <vscale x 4 x i32> [[WIDE_LOAD]], ptr [[TMP25]], align 4
 ; CHECK-NEXT:    store <vscale x 4 x i32> [[WIDE_LOAD3]], ptr [[TMP30]], align 4
-; CHECK-NEXT:    [[TMP26:%.*]] = trunc i64 [[TMP11]] to i32
-; CHECK-NEXT:    [[INDEX_NEXT]] = add nuw i32 [[INDEX]], [[TMP26]]
+; CHECK-NEXT:    [[INDEX_NEXT]] = add nuw i32 [[INDEX]], [[TMP8]]
 ; CHECK-NEXT:    [[TMP31:%.*]] = icmp eq i32 [[INDEX_NEXT]], [[N_VEC]]
 ; CHECK-NEXT:    br i1 [[TMP31]], label [[MIDDLE_BLOCK:%.*]], label [[VECTOR_BODY]], !llvm.loop [[LOOP0:![0-9]+]]
 ; CHECK:       middle.block:
@@ -106,10 +106,11 @@ define i32 @multiple_exits_multiple_exit_blocks(ptr %A, ptr %B, i32 %N) #0 {
 ; CHECK-NEXT:    [[TMP15:%.*]] = inttoptr i64 [[A2]] to ptr
 ; CHECK-NEXT:    [[TMP14:%.*]] = inttoptr i64 [[B1]] to ptr
 ; CHECK-NEXT:    [[ALIAS_LANE_MASK:%.*]] = call <vscale x 4 x i1> @llvm.loop.dependence.war.mask.nxv4i1(ptr [[TMP14]], ptr [[TMP15]], i64 4)
-; CHECK-NEXT:    [[TMP16:%.*]] = zext <vscale x 4 x i1> [[ALIAS_LANE_MASK]] to <vscale x 4 x i8>
-; CHECK-NEXT:    [[TMP17:%.*]] = call i8 @llvm.vector.reduce.add.nxv4i8(<vscale x 4 x i8> [[TMP16]])
-; CHECK-NEXT:    [[TMP11:%.*]] = zext i8 [[TMP17]] to i64
-; CHECK-NEXT:    [[TMP13:%.*]] = icmp eq i64 [[TMP11]], 0
+; CHECK-NEXT:    [[TMP16:%.*]] = call i32 @llvm.vscale.i32()
+; CHECK-NEXT:    [[TMP11:%.*]] = mul nuw i32 [[TMP16]], 4
+; CHECK-NEXT:    [[TMP12:%.*]] = sub i32 [[TMP11]], 1
+; CHECK-NEXT:    [[TMP17:%.*]] = extractelement <vscale x 4 x i1> [[ALIAS_LANE_MASK]], i32 [[TMP12]]
+; CHECK-NEXT:    [[TMP13:%.*]] = icmp eq i1 [[TMP17]], false
 ; CHECK-NEXT:    br i1 [[TMP13]], label [[SCALAR_PH]], label [[VECTOR_PH:%.*]]
 ; CHECK:       vector.ph:
 ; CHECK-NEXT:    [[TMP7:%.*]] = call i32 @llvm.vscale.i32()
@@ -131,8 +132,7 @@ define i32 @multiple_exits_multiple_exit_blocks(ptr %A, ptr %B, i32 %N) #0 {
 ; CHECK-NEXT:    [[TMP30:%.*]] = getelementptr inbounds i32, ptr [[TMP25]], i64 [[TMP20]]
 ; CHECK-NEXT:    store <vscale x 4 x i32> [[WIDE_LOAD]], ptr [[TMP25]], align 4
 ; CHECK-NEXT:    store <vscale x 4 x i32> [[WIDE_LOAD3]], ptr [[TMP30]], align 4
-; CHECK-NEXT:    [[TMP26:%.*]] = trunc i64 [[TMP11]] to i32
-; CHECK-NEXT:    [[INDEX_NEXT]] = add nuw i32 [[INDEX]], [[TMP26]]
+; CHECK-NEXT:    [[INDEX_NEXT]] = add nuw i32 [[INDEX]], [[TMP8]]
 ; CHECK-NEXT:    [[TMP31:%.*]] = icmp eq i32 [[INDEX_NEXT]], [[N_VEC]]
 ; CHECK-NEXT:    br i1 [[TMP31]], label [[MIDDLE_BLOCK:%.*]], label [[VECTOR_BODY]], !llvm.loop [[LOOP4:![0-9]+]]
 ; CHECK:       middle.block:

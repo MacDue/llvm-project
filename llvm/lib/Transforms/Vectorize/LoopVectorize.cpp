@@ -9013,16 +9013,15 @@ void LoopVectorizationPlanner::attachRuntimeChecks(
         CM.Legal->getRuntimePointerChecking()->getDiffChecks();
 
     // Create a mask enabling safe elements for each iteration.
-    if (CM.getRTCheckStyle(TTI) == RTCheckStyle::UseSafeEltsMask &&
-        ChecksOpt.has_value() && ChecksOpt->size() > 0) {
+    if (CM.getRTCheckStyle(TTI) == RTCheckStyle::UseSafeEltsMask && ChecksOpt &&
+        ChecksOpt->size() > 0) {
       ArrayRef<PointerDiffInfo> Checks = *ChecksOpt;
-      VPRegionBlock *LoopRegion = Plan.getVectorLoopRegion();
-      VPBasicBlock *LoopBody = LoopRegion->getEntryBasicBlock();
-      VPBuilder Builder(MemCheckBlockVP);
 
       /// Create a mask for each possibly-aliasing pointer pair, ANDing them if
       /// there's more than one pair.
       VPValue *AliasMask = nullptr;
+      VPBuilder Builder(MemCheckBlockVP);
+      Type *BoolTy = IntegerType::getInt1Ty(Plan.getContext());
       for (PointerDiffInfo Check : Checks) {
         VPValue *Sink =
             vputils::getOrCreateVPValueForSCEVExpr(Plan, Check.SinkStart);
@@ -9042,7 +9041,7 @@ void LoopVectorizationPlanner::attachRuntimeChecks(
         VPWidenIntrinsicRecipe *M = new VPWidenIntrinsicRecipe(
             Check.WriteAfterRead ? Intrinsic::loop_dependence_war_mask
                                  : Intrinsic::loop_dependence_raw_mask,
-            Ops, IntegerType::getInt1Ty(Plan.getContext()));
+            Ops, BoolTy);
         MemCheckBlockVP->appendRecipe(M);
         if (AliasMask)
           AliasMask = Builder.createAnd(AliasMask, M);
@@ -9051,52 +9050,17 @@ void LoopVectorizationPlanner::attachRuntimeChecks(
       }
       assert(AliasMask && "Expected an alias mask to have been created");
 
-      // Replace uses of the loop body's active lane mask phi with an AND of the
-      // phi and the alias mask.
-      for (VPRecipeBase &R : *LoopBody) {
-        auto *MaskPhi = dyn_cast<VPActiveLaneMaskPHIRecipe>(&R);
-        if (!MaskPhi)
-          continue;
-        VPInstruction *And = new VPInstruction(Instruction::BinaryOps::And,
-                                               {MaskPhi, AliasMask});
-        MaskPhi->replaceUsesWithIf(And, [And](VPUser &U, unsigned) {
-          auto *UR = dyn_cast<VPRecipeBase>(&U);
-          // If this is the first user, insert the AND.
-          if (UR && !And->getParent())
-            And->insertBefore(UR);
-          bool Replace = UR != And;
-          return Replace;
-        });
-      }
+      // The alias mask is a contiguous mask, so it is all-true if the last lane
+      // is active. TODO: Support entering the vector body when the alias mask
+      // is not all-true.
+      VPValue *IsFullMask =
+          Builder.createNaryOp(VPInstruction::ExtractLastLane, {AliasMask});
 
-      // An empty mask would cause an infinite loop since the induction variable
-      // is updated with the number of set elements in the mask. Make sure we
-      // don't execute the vector loop when the mask is empty.
-      VPInstruction *PopCount =
-          new VPInstruction(VPInstruction::PopCount, {AliasMask});
-      PopCount->insertAfter(AliasMask->getDefiningRecipe());
-      VPValue *Cmp =
-          Builder.createICmp(CmpInst::Predicate::ICMP_EQ, PopCount,
-                             Plan.getOrAddLiveIn(ConstantInt::get(
-                                 IntegerType::get(Plan.getContext(), 64), 0)));
-      MemCheckCondVPV = Cmp;
+      VPValue *IsNotFullMask =
+          Builder.createICmp(CmpInst::Predicate::ICMP_EQ, IsFullMask,
+                             Plan.getOrAddLiveIn(ConstantInt::get(BoolTy, 0)));
 
-      // Update the IV by the number of active lanes in the mask.
-      auto *CanonicalIVPHI = LoopRegion->getCanonicalIV();
-      auto *CanonicalIVIncrement =
-          cast<VPInstruction>(CanonicalIVPHI->getBackedgeValue());
-
-      // Increment phi by correct amount.
-      VPValue *IncrementBy = PopCount;
-      Type *IVType = CanonicalIVPHI->getScalarType();
-
-      if (IVType->getScalarSizeInBits() < 64) {
-        Builder.setInsertPoint(CanonicalIVIncrement);
-        IncrementBy =
-            Builder.createScalarCast(Instruction::Trunc, IncrementBy, IVType,
-                                     CanonicalIVIncrement->getDebugLoc());
-      }
-      CanonicalIVIncrement->setOperand(1, IncrementBy);
+      MemCheckCondVPV = IsNotFullMask;
     }
 
     // VPlan-native path does not do any analysis for runtime checks

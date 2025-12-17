@@ -20,10 +20,10 @@ define dso_local void @alias_mask(ptr noalias %a, ptr %b, ptr %c, i32 %n) {
 ; CHECK-NEXT:   IR   %diff.check = icmp ult i64 %0, 4
 ; CHECK-NEXT:   EMIT-SCALAR vp<[[PTRC:%.+]]> = inttoptr ir<%c3> to ptr
 ; CHECK-NEXT:   EMIT-SCALAR vp<[[PTRB:%.+]]> = inttoptr ir<%b2> to ptr
-; CHECK-NEXT:   WIDEN-INTRINSIC vp<[[ALIAS_MASK:%.+]]> = call llvm.loop.dependence.war.mask(vp<[[PTRB]]>, vp<[[PTRC]]>, ir<1>)
-; CHECK-NEXT:   EMIT vp<[[POPCOUNT:%.+]]> = popcount vp<[[ALIAS_MASK]]>
-; CHECK-NEXT:   EMIT vp<[[COND:%.+]]> = icmp eq vp<[[POPCOUNT]]>, ir<0>
-; CHECK-NEXT:   EMIT branch-on-cond vp<[[COND]]>
+; CHECK-NEXT:   WIDEN-INTRINSIC vp<[[ALIAS_MASK:%.+]]> = call llvm.loop.dependence.war.mask(vp<%3>, vp<%2>, ir<1>)
+; CHECK-NEXT:   EMIT vp<[[IS_FULL_MASK:%.+]]> = extract-last-lane vp<[[ALIAS_MASK]]>
+; CHECK-NEXT:   EMIT vp<[[IS_NOT_FULL_MASK:%.+]]> = icmp eq vp<[[IS_FULL_MASK]]>, ir<false>
+; CHECK-NEXT:   EMIT branch-on-cond vp<[[IS_NOT_FULL_MASK]]>
 ; CHECK-NEXT: Successor(s): ir-bb<scalar.ph>, vector.ph
 ; CHECK-EMPTY:
 ; CHECK-NEXT: vector.ph:
@@ -34,17 +34,16 @@ define dso_local void @alias_mask(ptr noalias %a, ptr %b, ptr %c, i32 %n) {
 ; CHECK-NEXT:   EMIT-SCALAR vp<%index> = phi [ ir<0>, vector.ph ], [ vp<%index.next>, vector.body ]
 ; CHECK-NEXT:   ACTIVE-LANE-MASK-PHI vp<[[ACTIVE_LANE_MASK:%.+]]> = phi vp<%active.lane.mask.entry>, vp<%active.lane.mask.next>
 ; CHECK-NEXT:   CLONE ir<%arrayidx> = getelementptr inbounds ir<%a>, vp<%index>
-; CHECK-NEXT:   EMIT vp<[[MASK:%.+]]> = and vp<[[ACTIVE_LANE_MASK]]>, vp<[[ALIAS_MASK]]>
-; CHECK-NEXT:   WIDEN ir<%1> = load ir<%arrayidx>, vp<[[MASK]]>
+; CHECK-NEXT:   WIDEN ir<%1> = load ir<%arrayidx>, vp<[[ACTIVE_LANE_MASK]]>
 ; CHECK-NEXT:   CLONE ir<%arrayidx2> = getelementptr inbounds ir<%b>, vp<%index>
-; CHECK-NEXT:   WIDEN ir<%2> = load ir<%arrayidx2>, vp<[[MASK]]>
+; CHECK-NEXT:   WIDEN ir<%2> = load ir<%arrayidx2>, vp<[[ACTIVE_LANE_MASK]]>
 ; CHECK-NEXT:   WIDEN ir<%add> = add ir<%2>, ir<%1>
 ; CHECK-NEXT:   CLONE ir<%arrayidx6> = getelementptr inbounds ir<%c>, vp<%index>
-; CHECK-NEXT:   WIDEN store ir<%arrayidx6>, ir<%add>, vp<[[MASK]]>
-; CHECK-NEXT:   EMIT vp<%index.next> = add vp<%index>, vp<[[POPCOUNT]]>
+; CHECK-NEXT:   WIDEN store ir<%arrayidx6>, ir<%add>, vp<[[ACTIVE_LANE_MASK]]>
+; CHECK-NEXT:   EMIT vp<%index.next> = add vp<%index>, ir<4>
 ; CHECK-NEXT:   EMIT vp<%active.lane.mask.next> = active lane mask vp<%index.next>, ir<%wide.trip.count>, ir<1>
-; CHECK-NEXT:   EMIT vp<%10> = not vp<%active.lane.mask.next>
-; CHECK-NEXT:   EMIT branch-on-cond vp<%10>
+; CHECK-NEXT:   EMIT vp<%9> = not vp<%active.lane.mask.next>
+; CHECK-NEXT:   EMIT branch-on-cond vp<%9>
 ; CHECK-NEXT: Successor(s): middle.block, vector.body
 ; CHECK-EMPTY:
 ; CHECK-NEXT: middle.block:

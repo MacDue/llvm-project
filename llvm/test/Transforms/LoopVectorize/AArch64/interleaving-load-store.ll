@@ -214,10 +214,8 @@ define void @interleave_single_load_store(ptr %src, ptr %dst, i64 %N, i8 %a, i8 
 ; INTERLEAVE-4-SVE-NEXT:    [[TMP2:%.*]] = inttoptr i64 [[DST3]] to ptr
 ; INTERLEAVE-4-SVE-NEXT:    [[TMP1:%.*]] = inttoptr i64 [[SRC2]] to ptr
 ; INTERLEAVE-4-SVE-NEXT:    [[ALIAS_LANE_MASK:%.*]] = call <16 x i1> @llvm.loop.dependence.war.mask.v16i1(ptr [[TMP1]], ptr [[TMP2]], i64 1)
-; INTERLEAVE-4-SVE-NEXT:    [[TMP3:%.*]] = zext <16 x i1> [[ALIAS_LANE_MASK]] to <16 x i8>
-; INTERLEAVE-4-SVE-NEXT:    [[TMP4:%.*]] = call i8 @llvm.vector.reduce.add.v16i8(<16 x i8> [[TMP3]])
-; INTERLEAVE-4-SVE-NEXT:    [[TMP5:%.*]] = zext i8 [[TMP4]] to i64
-; INTERLEAVE-4-SVE-NEXT:    [[TMP7:%.*]] = icmp eq i64 [[TMP5]], 0
+; INTERLEAVE-4-SVE-NEXT:    [[TMP4:%.*]] = extractelement <16 x i1> [[ALIAS_LANE_MASK]], i32 15
+; INTERLEAVE-4-SVE-NEXT:    [[TMP7:%.*]] = icmp eq i1 [[TMP4]], false
 ; INTERLEAVE-4-SVE-NEXT:    br i1 [[TMP7]], label [[VEC_EPILOG_SCALAR_PH]], label [[VECTOR_MAIN_LOOP_ITER_CHECK:%.*]]
 ; INTERLEAVE-4-SVE:       vector.main.loop.iter.check:
 ; INTERLEAVE-4-SVE-NEXT:    [[MIN_ITERS_CHECK4:%.*]] = icmp ult i64 [[N]], 64
@@ -260,7 +258,7 @@ define void @interleave_single_load_store(ptr %src, ptr %dst, i64 %N, i8 %a, i8 
 ; INTERLEAVE-4-SVE-NEXT:    store <16 x i8> [[TMP21]], ptr [[TMP25]], align 1
 ; INTERLEAVE-4-SVE-NEXT:    store <16 x i8> [[TMP22]], ptr [[TMP26]], align 1
 ; INTERLEAVE-4-SVE-NEXT:    store <16 x i8> [[TMP23]], ptr [[TMP27]], align 1
-; INTERLEAVE-4-SVE-NEXT:    [[INDEX_NEXT]] = add nuw i64 [[INDEX]], [[TMP5]]
+; INTERLEAVE-4-SVE-NEXT:    [[INDEX_NEXT]] = add nuw i64 [[INDEX]], 64
 ; INTERLEAVE-4-SVE-NEXT:    [[TMP28:%.*]] = icmp eq i64 [[INDEX_NEXT]], [[N_VEC]]
 ; INTERLEAVE-4-SVE-NEXT:    br i1 [[TMP28]], label [[MIDDLE_BLOCK:%.*]], label [[VECTOR_BODY]], !llvm.loop [[LOOP0:![0-9]+]]
 ; INTERLEAVE-4-SVE:       middle.block:
@@ -311,7 +309,6 @@ define void @interleave_single_load_store(ptr %src, ptr %dst, i64 %N, i8 %a, i8 
 ; INTERLEAVE-4-SVE:       exit:
 ; INTERLEAVE-4-SVE-NEXT:    ret void
 ;
-; INTERLEAVE-4-VLA-LABEL: @interleave_single_load_store(
 ; INTERLEAVE-4-VLA:       call <vscale x 16 x i8> @llvm.smax.nxv16i8(
 ; INTERLEAVE-4-VLA-NEXT:  call <vscale x 16 x i8> @llvm.smax.nxv16i8(
 ; INTERLEAVE-4-VLA-NEXT:  call <vscale x 16 x i8> @llvm.smax.nxv16i8(
