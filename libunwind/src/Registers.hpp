@@ -1957,33 +1957,34 @@ private:
     uint64_t __lr = 0;            // Link register x30
     uint64_t __sp = 0;            // Stack pointer x31
     uint64_t __pc = 0;            // Program counter
-    uint64_t __ra_sign_state = 0; // RA sign state register
   };
 
   struct Misc {
-    mutable uint32_t __vg = 0; // Vector Granule
-    bool __has_sme = checkHasSME();
+    mutable uint16_t __vg = 0;   // Vector Granule
+    uint8_t __ra_sign_state = 0; // RA sign state register (bits 0 and 1)
+    uint8_t __has_sme = checkHasSME();
+    uint32_t padding;
   };
 
   GPRs _registers = {};
+
+  // Miscellaneous/virtual registers. These do not correspond to physical
+  // registers, so do not need to be saved/restored in UnwindRegistersRestore.S
+  // and UnwindRegistersSave.S. These must take up 8 bytes.
+  Misc _misc_registers;
+
   // Currently only the lower double in 128-bit vectore registers
   // is perserved during unwinding.  We could define new register
   // numbers (> 96) which mean whole vector registers, then this
   // struct would need to change to contain whole vector registers.
   double _vectorHalfRegisters[32] = {};
-
-  // Miscellaneous/virtual registers. These are stored below the GPRs and FPRs
-  // as they do not correspond to physical registers, so do not need to be
-  // saved/restored in UnwindRegistersRestore.S and UnwindRegistersSave.S, and
-  // we don't want to modify the existing offsets for GPRs and FPRs.
-  Misc _misc_registers;
 };
 
 inline Registers_arm64::Registers_arm64(const void *registers) {
   static_assert((check_fit<Registers_arm64, unw_context_t>::does_fit),
                 "arm64 registers do not fit into unw_context_t");
   memcpy(&_registers, registers, sizeof(_registers));
-  static_assert(sizeof(GPRs) == 0x110,
+  static_assert(offsetof(Registers_arm64, _vectorHalfRegisters) == 0x110,
                 "expected VFP registers to be at offset 272");
   memcpy(_vectorHalfRegisters,
          static_cast<const uint8_t *>(registers) + sizeof(GPRs),
@@ -2053,7 +2054,7 @@ inline uint64_t Registers_arm64::getRegister(int regNum) const {
   if (regNum == UNW_REG_SP || regNum == UNW_AARCH64_SP)
     return _registers.__sp;
   if (regNum == UNW_AARCH64_RA_SIGN_STATE)
-    return _registers.__ra_sign_state;
+    return _misc_registers.__ra_sign_state;
   if (regNum == UNW_AARCH64_FP)
     return getFP();
   if (regNum == UNW_AARCH64_LR)
@@ -2071,7 +2072,7 @@ inline void Registers_arm64::setRegister(int regNum, uint64_t value) {
   else if (regNum == UNW_REG_SP || regNum == UNW_AARCH64_SP)
     _registers.__sp = value;
   else if (regNum == UNW_AARCH64_RA_SIGN_STATE)
-    _registers.__ra_sign_state = value;
+    _misc_registers.__ra_sign_state = value;
   else if (regNum == UNW_AARCH64_FP)
     setFP(value);
   else if (regNum == UNW_AARCH64_LR)
