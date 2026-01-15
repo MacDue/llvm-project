@@ -395,7 +395,11 @@ struct VPlanTransforms {
 
   /// Materialize VF and VFxUF to be computed explicitly using VPInstructions.
   static void materializeVFAndVFxUF(VPlan &Plan, VPBasicBlock *VectorPH,
-                                    ElementCount VF);
+                                    ElementCount VF, VPValue *ClampedVF);
+
+  static VPValue *
+  materializeAliasMask(VPlan &Plan, VPBasicBlock *VectorPH,
+                       std::optional<ArrayRef<PointerDiffInfo>> DiffChecks);
 
   /// Expand VPExpandSCEVRecipes in \p Plan's entry block. Each
   /// VPExpandSCEVRecipe is replaced with a live-in wrapping the expanded IR
@@ -420,7 +424,7 @@ struct VPlanTransforms {
   /// for wide recipe construction. This argument is temporary and will be
   /// removed in the future.
   static DenseMap<VPBasicBlock *, VPValue *>
-  introduceMasksAndLinearize(VPlan &Plan, bool FoldTail);
+  introduceMasksAndLinearize(VPlan &Plan, bool FoldTail, bool MaskAliasing);
 
   /// Add branch weight metadata, if the \p Plan's middle block is terminated by
   /// a BranchOnCond recipe.

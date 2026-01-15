@@ -302,7 +302,7 @@ public:
 
   /// Mark all respective loads/stores for masking. Must only be called when
   /// tail-folding is possible.
-  void prepareToFoldTailByMasking();
+  void prepareToMaskLoop();
 
   /// Returns the primary induction variable.
   PHINode *getPrimaryInduction() { return PrimaryInduction; }

@@ -4790,11 +4790,20 @@ void VPlanTransforms::materializeVectorTripCount(VPlan &Plan,
 }
 
 void VPlanTransforms::materializeVFAndVFxUF(VPlan &Plan, VPBasicBlock *VectorPH,
-                                            ElementCount VFEC) {
+                                            ElementCount VFEC,
+                                            VPValue *ClampedVF) {
   VPBuilder Builder(VectorPH, VectorPH->begin());
   Type *TCTy = VPTypeAnalysis(Plan).inferScalarType(Plan.getTripCount());
   VPValue &VF = Plan.getVF();
   VPValue &VFxUF = Plan.getVFxUF();
+
+  if (ClampedVF) {
+    assert(Plan.getUF() == 1 && "Clamped VF not support with interleaving");
+    VF.replaceAllUsesWith(ClampedVF);
+    VFxUF.replaceAllUsesWith(ClampedVF);
+    return;
+  }
+
   // Note that after the transform, Plan.getVF and Plan.getVFxUF should not be
   // used.
   // TODO: Assert that they aren't used.
@@ -4822,6 +4831,50 @@ void VPlanTransforms::materializeVFAndVFxUF(VPlan &Plan, VPBasicBlock *VectorPH,
   VPValue *MulByUF = Builder.createOverflowingOp(
       Instruction::Mul, {RuntimeVF, UF}, {true, false});
   VFxUF.replaceAllUsesWith(MulByUF);
+}
+
+VPValue *VPlanTransforms::materializeAliasMask(
+    VPlan &Plan, VPBasicBlock *VectorPH,
+    std::optional<ArrayRef<PointerDiffInfo>> DiffChecks) {
+  VPBuilder Builder(VectorPH, VectorPH->begin());
+  Type *I1Ty = IntegerType::getInt1Ty(Plan.getContext());
+  Type *I64Ty = IntegerType::getInt64Ty(Plan.getContext());
+  Type *PtrTy = PointerType::getUnqual(Plan.getContext());
+
+  VPValue &AliasMask = Plan.getAliasMask();
+
+  if (!DiffChecks) {
+    VPValue *True = Plan.getOrAddLiveIn(ConstantInt::get(I1Ty, 1));
+    AliasMask.replaceAllUsesWith(True);
+    return nullptr;
+  }
+
+  VPValue *Mask = nullptr;
+  for (PointerDiffInfo Check : *DiffChecks) {
+    VPValue *Src = vputils::getOrCreateVPValueForSCEVExpr(Plan, Check.SrcStart);
+    VPValue *Sink =
+        vputils::getOrCreateVPValueForSCEVExpr(Plan, Check.SinkStart);
+
+    VPValue *SrcPtr =
+        Builder.createScalarCast(Instruction::CastOps::IntToPtr, Src, PtrTy,
+                                 DebugLoc::getCompilerGenerated());
+    VPValue *SinkPtr =
+        Builder.createScalarCast(Instruction::CastOps::IntToPtr, Sink, PtrTy,
+                                 DebugLoc::getCompilerGenerated());
+
+    VPWidenIntrinsicRecipe *WARMask = new VPWidenIntrinsicRecipe(
+        Intrinsic::loop_dependence_war_mask,
+        {SrcPtr, SinkPtr, Plan.getConstantInt(I64Ty, Check.AccessSize)}, I1Ty);
+    Builder.insert(WARMask);
+
+    if (Mask)
+      Mask = Builder.createAnd(Mask, WARMask);
+    else
+      Mask = WARMask;
+  }
+
+  AliasMask.replaceAllUsesWith(Mask);
+  return Builder.createNaryOp(VPInstruction::PopCount, {Mask});
 }
 
 DenseMap<const SCEV *, Value *>

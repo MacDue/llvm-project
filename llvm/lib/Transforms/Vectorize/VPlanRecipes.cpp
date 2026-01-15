@@ -457,6 +457,7 @@ unsigned VPInstruction::getNumOperandsForOpcode(unsigned Opcode) {
   case VPInstruction::ResumeForEpilogue:
   case VPInstruction::Reverse:
   case VPInstruction::Unpack:
+  case VPInstruction::PopCount:
     return 1;
   case Instruction::ICmp:
   case Instruction::FCmp:
@@ -596,6 +597,28 @@ Value *VPInstruction::generate(VPTransformState &State) {
     return Builder.CreateIntrinsic(Intrinsic::get_active_lane_mask,
                                    {PredTy, ScalarTC->getType()},
                                    {VIVElem0, ScalarTC}, nullptr, Name);
+  }
+  // Count the number of bits set in each lane and reduce the result to a scalar
+  case VPInstruction::PopCount: {
+    Value *Op = State.get(getOperand(0));
+    Type *VT = Op->getType();
+    Value *Cnt = Op;
+
+    // i1 vectors can just use the add reduction. Bigger elements need a ctpop
+    // first.
+    if (VT->getScalarSizeInBits() > 1)
+      Cnt = Builder.CreateIntrinsic(Intrinsic::ctpop, {VT}, {Cnt});
+
+    auto *VecVT = cast<VectorType>(VT);
+    if (VecVT->getElementType()->getScalarSizeInBits() < 16) {
+      Cnt = Builder.CreateCast(
+          Instruction::ZExt, Cnt,
+          VectorType::get(Builder.getInt16Ty(), VecVT->getElementCount()));
+    }
+
+    Cnt = Builder.CreateUnaryIntrinsic(Intrinsic::vector_reduce_add, Cnt);
+    Cnt = Builder.CreateCast(Instruction::ZExt, Cnt, Builder.getInt64Ty());
+    return Cnt;
   }
   case VPInstruction::FirstOrderRecurrenceSplice: {
     // Generate code to combine the previous and current values in vector v3.
@@ -1287,7 +1310,8 @@ bool VPInstruction::isVectorToScalar() const {
          getOpcode() == VPInstruction::ComputeFindIVResult ||
          getOpcode() == VPInstruction::ExtractLastActive ||
          getOpcode() == VPInstruction::ComputeReductionResult ||
-         getOpcode() == VPInstruction::AnyOf;
+         getOpcode() == VPInstruction::AnyOf ||
+         getOpcode() == VPInstruction::PopCount;
 }
 
 bool VPInstruction::isSingleScalar() const {
@@ -1552,6 +1576,9 @@ void VPInstruction::printRecipe(raw_ostream &O, const Twine &Indent,
     break;
   case VPInstruction::ExtractLastActive:
     O << "extract-last-active";
+    break;
+  case VPInstruction::PopCount:
+    O << "popcount";
     break;
   default:
     O << Instruction::getOpcodeName(getOpcode());

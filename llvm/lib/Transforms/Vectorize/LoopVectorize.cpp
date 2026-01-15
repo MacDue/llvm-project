@@ -198,6 +198,10 @@ static cl::opt<unsigned> VectorizeMemoryCheckThreshold(
     "vectorize-memory-check-threshold", cl::init(128), cl::Hidden,
     cl::desc("The maximum allowed number of runtime memory checks"));
 
+static cl::opt<bool> EnablePartialAliasingVectorization(
+    "enable-partial-aliasing-vectorization", cl::init(false), cl::Hidden,
+    cl::desc("Replace pointer diff checks with alias masks."));
+
 // Option prefer-predicate-over-epilogue indicates that an epilogue is undesired,
 // that predication is preferred, and this lists all options. I.e., the
 // vectorizer will try to fold the tail-loop (epilogue) into the vector body
@@ -6788,8 +6792,8 @@ void LoopVectorizationPlanner::plan(ElementCount UserVF, unsigned UserIC) {
       CM.invalidateCostModelingDecisions();
   }
 
-  if (CM.foldTailByMasking())
-    Legal->prepareToFoldTailByMasking();
+  if (CM.foldTailByMasking() || EnablePartialAliasingVectorization)
+    Legal->prepareToMaskLoop();
 
   ElementCount MaxUserVF =
       UserVF.isScalable() ? MaxFactors.ScalableVF : MaxFactors.FixedVF;
@@ -6901,7 +6905,8 @@ LoopVectorizationPlanner::precomputeCosts(VPlan &Plan, ElementCount VF,
     // TODO: Remove this code after stepping away from the legacy cost model and
     // adding code to simplify VPlans before calculating their costs.
     auto TC = getSmallConstantTripCount(PSE.getSE(), OrigLoop);
-    if (TC == VF && !CM.foldTailByMasking())
+    if (TC == VF && !CM.foldTailByMasking() &&
+        !EnablePartialAliasingVectorization)
       addFullyUnrolledInstructionsToIgnore(OrigLoop, Legal->getInductionVars(),
                                            CostCtx.SkipCostComputation);
 
@@ -7448,6 +7453,9 @@ DenseMap<const SCEV *, Value *> LoopVectorizationPlanner::executePlan(
                                   : TargetTransformInfo::RGK_FixedWidthVector));
   VPlanTransforms::removeDeadRecipes(BestVPlan);
 
+  VPValue *ClampedVF = nullptr;
+  auto DiffChecks = CM.Legal->getRuntimePointerChecking()->getDiffChecks();
+
   VPlanTransforms::convertToConcreteRecipes(BestVPlan);
   // Regions are dissolved after optimizing for VF and UF, which completely
   // removes unneeded loop regions first.
@@ -7461,7 +7469,12 @@ DenseMap<const SCEV *, Value *> LoopVectorizationPlanner::executePlan(
   VPlanTransforms::materializeVectorTripCount(
       BestVPlan, VectorPH, CM.foldTailByMasking(),
       CM.requiresScalarEpilogue(BestVF.isVector()));
-  VPlanTransforms::materializeVFAndVFxUF(BestVPlan, VectorPH, BestVF);
+  if (EnablePartialAliasingVectorization) {
+    ClampedVF =
+        VPlanTransforms::materializeAliasMask(BestVPlan, VectorPH, DiffChecks);
+  }
+  VPlanTransforms::materializeVFAndVFxUF(BestVPlan, VectorPH, BestVF,
+                                         ClampedVF);
   VPlanTransforms::cse(BestVPlan);
   VPlanTransforms::simplifyRecipes(BestVPlan);
 
@@ -7491,7 +7504,7 @@ DenseMap<const SCEV *, Value *> LoopVectorizationPlanner::executePlan(
   replaceVPBBWithIRVPBB(BestVPlan.getScalarPreheader(),
                         State.CFG.PrevBB->getSingleSuccessor(), &BestVPlan);
   VPlanTransforms::removeDeadRecipes(BestVPlan);
-
+  BestVPlan.dump();
   assert(verifyVPlanIsValid(BestVPlan, true /*VerifyLate*/) &&
          "final VPlan is invalid");
 
@@ -7731,7 +7744,7 @@ VPRecipeBase *VPRecipeBuilder::tryToWidenMemory(VPInstruction *VPI,
       // Otherwise preserve existing flags without no-unsigned-wrap, as we will
       // emit negative indices.
       GEPNoWrapFlags Flags =
-          CM.foldTailByMasking() || !GEP
+          CM.foldTailByMasking() || EnablePartialAliasingVectorization || !GEP
               ? GEPNoWrapFlags::none()
               : GEP->getNoWrapFlags().withoutNoUnsignedWrap();
       VectorPtr = new VPVectorEndPointerRecipe(
@@ -8467,7 +8480,7 @@ VPlanPtr LoopVectorizationPlanner::tryToBuildVPlanWithVPRecipes(
   // Predicate and linearize the top-level loop region.
   // ---------------------------------------------------------------------------
   auto BlockMaskCache = VPlanTransforms::introduceMasksAndLinearize(
-      *Plan, CM.foldTailByMasking());
+      *Plan, CM.foldTailByMasking(), EnablePartialAliasingVectorization);
 
   // ---------------------------------------------------------------------------
   // Construct wide recipes and apply predication for original scalar
@@ -10024,6 +10037,17 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     LLVM_DEBUG(dbgs() << "LV: Not interleaving due to FindLast reduction.\n");
     IntDiagMsg = {"FindLastPreventsScalarInterleaving",
                   "Unable to interleave due to FindLast reduction."};
+    InterleaveLoop = false;
+    IC = 1;
+  }
+
+  if (EnablePartialAliasingVectorization) {
+    LLVM_DEBUG(
+        dbgs()
+        << "LV: Not interleaving due to partial aliasing vectorization.\n");
+    IntDiagMsg = {
+        "PartialAliasingVectorization",
+        "Unable to interleave due to partial aliasing vectorization."};
     InterleaveLoop = false;
     IC = 1;
   }

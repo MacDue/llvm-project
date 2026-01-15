@@ -131,6 +131,8 @@ Type *VPTypeAnalysis::inferScalarTypeForRecipe(const VPInstruction *R) {
   case VPInstruction::BranchOnTwoConds:
   case VPInstruction::BranchOnCount:
     return Type::getVoidTy(Ctx);
+  case VPInstruction::PopCount:
+    return Type::getInt64Ty(Ctx);
   default:
     break;
   }

@@ -1142,6 +1142,7 @@ public:
     // during unrolling.
     ExtractPenultimateElement,
     LogicalAnd, // Non-poison propagating logical And.
+    PopCount,
     // Add an offset in bytes (second operand) to a base pointer (first
     // operand). Only generates scalar values (either for the first lane only or
     // for all lanes, depending on its uses).
@@ -4370,6 +4371,9 @@ class VPlan {
   /// Represents the loop-invariant VF * UF of the vector loop region.
   VPSymbolicValue VFxUF;
 
+  /// Represents the loop-invariant alias of the vector loop region.
+  VPSymbolicValue AliasMask;
+
   /// Contains all the external definitions created for this VPlan, as a mapping
   /// from IR Values to VPIRValues.
   SmallMapVector<Value *, VPIRValue *, 16> LiveIns;
@@ -4508,6 +4512,10 @@ public:
 
   /// Returns VF * UF of the vector loop region.
   VPValue &getVFxUF() { return VFxUF; }
+
+  /// Returns alias mask of the vector loop region.
+  VPValue &getAliasMask() { return AliasMask; }
+  const VPValue &getAliasMask() const { return AliasMask; }
 
   LLVMContext &getContext() const {
     return getScalarHeader()->getIRBasicBlock()->getContext();

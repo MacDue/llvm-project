@@ -1056,6 +1056,12 @@ void VPlan::printLiveIns(raw_ostream &O) const {
     O << " = vector-trip-count";
   }
 
+  if (AliasMask.getNumUsers() > 0) {
+    O << "\nLive-in ";
+    VFxUF.printAsOperand(O, SlotTracker);
+    O << " = alias-mask";
+  }
+
   if (BackedgeTakenCount && BackedgeTakenCount->getNumUsers()) {
     O << "\nLive-in ";
     BackedgeTakenCount->printAsOperand(O, SlotTracker);

@@ -2140,7 +2140,7 @@ bool LoopVectorizationLegality::canFoldTailByMasking() const {
   return true;
 }
 
-void LoopVectorizationLegality::prepareToFoldTailByMasking() {
+void LoopVectorizationLegality::prepareToMaskLoop() {
   // The list of pointers that we can safely read and write to remains empty.
   SmallPtrSet<Value *, 8> SafePointers;
 
