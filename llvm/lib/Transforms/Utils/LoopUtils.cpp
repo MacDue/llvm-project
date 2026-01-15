@@ -2139,15 +2139,17 @@ Value *llvm::addRuntimeChecks(
   return MemoryRuntimeCheck;
 }
 
-Value *llvm::addDiffRuntimeChecks(
-    Instruction *Loc, ArrayRef<PointerDiffInfo> Checks, SCEVExpander &Expander,
-    function_ref<Value *(IRBuilderBase &, unsigned)> GetVF, unsigned IC) {
+Value *llvm::addDiffRuntimeChecks(Instruction *Loc,
+                                  ArrayRef<PointerDiffInfo> Checks,
+                                  SCEVExpander &Expander, ElementCount VF,
+                                  unsigned IC, bool UsesAliasMasking) {
 
   LLVMContext &Ctx = Loc->getContext();
   IRBuilder ChkBuilder(Ctx, InstSimplifyFolder(Loc->getDataLayout()));
   ChkBuilder.SetInsertPoint(Loc);
   // Our instructions might fold to a constant.
   Value *MemoryRuntimeCheck = nullptr;
+  Value *RuntimeVF = nullptr;
 
   auto &SE = *Expander.getSE();
   // Map to keep track of created compares, The key is the pair of operands for
@@ -2155,22 +2157,29 @@ Value *llvm::addDiffRuntimeChecks(
   DenseMap<std::pair<Value *, Value *>, Value *> SeenCompares;
   for (const auto &[SrcStart, SinkStart, AccessSize, NeedsFreeze] : Checks) {
     Type *Ty = SinkStart->getType();
-    // Compute VF * IC * AccessSize.
-    auto *VFTimesICTimesSize =
-        ChkBuilder.CreateMul(GetVF(ChkBuilder, Ty->getScalarSizeInBits()),
-                             ConstantInt::get(Ty, IC * AccessSize));
+
+    Value *MinDiff;
+    if (!UsesAliasMasking) {
+      if (!RuntimeVF)
+        RuntimeVF = ChkBuilder.CreateElementCount(Ty, VF);
+      // Compute VF * IC * AccessSize.
+      MinDiff = ChkBuilder.CreateMul(RuntimeVF,
+                                     ConstantInt::get(Ty, IC * AccessSize));
+    } else {
+      // TODO: Come up with a min clamped VF based on the type/VF?
+      MinDiff = ConstantInt::get(Ty, 2);
+    }
     Value *Diff =
         Expander.expandCodeFor(SE.getMinusSCEV(SinkStart, SrcStart), Ty, Loc);
 
     // Check if the same compare has already been created earlier. In that case,
     // there is no need to check it again.
-    Value *IsConflict = SeenCompares.lookup({Diff, VFTimesICTimesSize});
+    Value *IsConflict = SeenCompares.lookup({Diff, MinDiff});
     if (IsConflict)
       continue;
 
-    IsConflict =
-        ChkBuilder.CreateICmpULT(Diff, VFTimesICTimesSize, "diff.check");
-    SeenCompares.insert({{Diff, VFTimesICTimesSize}, IsConflict});
+    IsConflict = ChkBuilder.CreateICmpULT(Diff, MinDiff, "diff.check");
+    SeenCompares.insert({{Diff, MinDiff}, IsConflict});
     if (NeedsFreeze)
       IsConflict =
           ChkBuilder.CreateFreeze(IsConflict, IsConflict->getName() + ".fr");
