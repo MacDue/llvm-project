@@ -52,6 +52,14 @@ VPValue *vputils::getOrCreateVPValueForSCEVExpr(VPlan &Plan, const SCEV *Expr) {
 }
 
 bool vputils::isHeaderMask(const VPValue *V, const VPlan &Plan) {
+  if (V == &Plan.getAliasMask())
+    return true;
+
+  VPValue *Mask;
+  if (match(V,
+            m_c_BinaryAnd(m_VPValue(Mask), m_Specific(&Plan.getAliasMask()))))
+    V = Mask;
+
   if (isa<VPActiveLaneMaskPHIRecipe>(V))
     return true;
 
