@@ -1375,7 +1375,10 @@ public:
   bool maskPartialAliasing() const {
     if (!EnablePartialAliasingVectorization)
       return false;
-    if (auto DiffChecks = Legal->getRuntimePointerChecking()->getDiffChecks())
+    const RuntimePointerChecking *Checks = Legal->getRuntimePointerChecking();
+    if (!Checks)
+      return false;
+    if (auto DiffChecks = Checks->getDiffChecks())
       return !DiffChecks->empty();
     return false;
   }
@@ -7456,8 +7459,6 @@ DenseMap<const SCEV *, Value *> LoopVectorizationPlanner::executePlan(
   VPlanTransforms::removeDeadRecipes(BestVPlan);
 
   VPValue *ClampedVF = nullptr;
-  auto DiffChecks = CM.Legal->getRuntimePointerChecking()->getDiffChecks();
-
   VPlanTransforms::convertToConcreteRecipes(BestVPlan);
   // Regions are dissolved after optimizing for VF and UF, which completely
   // removes unneeded loop regions first.
@@ -7472,8 +7473,9 @@ DenseMap<const SCEV *, Value *> LoopVectorizationPlanner::executePlan(
       BestVPlan, VectorPH, CM.foldTailByMasking(),
       CM.requiresScalarEpilogue(BestVF.isVector()));
   if (CM.maskPartialAliasing()) {
-    ClampedVF =
-        VPlanTransforms::materializeAliasMask(BestVPlan, VectorPH, DiffChecks);
+    ClampedVF = VPlanTransforms::materializeAliasMask(
+        BestVPlan, VectorPH,
+        *CM.Legal->getRuntimePointerChecking()->getDiffChecks());
   }
   VPlanTransforms::materializeVFAndVFxUF(BestVPlan, VectorPH, BestVF,
                                          ClampedVF);

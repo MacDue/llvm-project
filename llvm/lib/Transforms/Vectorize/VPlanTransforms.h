@@ -397,9 +397,8 @@ struct VPlanTransforms {
   static void materializeVFAndVFxUF(VPlan &Plan, VPBasicBlock *VectorPH,
                                     ElementCount VF, VPValue *ClampedVF);
 
-  static VPValue *
-  materializeAliasMask(VPlan &Plan, VPBasicBlock *VectorPH,
-                       std::optional<ArrayRef<PointerDiffInfo>> DiffChecks);
+  static VPValue *materializeAliasMask(VPlan &Plan, VPBasicBlock *VectorPH,
+                                       ArrayRef<PointerDiffInfo> DiffChecks);
 
   /// Expand VPExpandSCEVRecipes in \p Plan's entry block. Each
   /// VPExpandSCEVRecipe is replaced with a live-in wrapping the expanded IR

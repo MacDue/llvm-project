@@ -4833,24 +4833,17 @@ void VPlanTransforms::materializeVFAndVFxUF(VPlan &Plan, VPBasicBlock *VectorPH,
   VFxUF.replaceAllUsesWith(MulByUF);
 }
 
-VPValue *VPlanTransforms::materializeAliasMask(
-    VPlan &Plan, VPBasicBlock *VectorPH,
-    std::optional<ArrayRef<PointerDiffInfo>> DiffChecks) {
+VPValue *
+VPlanTransforms::materializeAliasMask(VPlan &Plan, VPBasicBlock *VectorPH,
+                                      ArrayRef<PointerDiffInfo> DiffChecks) {
+  VPValue &AliasMask = Plan.getAliasMask();
   VPBuilder Builder(VectorPH, VectorPH->begin());
   Type *I1Ty = IntegerType::getInt1Ty(Plan.getContext());
   Type *I64Ty = IntegerType::getInt64Ty(Plan.getContext());
   Type *PtrTy = PointerType::getUnqual(Plan.getContext());
 
-  VPValue &AliasMask = Plan.getAliasMask();
-
-  if (!DiffChecks) {
-    VPValue *True = Plan.getOrAddLiveIn(ConstantInt::get(I1Ty, 1));
-    AliasMask.replaceAllUsesWith(True);
-    return nullptr;
-  }
-
   VPValue *Mask = nullptr;
-  for (PointerDiffInfo Check : *DiffChecks) {
+  for (PointerDiffInfo Check : DiffChecks) {
     VPValue *Src = vputils::getOrCreateVPValueForSCEVExpr(Plan, Check.SrcStart);
     VPValue *Sink =
         vputils::getOrCreateVPValueForSCEVExpr(Plan, Check.SinkStart);
