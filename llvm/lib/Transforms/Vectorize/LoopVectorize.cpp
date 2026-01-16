@@ -1371,6 +1371,15 @@ public:
     return getTailFoldingStyle() != TailFoldingStyle::None;
   }
 
+  /// Returns true if all loop blocks should have partial aliases masked.
+  bool maskPartialAliasing() const {
+    if (!EnablePartialAliasingVectorization)
+      return false;
+    if (auto DiffChecks = Legal->getRuntimePointerChecking()->getDiffChecks())
+      return !DiffChecks->empty();
+    return false;
+  }
+
   /// Returns true if the use of wide lane masks is requested and the loop is
   /// using tail-folding with a lane mask for control flow.
   bool useWideActiveLaneMask() const {
@@ -6786,7 +6795,7 @@ void LoopVectorizationPlanner::plan(ElementCount UserVF, unsigned UserIC) {
       CM.invalidateCostModelingDecisions();
   }
 
-  if (CM.foldTailByMasking() || EnablePartialAliasingVectorization)
+  if (CM.foldTailByMasking() || CM.maskPartialAliasing())
     Legal->prepareToMaskLoop();
 
   ElementCount MaxUserVF =
@@ -6899,8 +6908,7 @@ LoopVectorizationPlanner::precomputeCosts(VPlan &Plan, ElementCount VF,
     // TODO: Remove this code after stepping away from the legacy cost model and
     // adding code to simplify VPlans before calculating their costs.
     auto TC = getSmallConstantTripCount(PSE.getSE(), OrigLoop);
-    if (TC == VF && !CM.foldTailByMasking() &&
-        !EnablePartialAliasingVectorization)
+    if (TC == VF && !CM.foldTailByMasking() && !CM.maskPartialAliasing())
       addFullyUnrolledInstructionsToIgnore(OrigLoop, Legal->getInductionVars(),
                                            CostCtx.SkipCostComputation);
 
@@ -7463,7 +7471,7 @@ DenseMap<const SCEV *, Value *> LoopVectorizationPlanner::executePlan(
   VPlanTransforms::materializeVectorTripCount(
       BestVPlan, VectorPH, CM.foldTailByMasking(),
       CM.requiresScalarEpilogue(BestVF.isVector()));
-  if (EnablePartialAliasingVectorization) {
+  if (CM.maskPartialAliasing()) {
     ClampedVF =
         VPlanTransforms::materializeAliasMask(BestVPlan, VectorPH, DiffChecks);
   }
@@ -7737,7 +7745,7 @@ VPRecipeBase *VPRecipeBuilder::tryToWidenMemory(VPInstruction *VPI,
       // Otherwise preserve existing flags without no-unsigned-wrap, as we will
       // emit negative indices.
       GEPNoWrapFlags Flags =
-          CM.foldTailByMasking() || EnablePartialAliasingVectorization || !GEP
+          CM.foldTailByMasking() || CM.maskPartialAliasing() || !GEP
               ? GEPNoWrapFlags::none()
               : GEP->getNoWrapFlags().withoutNoUnsignedWrap();
       VectorPtr = new VPVectorEndPointerRecipe(
@@ -8473,7 +8481,7 @@ VPlanPtr LoopVectorizationPlanner::tryToBuildVPlanWithVPRecipes(
   // Predicate and linearize the top-level loop region.
   // ---------------------------------------------------------------------------
   auto BlockMaskCache = VPlanTransforms::introduceMasksAndLinearize(
-      *Plan, CM.foldTailByMasking(), EnablePartialAliasingVectorization);
+      *Plan, CM.foldTailByMasking(), CM.maskPartialAliasing());
 
   // ---------------------------------------------------------------------------
   // Construct wide recipes and apply predication for original scalar
@@ -10034,7 +10042,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     IC = 1;
   }
 
-  if (EnablePartialAliasingVectorization) {
+  if (CM.maskPartialAliasing()) {
     LLVM_DEBUG(
         dbgs()
         << "LV: Not interleaving due to partial aliasing vectorization.\n");
