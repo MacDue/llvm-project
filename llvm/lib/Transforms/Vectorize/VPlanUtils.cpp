@@ -47,7 +47,7 @@ VPValue *vputils::getOrCreateVPValueForSCEVExpr(VPlan &Plan, const SCEV *Expr) {
     return Plan.getOrAddLiveIn(U->getValue());
   auto *Expanded = new VPExpandSCEVRecipe(Expr);
   VPBasicBlock *EntryVPBB = Plan.getEntry();
-  Plan.getEntry()->insert(Expanded, EntryVPBB->begin());
+  Plan.getEntry()->insert(Expanded, EntryVPBB->getFirstNonPhi());
   return Expanded;
 }
 
