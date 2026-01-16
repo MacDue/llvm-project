@@ -1058,7 +1058,7 @@ void VPlan::printLiveIns(raw_ostream &O) const {
 
   if (AliasMask.getNumUsers() > 0) {
     O << "\nLive-in ";
-    VFxUF.printAsOperand(O, SlotTracker);
+    AliasMask.printAsOperand(O, SlotTracker);
     O << " = alias-mask";
   }
 
@@ -1191,6 +1191,7 @@ VPlan *VPlan::duplicate() {
   Old2NewVPValues[&VectorTripCount] = &NewPlan->VectorTripCount;
   Old2NewVPValues[&VF] = &NewPlan->VF;
   Old2NewVPValues[&VFxUF] = &NewPlan->VFxUF;
+  Old2NewVPValues[&AliasMask] = &NewPlan->AliasMask;
   if (BackedgeTakenCount) {
     NewPlan->BackedgeTakenCount = new VPSymbolicValue();
     Old2NewVPValues[BackedgeTakenCount] = NewPlan->BackedgeTakenCount;
@@ -1482,6 +1483,8 @@ void VPSlotTracker::assignNames(const VPlan &Plan) {
   if (Plan.VFxUF.getNumUsers() > 0)
     assignName(&Plan.VFxUF);
   assignName(&Plan.VectorTripCount);
+  if (Plan.AliasMask.getNumUsers() > 0)
+    assignName(&Plan.AliasMask);
   if (Plan.BackedgeTakenCount)
     assignName(Plan.BackedgeTakenCount);
   for (VPValue *LI : Plan.getLiveIns())

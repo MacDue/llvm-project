@@ -24,7 +24,8 @@ using namespace VPlanPatternMatch;
 
 #define DEBUG_TYPE "vplan"
 
-VPTypeAnalysis::VPTypeAnalysis(const VPlan &Plan) : Ctx(Plan.getContext()) {
+VPTypeAnalysis::VPTypeAnalysis(const VPlan &Plan)
+    : Ctx(Plan.getContext()), Plan(Plan) {
   if (auto LoopRegion = Plan.getVectorLoopRegion()) {
     if (const auto *CanIV = dyn_cast<VPCanonicalIVPHIRecipe>(
             &LoopRegion->getEntryBasicBlock()->front())) {
@@ -263,8 +264,12 @@ Type *VPTypeAnalysis::inferScalarType(const VPValue *V) {
     return IRV->getType();
 
   if (isa<VPSymbolicValue>(V)) {
-    // All VPValues without any underlying IR value (like the vector trip count
-    // or the backedge-taken count) have the same type as the canonical IV.
+    if (V == &Plan.getAliasMask())
+      return IntegerType::getInt1Ty(Ctx);
+
+    // All other VPValues without any underlying IR value (like the vector trip
+    // count or the backedge-taken count) have the same type as the canonical
+    // IV.
     return CanonicalIVTy;
   }
 

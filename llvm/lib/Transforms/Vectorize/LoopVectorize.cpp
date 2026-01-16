@@ -7498,7 +7498,6 @@ DenseMap<const SCEV *, Value *> LoopVectorizationPlanner::executePlan(
   replaceVPBBWithIRVPBB(BestVPlan.getScalarPreheader(),
                         State.CFG.PrevBB->getSingleSuccessor(), &BestVPlan);
   VPlanTransforms::removeDeadRecipes(BestVPlan);
-  BestVPlan.dump();
   assert(verifyVPlanIsValid(BestVPlan, true /*VerifyLate*/) &&
          "final VPlan is invalid");
 
