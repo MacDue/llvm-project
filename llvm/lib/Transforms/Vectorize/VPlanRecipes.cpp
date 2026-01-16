@@ -598,27 +598,18 @@ Value *VPInstruction::generate(VPTransformState &State) {
                                    {PredTy, ScalarTC->getType()},
                                    {VIVElem0, ScalarTC}, nullptr, Name);
   }
-  // Count the number of bits set in each lane and reduce the result to a scalar
   case VPInstruction::PopCount: {
     Value *Op = State.get(getOperand(0));
-    Type *VT = Op->getType();
-    Value *Cnt = Op;
+    auto *VecTy = cast<VectorType>(Op->getType());
+    assert(VecTy->getScalarSizeInBits() == 1 &&
+           "PopCount only implemented for i1 vectors");
 
-    // i1 vectors can just use the add reduction. Bigger elements need a ctpop
-    // first.
-    if (VT->getScalarSizeInBits() > 1)
-      Cnt = Builder.CreateIntrinsic(Intrinsic::ctpop, {VT}, {Cnt});
-
-    auto *VecVT = cast<VectorType>(VT);
-    if (VecVT->getElementType()->getScalarSizeInBits() < 16) {
-      Cnt = Builder.CreateCast(
-          Instruction::ZExt, Cnt,
-          VectorType::get(Builder.getInt16Ty(), VecVT->getElementCount()));
-    }
-
-    Cnt = Builder.CreateUnaryIntrinsic(Intrinsic::vector_reduce_add, Cnt);
-    Cnt = Builder.CreateCast(Instruction::ZExt, Cnt, Builder.getInt64Ty());
-    return Cnt;
+    Value *ZExt = Builder.CreateCast(
+        Instruction::ZExt, Op,
+        VectorType::get(Builder.getInt32Ty(), VecTy->getElementCount()));
+    Value *Count =
+        Builder.CreateUnaryIntrinsic(Intrinsic::vector_reduce_add, ZExt);
+    return Builder.CreateCast(Instruction::ZExt, Count, Builder.getInt64Ty());
   }
   case VPInstruction::FirstOrderRecurrenceSplice: {
     // Generate code to combine the previous and current values in vector v3.
