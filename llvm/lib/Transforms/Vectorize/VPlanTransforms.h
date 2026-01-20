@@ -155,6 +155,8 @@ struct VPlanTransforms {
   /// Wrap runtime check block \p CheckBlock in a VPIRBB and \p Cond in a
   /// VPValue and connect the block to \p Plan, using the VPValue as branch
   /// condition.
+  static void attachCheckBlock(VPlan &Plan, VPValue *Cond,
+                               VPBasicBlock *CheckBlock, bool AddBranchWeights);
   static void attachCheckBlock(VPlan &Plan, Value *Cond, BasicBlock *CheckBlock,
                                bool AddBranchWeights);
 
@@ -395,7 +397,10 @@ struct VPlanTransforms {
 
   /// Materialize VF and VFxUF to be computed explicitly using VPInstructions.
   static void materializeVFAndVFxUF(VPlan &Plan, VPBasicBlock *VectorPH,
-                                    ElementCount VF);
+                                    ElementCount VF, VPValue *ClampedVF);
+
+  static VPValue *materializeAliasMask(VPlan &Plan, VPBasicBlock *AliasCheck,
+                                       ArrayRef<PointerDiffInfo> DiffChecks);
 
   /// Expand VPExpandSCEVRecipes in \p Plan's entry block. Each
   /// VPExpandSCEVRecipe is replaced with a live-in wrapping the expanded IR
@@ -420,7 +425,7 @@ struct VPlanTransforms {
   /// for wide recipe construction. This argument is temporary and will be
   /// removed in the future.
   static DenseMap<VPBasicBlock *, VPValue *>
-  introduceMasksAndLinearize(VPlan &Plan, bool FoldTail);
+  introduceMasksAndLinearize(VPlan &Plan, bool FoldTail, bool MaskAliasing);
 
   /// Add branch weight metadata, if the \p Plan's middle block is terminated by
   /// a BranchOnCond recipe.

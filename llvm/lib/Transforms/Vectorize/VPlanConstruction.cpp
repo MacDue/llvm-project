@@ -967,12 +967,18 @@ void VPlanTransforms::attachCheckBlock(VPlan &Plan, Value *Cond,
                                        bool AddBranchWeights) {
   VPValue *CondVPV = Plan.getOrAddLiveIn(Cond);
   VPBasicBlock *CheckBlockVPBB = Plan.createVPIRBasicBlock(CheckBlock);
+  attachCheckBlock(Plan, CondVPV, CheckBlockVPBB, AddBranchWeights);
+}
+
+void VPlanTransforms::attachCheckBlock(VPlan &Plan, VPValue *Cond,
+                                       VPBasicBlock *CheckBlock,
+                                       bool AddBranchWeights) {
   VPBlockBase *VectorPH = Plan.getVectorPreheader();
   VPBlockBase *ScalarPH = Plan.getScalarPreheader();
   VPBlockBase *PreVectorPH = VectorPH->getSinglePredecessor();
-  VPBlockUtils::insertOnEdge(PreVectorPH, VectorPH, CheckBlockVPBB);
-  VPBlockUtils::connectBlocks(CheckBlockVPBB, ScalarPH);
-  CheckBlockVPBB->swapSuccessors();
+  VPBlockUtils::insertOnEdge(PreVectorPH, VectorPH, CheckBlock);
+  VPBlockUtils::connectBlocks(CheckBlock, ScalarPH);
+  CheckBlock->swapSuccessors();
 
   // We just connected a new block to the scalar preheader. Update all
   // VPPhis by adding an incoming value for it, replicating the last value.
@@ -986,9 +992,9 @@ void VPlanTransforms::attachCheckBlock(VPlan &Plan, Value *Cond,
 
   VPIRMetadata VPBranchWeights;
   auto *Term =
-      VPBuilder(CheckBlockVPBB)
+      VPBuilder(CheckBlock)
           .createNaryOp(
-              VPInstruction::BranchOnCond, {CondVPV},
+              VPInstruction::BranchOnCond, {Cond},
               Plan.getVectorLoopRegion()->getCanonicalIV()->getDebugLoc());
   if (AddBranchWeights) {
     MDBuilder MDB(Plan.getContext());

@@ -46,11 +46,20 @@ VPValue *vputils::getOrCreateVPValueForSCEVExpr(VPlan &Plan, const SCEV *Expr) {
   if (U && !isa<Instruction>(U->getValue()))
     return Plan.getOrAddLiveIn(U->getValue());
   auto *Expanded = new VPExpandSCEVRecipe(Expr);
-  Plan.getEntry()->appendRecipe(Expanded);
+  VPBasicBlock *EntryVPBB = Plan.getEntry();
+  Plan.getEntry()->insert(Expanded, EntryVPBB->getFirstNonPhi());
   return Expanded;
 }
 
 bool vputils::isHeaderMask(const VPValue *V, const VPlan &Plan) {
+  if (V == &Plan.getAliasMask())
+    return true;
+
+  VPValue *Mask;
+  if (match(V,
+            m_c_BinaryAnd(m_VPValue(Mask), m_Specific(&Plan.getAliasMask()))))
+    V = Mask;
+
   if (isa<VPActiveLaneMaskPHIRecipe>(V))
     return true;
 

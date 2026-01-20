@@ -457,6 +457,7 @@ unsigned VPInstruction::getNumOperandsForOpcode(unsigned Opcode) {
   case VPInstruction::ResumeForEpilogue:
   case VPInstruction::Reverse:
   case VPInstruction::Unpack:
+  case VPInstruction::PopCount:
     return 1;
   case Instruction::ICmp:
   case Instruction::FCmp:
@@ -596,6 +597,19 @@ Value *VPInstruction::generate(VPTransformState &State) {
     return Builder.CreateIntrinsic(Intrinsic::get_active_lane_mask,
                                    {PredTy, ScalarTC->getType()},
                                    {VIVElem0, ScalarTC}, nullptr, Name);
+  }
+  case VPInstruction::PopCount: {
+    Value *Op = State.get(getOperand(0));
+    auto *VecTy = cast<VectorType>(Op->getType());
+    assert(VecTy->getScalarSizeInBits() == 1 &&
+           "PopCount only implemented for i1 vectors");
+
+    Value *ZExt = Builder.CreateCast(
+        Instruction::ZExt, Op,
+        VectorType::get(Builder.getInt32Ty(), VecTy->getElementCount()));
+    Value *Count =
+        Builder.CreateUnaryIntrinsic(Intrinsic::vector_reduce_add, ZExt);
+    return Builder.CreateCast(Instruction::ZExt, Count, Builder.getInt64Ty());
   }
   case VPInstruction::FirstOrderRecurrenceSplice: {
     // Generate code to combine the previous and current values in vector v3.
@@ -1287,7 +1301,8 @@ bool VPInstruction::isVectorToScalar() const {
          getOpcode() == VPInstruction::ComputeFindIVResult ||
          getOpcode() == VPInstruction::ExtractLastActive ||
          getOpcode() == VPInstruction::ComputeReductionResult ||
-         getOpcode() == VPInstruction::AnyOf;
+         getOpcode() == VPInstruction::AnyOf ||
+         getOpcode() == VPInstruction::PopCount;
 }
 
 bool VPInstruction::isSingleScalar() const {
@@ -1552,6 +1567,9 @@ void VPInstruction::printRecipe(raw_ostream &O, const Twine &Indent,
     break;
   case VPInstruction::ExtractLastActive:
     O << "extract-last-active";
+    break;
+  case VPInstruction::PopCount:
+    O << "popcount";
     break;
   default:
     O << Instruction::getOpcodeName(getOpcode());

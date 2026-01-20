@@ -300,9 +300,13 @@ public:
   /// masking.
   bool canFoldTailByMasking() const;
 
+  /// Returns true if we can vectorize this loop with a possibly loop-invariant
+  /// mask.
+  bool canMaskLoop() const;
+
   /// Mark all respective loads/stores for masking. Must only be called when
   /// tail-folding is possible.
-  void prepareToFoldTailByMasking();
+  void prepareToMaskLoop();
 
   /// Returns the primary induction variable.
   PHINode *getPrimaryInduction() { return PrimaryInduction; }
