@@ -138,8 +138,8 @@ struct InstInfo {
 struct BlockInfo {
   SmallVector<InstInfo> Insts;
   ZAState FixedEntryState{ZAState::ANY};
-  ZAState DesiredIncomingState{ZAState::ANY};
-  ZAState DesiredOutgoingState{ZAState::ANY};
+  std::optional<ZAState> DesiredInState;
+  std::optional<ZAState> DesiredOutState;
   LiveRegs PhysLiveRegsAtEntry = LiveRegs::None;
   LiveRegs PhysLiveRegsAtExit = LiveRegs::None;
 };
@@ -298,10 +298,14 @@ struct MachineSMEABI : public MachineFunctionPass {
   /// within the machine function.
   FunctionInfo collectNeededZAStates(SMEAttrs SMEFnAttrs);
 
+  /// Computes block in states with backwards dataflow if \p Out is false.
+  /// Computes block out states with forwards dataflow if \p Out is true.
+  void computeDesiredInOutStates(FunctionInfo &FnInfo, bool Out);
+
   /// Assigns each edge bundle a ZA state based on the needed states of blocks
   /// that have incoming or outgoing edges in that bundle.
   SmallVector<ZAState> assignBundleZAStates(const EdgeBundles &Bundles,
-                                            const FunctionInfo &FnInfo);
+                                            FunctionInfo &FnInfo);
 
   /// Inserts code to handle changes between ZA states within the function.
   /// E.g., ACTIVE -> LOCAL_SAVED will insert code required to save ZA.
@@ -501,49 +505,124 @@ FunctionInfo MachineSMEABI::collectNeededZAStates(SMEAttrs SMEFnAttrs) {
 
     // Reverse vector (as we had to iterate backwards for liveness).
     std::reverse(Block.Insts.begin(), Block.Insts.end());
-
-    // Record the desired states on entry/exit of this block. These are the
-    // states that would not incur a state transition.
-    if (!Block.Insts.empty()) {
-      Block.DesiredIncomingState = Block.Insts.front().NeededState;
-      Block.DesiredOutgoingState = Block.Insts.back().NeededState;
-    }
   }
 
   return FunctionInfo{std::move(Blocks), AfterSMEProloguePt,
                       PhysLiveRegsAfterSMEPrologue};
 }
 
+static void meetState(std::optional<ZAState> &State,
+                      std::optional<ZAState> NewState, ZAState Fallback) {
+  if (!State)
+    State = NewState;
+  else if (State != NewState)
+    State = Fallback; // Invalid.
+}
+
+void MachineSMEABI::computeDesiredInOutStates(FunctionInfo &FnInfo, bool Out) {
+  SmallSetVector<MachineBasicBlock *, 16> Worklist;
+
+  for (MachineBasicBlock &MBB : *MF) {
+    BlockInfo &Block = FnInfo.Blocks[MBB.getNumber()];
+    if (!Block.Insts.empty())
+      Worklist.insert(&MBB);
+  }
+
+  auto GetBlockState = [Out](BlockInfo &Block) -> std::optional<ZAState> & {
+    return Out ? Block.DesiredOutState : Block.DesiredInState;
+  };
+
+  // This computes desired in/out states. "In" states use backwards dataflow,
+  // (successors -> predecessors), and "out" states use forwards dataflow,
+  // (predecessors -> successors).
+
+  while (!Worklist.empty()) {
+    MachineBasicBlock *MBB = Worklist.pop_back_val();
+    BlockInfo &Block = FnInfo.Blocks[MBB->getNumber()];
+
+    std::optional<ZAState> DesiredState;
+    if (!Block.Insts.empty()) {
+      DesiredState = Out ? Block.Insts.back().NeededState
+                         : Block.Insts.front().NeededState;
+    } else {
+      auto Blocks = Out ? predecessors(MBB) : successors(MBB);
+      for (MachineBasicBlock *SuccOrPred : Blocks) {
+        BlockInfo &Info = FnInfo.Blocks[SuccOrPred->getNumber()];
+        meetState(DesiredState, GetBlockState(Info), ZAState::ANY);
+      }
+    }
+
+    auto &CurrentState = GetBlockState(Block);
+    if (DesiredState != CurrentState) {
+      Worklist.insert_range(Out ? successors(MBB) : predecessors(MBB));
+      CurrentState = DesiredState;
+    }
+  }
+}
+
 /// Assigns each edge bundle a ZA state based on the needed states of blocks
 /// that have incoming or outgoing blocks in that bundle.
 SmallVector<ZAState>
 MachineSMEABI::assignBundleZAStates(const EdgeBundles &Bundles,
-                                    const FunctionInfo &FnInfo) {
+                                    FunctionInfo &FnInfo) {
+  if (OptLevel == CodeGenOptLevel::None)
+    return SmallVector<ZAState>(Bundles.getNumBundles(), ZAState::ACTIVE);
+
+  // Find in/out states for all blocks (these can be computed in either order).
+  // DesiredInState = When we enter this block, what is the single possible next
+  // state (ANY = invalid/multiple states).
+  computeDesiredInOutStates(FnInfo, /*Out=*/false);
+  // DesiredOutState = When we leave this block, what is the single possible
+  // previous state (ANY = invalid/multiple states).
+  computeDesiredInOutStates(FnInfo, /*Out=*/true);
+
+  LLVM_DEBUG({
+    dbgs() << "Function: " << MF->getName() << '\n';
+    for (MachineBasicBlock &MBB : *MF) {
+      BlockInfo &Block = FnInfo.Blocks[MBB.getNumber()];
+      dbgs() << "Block: " << MBB.getName() << '\n';
+      dbgs() << "InState: "
+             << getZAStateString(Block.DesiredInState.value_or(ZAState::ANY))
+             << '\n';
+      dbgs() << "OutState: "
+             << getZAStateString(Block.DesiredOutState.value_or(ZAState::ANY))
+             << '\n';
+    }
+  });
+
   SmallVector<ZAState> BundleStates(Bundles.getNumBundles());
   for (unsigned I = 0, E = Bundles.getNumBundles(); I != E; ++I) {
-    std::optional<ZAState> BundleState;
+    std::optional<ZAState> InState, OutState;
+
     for (unsigned BlockID : Bundles.getBlocks(I)) {
       const BlockInfo &Block = FnInfo.Blocks[BlockID];
-      // Check if the block is an incoming block in the bundle. Note: We skip
-      // Block.FixedEntryState != ANY to ignore EH pads (which are only
-      // reachable via exceptions).
-      if (Block.FixedEntryState != ZAState::ANY ||
-          Bundles.getBundle(BlockID, /*Out=*/false) != I)
-        continue;
-
-      // Pick a state that matches all incoming blocks. Fallback to "ACTIVE" if
-      // any blocks doesn't match. This will hoist the state from incoming
-      // blocks to outgoing blocks.
-      if (!BundleState)
-        BundleState = Block.DesiredIncomingState;
-      else if (BundleState != Block.DesiredIncomingState)
-        BundleState = ZAState::ACTIVE;
+      // Note: We skip Block.FixedEntryState != ANY to ignore EH pads (which are
+      // only reachable via exceptions).
+      bool InBlock = Block.FixedEntryState == ZAState::ANY &&
+                     Bundles.getBundle(BlockID, /*Out=*/false) == I;
+      bool OutBlock = Bundles.getBundle(BlockID, /*Out=*/true) == I;
+      if (InBlock) {
+        ZAState BlockInState = Block.DesiredInState.value_or(ZAState::ANY);
+        meetState(InState, BlockInState, ZAState::ANY);
+      }
+      if (OutBlock) {
+        ZAState BlockOutState = Block.DesiredOutState.value_or(ZAState::ANY);
+        meetState(OutState, BlockOutState, ZAState::ANY);
+      }
     }
 
-    if (!BundleState || BundleState == ZAState::ANY)
-      BundleState = ZAState::ACTIVE;
+    ZAState BundleState = ZAState::ACTIVE;
 
-    BundleStates[I] = *BundleState;
+    // If all incoming blocks want a save of ZA state, push the save to the
+    // outgoing blocks/predecessors (hoist setting up save). Otherwise, if all
+    // outgoing blocks are in the saved state, push the reload to incoming
+    // blocks (sinking the reload).
+    if (InState && InState != ZAState::ANY && InState != ZAState::ACTIVE)
+      BundleState = *InState; // Push saves up to predecessors.
+    else if (OutState && OutState != ZAState::ANY)
+      BundleState = *OutState; // Push reloads down to successors.
+
+    BundleStates[I] = BundleState;
   }
 
   return BundleStates;
