@@ -840,79 +840,7 @@ bool AArch64TargetInfo::validateCpuSupports(StringRef FeatureStr) const {
 }
 
 bool AArch64TargetInfo::hasFeature(StringRef Feature) const {
-  return llvm::StringSwitch<bool>(Feature)
-      .Cases({"aarch64", "arm64", "arm"}, true)
-      .Case("fmv", HasFMV)
-      .Case("fp", FPU & FPUMode)
-      .Cases({"neon", "simd"}, FPU & NeonMode)
-      .Case("jscvt", HasJSCVT)
-      .Case("fcma", HasFCMA)
-      .Case("rng", HasRandGen)
-      .Case("flagm", HasFlagM)
-      .Case("flagm2", HasAlternativeNZCV)
-      .Case("fp16fml", HasFP16FML)
-      .Case("dotprod", HasDotProd)
-      .Case("sm4", HasSM4)
-      .Case("rdm", HasRDM)
-      .Case("lse", HasLSE)
-      .Case("crc", HasCRC)
-      .Case("cssc", HasCSSC)
-      .Case("sha2", HasSHA2)
-      .Case("sha3", HasSHA3)
-      .Cases({"aes", "pmull"}, HasAES)
-      .Cases({"fp16", "fullfp16"}, HasFullFP16)
-      .Case("dit", HasDIT)
-      .Case("dpb", HasCCPP)
-      .Case("dpb2", HasCCDP)
-      .Case("rcpc", HasRCPC)
-      .Case("frintts", HasFRInt3264)
-      .Case("i8mm", HasMatMul)
-      .Case("bf16", HasBFloat16)
-      .Case("sve", FPU & SveMode)
-      .Case("sve-b16b16", HasSVEB16B16)
-      .Case("f32mm", FPU & SveMode && HasMatmulFP32)
-      .Case("f64mm", FPU & SveMode && HasMatmulFP64)
-      .Case("sve2", FPU & SveMode && HasSVE2)
-      .Case("sve-aes", HasSVEAES)
-      .Case("sve-bitperm", FPU & HasSVEBitPerm)
-      .Case("sve2-sha3", FPU & SveMode && HasSVE2SHA3)
-      .Case("sve2-sm4", FPU & SveMode && HasSVE2SM4)
-      .Case("sve2p1", FPU & SveMode && HasSVE2p1)
-      .Case("sme", HasSME)
-      .Case("sme2", HasSME2)
-      .Case("sme2p1", HasSME2p1)
-      .Case("sme-f64f64", HasSMEF64F64)
-      .Case("sme-i16i64", HasSMEI16I64)
-      .Case("sme-fa64", HasSMEFA64)
-      .Case("sme-f16f16", HasSMEF16F16)
-      .Case("sme-b16b16", HasSMEB16B16)
-      .Case("memtag", HasMTE)
-      .Case("sb", HasSB)
-      .Case("predres", HasPredRes)
-      .Cases({"ssbs", "ssbs2"}, HasSSBS)
-      .Case("bti", HasBTI)
-      .Cases({"ls64", "ls64_v", "ls64_accdata"}, HasLS64)
-      .Case("wfxt", HasWFxT)
-      .Case("rcpc3", HasRCPC3)
-      .Case("fp8", HasFP8)
-      .Case("fp8fma", HasFP8FMA)
-      .Case("fp8dot2", HasFP8DOT2)
-      .Case("fp8dot4", HasFP8DOT4)
-      .Case("ssve-fp8dot2", HasSSVE_FP8DOT2)
-      .Case("ssve-fp8dot4", HasSSVE_FP8DOT4)
-      .Case("ssve-fp8fma", HasSSVE_FP8FMA)
-      .Case("sme-f8f32", HasSME_F8F32)
-      .Case("sme-f8f16", HasSME_F8F16)
-      .Case("fprcvt", HasFPRCVT)
-      .Case("f8f16mm", HasF8F16MM)
-      .Case("f8f32mm", HasF8F32MM)
-      .Case("sve-f16f32mm", HasSVE_F16F32MM)
-      .Case("sve-bfscale", HasSVE_BFSCALE)
-      .Case("sve-aes2", HasSVE_AES2)
-      .Case("ssve-aes", HasSSVE_AES)
-      .Case("sve2p2", FPU & SveMode && HasSVE2p2)
-      .Case("sme2p2", HasSME2p2)
-      .Default(false);
+  return HasFeatureLookup.contains(Feature);
 }
 
 void AArch64TargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
@@ -1286,7 +1214,105 @@ bool AArch64TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
   if (HasNoSVE)
     FPU &= ~SveMode;
 
+  computeFeatureLookup();
   return true;
+}
+
+/// A helper class for "hasFeature" lookups (mimicking a StringSwitch).
+struct FeatureLookupBuilder {
+  FeatureLookupBuilder(AArch64FeatureSet &Features) : Features(Features) {
+    Features.clear();
+  }
+
+  FeatureLookupBuilder &Case(StringRef Feat, bool HasFeature) {
+    if (HasFeature)
+      Features.insert(Feat);
+    return *this;
+  }
+
+  FeatureLookupBuilder &Cases(ArrayRef<StringRef> Feats, bool HasFeature) {
+    if (HasFeature)
+      Features.insert_range(Feats);
+    return *this;
+  }
+
+private:
+  AArch64FeatureSet &Features;
+};
+
+void AArch64TargetInfo::computeFeatureLookup() {
+  FeatureLookupBuilder(HasFeatureLookup)
+      .Cases({"aarch64", "arm64", "arm"}, true)
+      .Case("fmv", HasFMV)
+      .Case("fp", FPU & FPUMode)
+      .Cases({"neon", "simd"}, FPU & NeonMode)
+      .Case("jscvt", HasJSCVT)
+      .Case("fcma", HasFCMA)
+      .Case("rng", HasRandGen)
+      .Case("flagm", HasFlagM)
+      .Case("flagm2", HasAlternativeNZCV)
+      .Case("fp16fml", HasFP16FML)
+      .Case("dotprod", HasDotProd)
+      .Case("sm4", HasSM4)
+      .Case("rdm", HasRDM)
+      .Case("lse", HasLSE)
+      .Case("crc", HasCRC)
+      .Case("cssc", HasCSSC)
+      .Case("sha2", HasSHA2)
+      .Case("sha3", HasSHA3)
+      .Cases({"aes", "pmull"}, HasAES)
+      .Cases({"fp16", "fullfp16"}, HasFullFP16)
+      .Case("dit", HasDIT)
+      .Case("dpb", HasCCPP)
+      .Case("dpb2", HasCCDP)
+      .Case("rcpc", HasRCPC)
+      .Case("frintts", HasFRInt3264)
+      .Case("i8mm", HasMatMul)
+      .Case("bf16", HasBFloat16)
+      .Case("sve", FPU & SveMode)
+      .Case("sve-b16b16", HasSVEB16B16)
+      .Case("f32mm", FPU & SveMode && HasMatmulFP32)
+      .Case("f64mm", FPU & SveMode && HasMatmulFP64)
+      .Case("sve2", FPU & SveMode && HasSVE2)
+      .Case("sve-aes", HasSVEAES)
+      .Case("sve-bitperm", FPU & HasSVEBitPerm)
+      .Case("sve2-sha3", FPU & SveMode && HasSVE2SHA3)
+      .Case("sve2-sm4", FPU & SveMode && HasSVE2SM4)
+      .Case("sve2p1", FPU & SveMode && HasSVE2p1)
+      .Case("sme", HasSME)
+      .Case("sme2", HasSME2)
+      .Case("sme2p1", HasSME2p1)
+      .Case("sme-f64f64", HasSMEF64F64)
+      .Case("sme-i16i64", HasSMEI16I64)
+      .Case("sme-fa64", HasSMEFA64)
+      .Case("sme-f16f16", HasSMEF16F16)
+      .Case("sme-b16b16", HasSMEB16B16)
+      .Case("memtag", HasMTE)
+      .Case("sb", HasSB)
+      .Case("predres", HasPredRes)
+      .Cases({"ssbs", "ssbs2"}, HasSSBS)
+      .Case("bti", HasBTI)
+      .Cases({"ls64", "ls64_v", "ls64_accdata"}, HasLS64)
+      .Case("wfxt", HasWFxT)
+      .Case("rcpc3", HasRCPC3)
+      .Case("fp8", HasFP8)
+      .Case("fp8fma", HasFP8FMA)
+      .Case("fp8dot2", HasFP8DOT2)
+      .Case("fp8dot4", HasFP8DOT4)
+      .Case("ssve-fp8dot2", HasSSVE_FP8DOT2)
+      .Case("ssve-fp8dot4", HasSSVE_FP8DOT4)
+      .Case("ssve-fp8fma", HasSSVE_FP8FMA)
+      .Case("sme-f8f32", HasSME_F8F32)
+      .Case("sme-f8f16", HasSME_F8F16)
+      .Case("fprcvt", HasFPRCVT)
+      .Case("f8f16mm", HasF8F16MM)
+      .Case("f8f32mm", HasF8F32MM)
+      .Case("sve-f16f32mm", HasSVE_F16F32MM)
+      .Case("sve-bfscale", HasSVE_BFSCALE)
+      .Case("sve-aes2", HasSVE_AES2)
+      .Case("ssve-aes", HasSSVE_AES)
+      .Case("sve2p2", FPU & SveMode && HasSVE2p2)
+      .Case("sme2p2", HasSME2p2);
 }
 
 // Parse AArch64 Target attributes, which are a comma separated list of:
