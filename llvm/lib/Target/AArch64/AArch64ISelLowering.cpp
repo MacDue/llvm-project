@@ -1897,10 +1897,13 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::MUL, MVT::v1i64, Custom);
     setOperationAction(ISD::MUL, MVT::v2i64, Custom);
 
-    setOperationAction(ISD::VECREDUCE_SMAX, MVT::v2i64, Custom);
-    setOperationAction(ISD::VECREDUCE_SMIN, MVT::v2i64, Custom);
-    setOperationAction(ISD::VECREDUCE_UMAX, MVT::v2i64, Custom);
-    setOperationAction(ISD::VECREDUCE_UMIN, MVT::v2i64, Custom);
+    if (Subtarget->hasSVE2() || Subtarget->hasSME() ||
+        Subtarget->useSVEForFixedLengthVectors()) {
+      setOperationAction(ISD::VECREDUCE_SMAX, MVT::v2i64, Custom);
+      setOperationAction(ISD::VECREDUCE_SMIN, MVT::v2i64, Custom);
+      setOperationAction(ISD::VECREDUCE_UMAX, MVT::v2i64, Custom);
+      setOperationAction(ISD::VECREDUCE_UMIN, MVT::v2i64, Custom);
+    }
 
     // NOTE: Currently this has to happen after computeRegisterProperties rather
     // than the preferred option of combining it with the addRegisterClass call.
@@ -17334,7 +17337,8 @@ SDValue AArch64TargetLowering::LowerVECREDUCE(SDValue Op,
        Op.getOpcode() == ISD::VECREDUCE_FADD ||
        (Op.getOpcode() != ISD::VECREDUCE_ADD &&
         SrcVT.getVectorElementType() == MVT::i64));
-  bool PreferSVE = IsMinMax && SrcVT == MVT::v2i64;
+  bool PreferSVE = IsMinMax && (Subtarget->hasSVE2() || Subtarget->hasSME()) &&
+                   SrcVT == MVT::v2i64;
 
   if (SrcVT.isScalableVector() ||
       useSVEForFixedLengthVectorVT(SrcVT, ForceSVE || PreferSVE)) {
@@ -31488,6 +31492,21 @@ SDValue AArch64TargetLowering::LowerPredReductionToSVE(SDValue ReduceOp,
   return SDValue();
 }
 
+static std::optional<Intrinsic::ID> getPairwiseOpForReduction(unsigned Op) {
+  switch (Op) {
+  case ISD::VECREDUCE_SMIN:
+    return Intrinsic::aarch64_sve_sminp;
+  case ISD::VECREDUCE_SMAX:
+    return Intrinsic::aarch64_sve_smaxp;
+  case ISD::VECREDUCE_UMIN:
+    return Intrinsic::aarch64_sve_uminp;
+  case ISD::VECREDUCE_UMAX:
+    return Intrinsic::aarch64_sve_umaxp;
+  default:
+    return std::nullopt;
+  }
+}
+
 SDValue AArch64TargetLowering::LowerReductionToSVE(unsigned Opcode,
                                                    SDValue ScalarOp,
                                                    SelectionDAG &DAG) const {
@@ -31517,12 +31536,31 @@ SDValue AArch64TargetLowering::LowerReductionToSVE(unsigned Opcode,
   // UADDV always returns an i64 result.
   EVT ResVT = (Opcode == AArch64ISD::UADDV_PRED) ? MVT::i64 :
                                                    SrcVT.getVectorElementType();
+
+  SDValue Rdx;
+  // Lower v2<ty> VECREDUCE_[US](MIN|MAX) to pairwise operation with SVE2/SME.
+  if (SrcVT.getVectorElementCount() == ElementCount::getFixed(2) &&
+      (Subtarget->hasSVE2() || Subtarget->hasSME())) {
+    if (std::optional<Intrinsic::ID> PairwiseIID =
+            getPairwiseOpForReduction(ScalarOp->getOpcode())) {
+      EVT VT = VecOp.getValueType();
+      EVT PredVT = VT.changeVectorElementType(*DAG.getContext(), MVT::i1);
+      // VL1 as the pairwise operations use two input lanes per one output lane.
+      SDValue PTrueVL1 = getPTrue(DAG, DL, PredVT, AArch64SVEPredPattern::vl1);
+      Rdx = DAG.getNode(ISD::INTRINSIC_WO_CHAIN, DL, VT,
+                        DAG.getConstant(*PairwiseIID, DL, MVT::i32), PTrueVL1,
+                        VecOp, VecOp);
+    }
+  }
+
   EVT RdxVT = SrcVT;
   if (SrcVT.isFixedLengthVector() || Opcode == AArch64ISD::UADDV_PRED)
     RdxVT = getPackedSVEVectorVT(ResVT);
 
-  SDValue Pg = getPredicateForVector(DAG, DL, SrcVT);
-  SDValue Rdx = DAG.getNode(Opcode, DL, RdxVT, Pg, VecOp);
+  if (!Rdx) {
+    SDValue Pg = getPredicateForVector(DAG, DL, SrcVT);
+    Rdx = DAG.getNode(Opcode, DL, RdxVT, Pg, VecOp);
+  }
   SDValue Res = DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, ResVT,
                             Rdx, DAG.getConstant(0, DL, MVT::i64));
 
