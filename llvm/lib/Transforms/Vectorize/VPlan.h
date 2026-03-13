@@ -1277,6 +1277,10 @@ public:
     LastActiveLane,
     // Returns a reversed vector for the operand.
     Reverse,
+    // Calculates the [signed|unsigned] absolute difference between two vector
+    // operands.
+    SignedAbsoluteDifference,
+    UnsignedAbsoluteDifference,
 
     // The opcodes below are used for VPInstructionWithType.
     //

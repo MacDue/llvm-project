@@ -123,6 +123,9 @@ Type *VPTypeAnalysis::inferScalarTypeForRecipe(const VPInstruction *R) {
   case VPInstruction::FirstActiveLane:
   case VPInstruction::LastActiveLane:
     return Type::getIntNTy(Ctx, 64);
+  case VPInstruction::SignedAbsoluteDifference:
+  case VPInstruction::UnsignedAbsoluteDifference:
+    return inferScalarType(R->getOperand(0));
   case VPInstruction::LogicalAnd:
   case VPInstruction::LogicalOr:
     assert(inferScalarType(R->getOperand(0))->isIntegerTy(1) &&

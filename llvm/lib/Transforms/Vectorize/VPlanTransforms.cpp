@@ -5871,6 +5871,23 @@ optimizeExtendsForPartialReduction(VPSingleDefRecipe *BinOp,
     return BinOp;
   }
 
+  VPValue *X, *Y;
+  if (match(BinOp,
+            m_Intrinsic<Intrinsic::abs>(m_Sub(m_ZExtOrSExt(m_VPValue(X)),
+                                              m_ZExtOrSExt(m_VPValue(Y)))))) {
+    auto *Ext = cast<VPWidenCastRecipe>(
+        BinOp->getOperand(0)->getDefiningRecipe()->getOperand(0));
+    bool IsSigned = Ext->getOpcode() == Instruction::SExt;
+    VPBuilder Builder(BinOp);
+    VPValue *AbsDiff = Builder.createNaryOp(
+        IsSigned ? VPInstruction::SignedAbsoluteDifference
+                 : VPInstruction::UnsignedAbsoluteDifference,
+        {X, Y});
+    auto *Widen = Builder.createWidenCast(Instruction::CastOps::ZExt, AbsDiff,
+                                          TypeInfo.inferScalarType(BinOp));
+    return Widen;
+  }
+
   // reduce.add(ext(mul(ext(A), ext(B))))
   // -> reduce.add(mul(wider_ext(A), wider_ext(B)))
   if (match(BinOp, m_ZExtOrSExt(m_Mul(m_ZExtOrSExt(m_VPValue()),
@@ -6048,8 +6065,15 @@ static bool isValidPartialReduction(const VPPartialReductionChain &Chain,
     ExtKindB = ExtKindA;
   }
 
+  // Detect if the input to the reduction is an [unsigned|signed] absolute
+  // difference. This will be implicitly multiplied by 1 when lowered to a
+  // partial_reduce_[u|s]mla.
   std::optional<unsigned> BinOpc;
-  if (ExtendedOp.BinOp && ExtendedOp.BinOp != Chain.ReductionBinOp)
+  for (VPValue *Op : Chain.ReductionBinOp->operands())
+    if (match(Op, m_Intrinsic<Intrinsic::abs>()))
+      BinOpc = Instruction::Mul;
+
+  if (!BinOpc && ExtendedOp.BinOp != Chain.ReductionBinOp)
     BinOpc = ExtendedOp.BinOp->getOpcode();
 
   VPWidenRecipe *WidenRecipe = Chain.ReductionBinOp;
@@ -6091,12 +6115,31 @@ getPartialReductionExtendKind(VPWidenCastRecipe *Cast) {
 ///  - UpdateR(PrevValue, neg(BinOp(ext(...), Constant)))
 ///  - UpdateR(PrevValue, ext(mul(ext(...), ext(...))))
 ///  - UpdateR(PrevValue, ext(mul(ext(...), Constant)))
+///  - UpdateR(PrevValue, abs(sub(ext(...), ext(...)))
 ///
 /// Note: The second operand of UpdateR corresponds to \p Op in the examples.
 static std::optional<ExtendedReductionOperand>
-matchExtendedReductionOperand(VPWidenRecipe *UpdateR, VPValue *Op) {
+matchExtendedReductionOperand(VPWidenRecipe *UpdateR, VPValue *Op,
+                              VPCostContext &CostCtx) {
   assert(is_contained(UpdateR->operands(), Op) &&
          "Op should be operand of UpdateR");
+
+  VPValue *X, *Y;
+  if (match(Op,
+            m_OneUse(m_Intrinsic<Intrinsic::abs>(m_OneUse(m_Sub(
+                m_ZExtOrSExt(m_VPValue(X)), m_ZExtOrSExt(m_VPValue(Y)))))))) {
+    auto *Abs = dyn_cast<VPWidenIntrinsicRecipe>(Op);
+    if (!Abs)
+      return std::nullopt;
+    if (CostCtx.Types.inferScalarType(X) != CostCtx.Types.inferScalarType(Y))
+      return std::nullopt;
+    auto *Sub = cast<VPWidenRecipe>(Abs->getOperand(0));
+    auto *LHSExt = cast<VPWidenCastRecipe>(Sub->getOperand(0));
+    auto *RHSExt = cast<VPWidenCastRecipe>(Sub->getOperand(1));
+    if (LHSExt->getOpcode() != RHSExt->getOpcode())
+      return std::nullopt;
+    return ExtendedReductionOperand{Sub, {LHSExt, RHSExt}};
+  }
 
   // If Op is an extend, then it's still a valid partial reduction if the
   // extended mul fulfills the other requirements.
@@ -6193,9 +6236,9 @@ getScaledReductions(VPReductionPHIRecipe *RedPhiR, VPCostContext &CostCtx,
     // Find the extended operand. The other operand (PrevValue) is the next link
     // in the reduction chain.
     std::optional<ExtendedReductionOperand> ExtendedOp =
-        matchExtendedReductionOperand(UpdateR, Op);
+        matchExtendedReductionOperand(UpdateR, Op, CostCtx);
     if (!ExtendedOp) {
-      ExtendedOp = matchExtendedReductionOperand(UpdateR, PrevValue);
+      ExtendedOp = matchExtendedReductionOperand(UpdateR, PrevValue, CostCtx);
       if (!ExtendedOp)
         return std::nullopt;
       std::swap(Op, PrevValue);

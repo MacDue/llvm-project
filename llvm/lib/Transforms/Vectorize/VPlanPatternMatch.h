@@ -1127,7 +1127,7 @@ template <typename SubPattern_t> struct OneUse_match {
 
   OneUse_match(const SubPattern_t &SP) : SubPattern(SP) {}
 
-  template <typename OpTy> bool match(OpTy *V) {
+  template <typename OpTy> bool match(OpTy *V) const {
     return V->hasOneUse() && SubPattern.match(V);
   }
 };
