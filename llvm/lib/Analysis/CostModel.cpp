@@ -21,6 +21,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/IR/PatternMatch.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
@@ -50,6 +51,7 @@ static cl::opt<OutputCostKind> CostKind(
 enum class IntrinsicCostStrategy {
   InstructionCost,
   IntrinsicCost,
+  PatternMatchCost,
   TypeBasedIntrinsicCost,
 };
 
@@ -62,6 +64,9 @@ static cl::opt<IntrinsicCostStrategy> IntrinsicCost(
                    "Use TargetTransformInfo::getInstructionCost"),
         clEnumValN(IntrinsicCostStrategy::IntrinsicCost, "intrinsic-cost",
                    "Use TargetTransformInfo::getIntrinsicInstrCost"),
+        clEnumValN(IntrinsicCostStrategy::PatternMatchCost,
+                   "pattern-match-cost",
+                   "Pattern match and cost a group of instructions"),
         clEnumValN(
             IntrinsicCostStrategy::TypeBasedIntrinsicCost,
             "type-based-intrinsic-cost",
@@ -70,8 +75,44 @@ static cl::opt<IntrinsicCostStrategy> IntrinsicCost(
 #define CM_NAME "cost-model"
 #define DEBUG_TYPE CM_NAME
 
+static std::optional<InstructionCost>
+getPatternCost(Instruction &Inst, TTI::TargetCostKind CostKind,
+               TargetTransformInfo &TTI) {
+  using namespace PatternMatch;
+
+  // Match partial.reduce.add(acc, binop(extA, extB)).
+  Value *Acc, *ExtA, *ExtB, *BinOp;
+  if (match(&Inst,
+            m_Intrinsic<Intrinsic::vector_partial_reduce_add>(
+                m_Value(Acc),
+                m_Value(BinOp,
+                        m_BinOp(m_Value(ExtA, m_ZExtOrSExt(m_Value())),
+                                m_Value(ExtB, m_ZExtOrSExt(m_Value()))))))) {
+    auto *CastA = cast<CastInst>(ExtA);
+    auto *CastB = cast<CastInst>(ExtB);
+    return TTI.getPartialReductionCost(
+        Instruction::Add, CastA->getSrcTy()->getScalarType(),
+        CastB->getSrcTy()->getScalarType(), Acc->getType()->getScalarType(),
+        cast<VectorType>(ExtA->getType())->getElementCount(),
+        TTI.getPartialReductionExtendKind(CastA),
+        TTI.getPartialReductionExtendKind(CastB),
+        cast<Instruction>(BinOp)->getOpcode(), CostKind, std::nullopt);
+  }
+
+  // TODO: Match other patterns.
+
+  return std::nullopt;
+}
+
 static InstructionCost getCost(Instruction &Inst, TTI::TargetCostKind CostKind,
-                               TargetTransformInfo &TTI) {
+                               TargetTransformInfo &TTI, bool &MatchedPattern) {
+  if (IntrinsicCost == IntrinsicCostStrategy::PatternMatchCost) {
+    if (auto Cost = getPatternCost(Inst, CostKind, TTI)) {
+      MatchedPattern = true;
+      return *Cost;
+    }
+  }
+
   auto *II = dyn_cast<IntrinsicInst>(&Inst);
   if (II && IntrinsicCost != IntrinsicCostStrategy::InstructionCost) {
     IntrinsicCostAttributes ICA(
@@ -106,27 +147,40 @@ PreservedAnalyses CostModelPrinterPass::run(Function &F,
   OS << "Printing analysis 'Cost Model Analysis' for function '" << F.getName() << "':\n";
   for (BasicBlock &B : F) {
     for (Instruction &Inst : B) {
-      OS << "Cost Model: ";
+      bool MatchedPattern = false;
       if (CostKind == OutputCostKind::All) {
+        InstructionCost RThru =
+            getCost(Inst, TTI::TCK_RecipThroughput, TTI, MatchedPattern);
+        InstructionCost CodeSize =
+            getCost(Inst, TTI::TCK_CodeSize, TTI, MatchedPattern);
+        InstructionCost Lat =
+            getCost(Inst, TTI::TCK_Latency, TTI, MatchedPattern);
+        InstructionCost SizeLat =
+            getCost(Inst, TTI::TCK_SizeAndLatency, TTI, MatchedPattern);
+        if (!MatchedPattern)
+          continue;
+        OS << "Cost Model: ";
         OS << "Found costs of ";
-        InstructionCost RThru = getCost(Inst, TTI::TCK_RecipThroughput, TTI);
-        InstructionCost CodeSize = getCost(Inst, TTI::TCK_CodeSize, TTI);
-        InstructionCost Lat = getCost(Inst, TTI::TCK_Latency, TTI);
-        InstructionCost SizeLat = getCost(Inst, TTI::TCK_SizeAndLatency, TTI);
         if (RThru == CodeSize && RThru == Lat && RThru == SizeLat)
           OS << RThru;
         else
           OS << "RThru:" << RThru << " CodeSize:" << CodeSize << " Lat:" << Lat
              << " SizeLat:" << SizeLat;
-        OS << " for: " << Inst << "\n";
+        OS << " for: " << (MatchedPattern ? "pattern rooted at " : "") << Inst
+           << "\n";
       } else {
         InstructionCost Cost =
-            getCost(Inst, OutputCostKindToTargetCostKind(CostKind), TTI);
+            getCost(Inst, OutputCostKindToTargetCostKind(CostKind), TTI,
+                    MatchedPattern);
+        if (!MatchedPattern)
+          continue;
+        OS << "Cost Model: ";
         if (Cost.isValid())
           OS << "Found an estimated cost of " << Cost.getValue();
         else
           OS << "Invalid cost";
-        OS << " for instruction: " << Inst << "\n";
+        OS << " for " << (MatchedPattern ? "pattern rooted at " : "")
+           << "instruction: " << Inst << "\n";
       }
     }
   }
