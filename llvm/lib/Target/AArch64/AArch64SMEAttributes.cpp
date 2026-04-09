@@ -76,6 +76,10 @@ SMEAttrs::SMEAttrs(const AttributeList &Attrs) {
 
 void SMEAttrs::addKnownFunctionAttrs(StringRef FuncName,
                                      const RTLIB::RuntimeLibcallsInfo &RTLCI) {
+  // All SME routines start with "__" (avoid lookup for unrelated functions).
+  // TODO: Consider other prefixes (such as '#__' for AArch64EC)?
+  if (!FuncName.starts_with("__"))
+    return;
   RTLIB::LibcallImpl Impl = RTLCI.getSupportedLibcallImpl(FuncName);
   if (Impl == RTLIB::Unsupported)
     return;
