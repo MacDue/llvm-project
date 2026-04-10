@@ -339,10 +339,10 @@ define i16 @reduce_udiv(ptr %src, i16 %x, i64 %N) #0 {
 ; VSCALEFORTUNING2-NEXT:  [[ITER_CHECK:.*]]:
 ; VSCALEFORTUNING2-NEXT:    [[TMP0:%.*]] = add i64 [[N]], 1
 ; VSCALEFORTUNING2-NEXT:    [[TMP1:%.*]] = call i64 @llvm.vscale.i64()
-; VSCALEFORTUNING2-NEXT:    [[TMP5:%.*]] = shl nuw i64 [[TMP1]], 1
+; VSCALEFORTUNING2-NEXT:    [[TMP5:%.*]] = shl nuw i64 [[TMP1]], 2
 ; VSCALEFORTUNING2-NEXT:    [[MIN_ITERS_CHECK1:%.*]] = icmp ult i64 [[TMP0]], [[TMP5]]
 ; VSCALEFORTUNING2-NEXT:    [[TMP6:%.*]] = call i64 @llvm.vscale.i64()
-; VSCALEFORTUNING2-NEXT:    [[TMP9:%.*]] = shl nuw i64 [[TMP6]], 1
+; VSCALEFORTUNING2-NEXT:    [[TMP9:%.*]] = shl nuw i64 [[TMP6]], 2
 ; VSCALEFORTUNING2-NEXT:    br i1 [[MIN_ITERS_CHECK1]], label %[[VEC_EPILOG_SCALAR_PH:.*]], label %[[VECTOR_MAIN_LOOP_ITER_CHECK:.*]]
 ; VSCALEFORTUNING2:       [[VECTOR_MAIN_LOOP_ITER_CHECK]]:
 ; VSCALEFORTUNING2-NEXT:    [[TMP2:%.*]] = shl nuw i64 [[TMP1]], 3
@@ -383,30 +383,30 @@ define i16 @reduce_udiv(ptr %src, i16 %x, i64 %N) #0 {
 ; VSCALEFORTUNING2-NEXT:    [[VEC_EPILOG_RESUME_VAL:%.*]] = phi i64 [ [[N_VEC]], %[[VEC_EPILOG_ITER_CHECK]] ], [ 0, %[[VECTOR_MAIN_LOOP_ITER_CHECK]] ]
 ; VSCALEFORTUNING2-NEXT:    [[BC_MERGE_RDX:%.*]] = phi i16 [ [[TMP18]], %[[VEC_EPILOG_ITER_CHECK]] ], [ 0, %[[VECTOR_MAIN_LOOP_ITER_CHECK]] ]
 ; VSCALEFORTUNING2-NEXT:    [[TMP19:%.*]] = call i64 @llvm.vscale.i64()
-; VSCALEFORTUNING2-NEXT:    [[TMP20:%.*]] = shl nuw i64 [[TMP19]], 1
+; VSCALEFORTUNING2-NEXT:    [[TMP20:%.*]] = shl nuw i64 [[TMP19]], 2
 ; VSCALEFORTUNING2-NEXT:    [[N_MOD_VF4:%.*]] = urem i64 [[TMP0]], [[TMP20]]
 ; VSCALEFORTUNING2-NEXT:    [[N_VEC5:%.*]] = sub i64 [[TMP0]], [[N_MOD_VF4]]
-; VSCALEFORTUNING2-NEXT:    [[TMP21:%.*]] = insertelement <vscale x 2 x i16> zeroinitializer, i16 [[BC_MERGE_RDX]], i32 0
-; VSCALEFORTUNING2-NEXT:    [[BROADCAST_SPLATINSERT6:%.*]] = insertelement <vscale x 2 x i16> poison, i16 [[X]], i64 0
-; VSCALEFORTUNING2-NEXT:    [[BROADCAST_SPLAT7:%.*]] = shufflevector <vscale x 2 x i16> [[BROADCAST_SPLATINSERT6]], <vscale x 2 x i16> poison, <vscale x 2 x i32> zeroinitializer
+; VSCALEFORTUNING2-NEXT:    [[TMP22:%.*]] = insertelement <vscale x 4 x i16> zeroinitializer, i16 [[BC_MERGE_RDX]], i32 0
+; VSCALEFORTUNING2-NEXT:    [[BROADCAST_SPLATINSERT6:%.*]] = insertelement <vscale x 4 x i16> poison, i16 [[X]], i64 0
+; VSCALEFORTUNING2-NEXT:    [[BROADCAST_SPLAT7:%.*]] = shufflevector <vscale x 4 x i16> [[BROADCAST_SPLATINSERT6]], <vscale x 4 x i16> poison, <vscale x 4 x i32> zeroinitializer
 ; VSCALEFORTUNING2-NEXT:    br label %[[VEC_EPILOG_VECTOR_BODY:.*]]
 ; VSCALEFORTUNING2:       [[VEC_EPILOG_VECTOR_BODY]]:
 ; VSCALEFORTUNING2-NEXT:    [[IV:%.*]] = phi i64 [ [[VEC_EPILOG_RESUME_VAL]], %[[VEC_EPILOG_PH]] ], [ [[INDEX_NEXT11:%.*]], %[[VEC_EPILOG_VECTOR_BODY]] ]
-; VSCALEFORTUNING2-NEXT:    [[VEC_PHI9:%.*]] = phi <vscale x 2 x i16> [ [[TMP21]], %[[VEC_EPILOG_PH]] ], [ [[TMP24:%.*]], %[[VEC_EPILOG_VECTOR_BODY]] ]
+; VSCALEFORTUNING2-NEXT:    [[VEC_PHI9:%.*]] = phi <vscale x 4 x i16> [ [[TMP22]], %[[VEC_EPILOG_PH]] ], [ [[TMP21:%.*]], %[[VEC_EPILOG_VECTOR_BODY]] ]
 ; VSCALEFORTUNING2-NEXT:    [[GEP:%.*]] = getelementptr i16, ptr [[SRC]], i64 [[IV]]
-; VSCALEFORTUNING2-NEXT:    [[WIDE_LOAD10:%.*]] = load <vscale x 2 x i16>, ptr [[GEP]], align 2
-; VSCALEFORTUNING2-NEXT:    [[TMP23:%.*]] = udiv <vscale x 2 x i16> [[WIDE_LOAD10]], [[BROADCAST_SPLAT7]]
-; VSCALEFORTUNING2-NEXT:    [[TMP24]] = or <vscale x 2 x i16> [[TMP23]], [[VEC_PHI9]]
+; VSCALEFORTUNING2-NEXT:    [[WIDE_LOAD10:%.*]] = load <vscale x 4 x i16>, ptr [[GEP]], align 2
+; VSCALEFORTUNING2-NEXT:    [[TMP24:%.*]] = udiv <vscale x 4 x i16> [[WIDE_LOAD10]], [[BROADCAST_SPLAT7]]
+; VSCALEFORTUNING2-NEXT:    [[TMP21]] = or <vscale x 4 x i16> [[TMP24]], [[VEC_PHI9]]
 ; VSCALEFORTUNING2-NEXT:    [[INDEX_NEXT11]] = add nuw i64 [[IV]], [[TMP20]]
 ; VSCALEFORTUNING2-NEXT:    [[TMP25:%.*]] = icmp eq i64 [[INDEX_NEXT11]], [[N_VEC5]]
 ; VSCALEFORTUNING2-NEXT:    br i1 [[TMP25]], label %[[VEC_EPILOG_MIDDLE_BLOCK:.*]], label %[[VEC_EPILOG_VECTOR_BODY]], !llvm.loop [[LOOP6:![0-9]+]]
 ; VSCALEFORTUNING2:       [[VEC_EPILOG_MIDDLE_BLOCK]]:
-; VSCALEFORTUNING2-NEXT:    [[TMP26:%.*]] = call i16 @llvm.vector.reduce.or.nxv2i16(<vscale x 2 x i16> [[TMP24]])
+; VSCALEFORTUNING2-NEXT:    [[TMP23:%.*]] = call i16 @llvm.vector.reduce.or.nxv4i16(<vscale x 4 x i16> [[TMP21]])
 ; VSCALEFORTUNING2-NEXT:    [[CMP_N12:%.*]] = icmp eq i64 [[TMP0]], [[N_VEC5]]
 ; VSCALEFORTUNING2-NEXT:    br i1 [[CMP_N12]], label %[[EXIT]], label %[[VEC_EPILOG_SCALAR_PH]]
 ; VSCALEFORTUNING2:       [[VEC_EPILOG_SCALAR_PH]]:
 ; VSCALEFORTUNING2-NEXT:    [[BC_RESUME_VAL:%.*]] = phi i64 [ [[N_VEC5]], %[[VEC_EPILOG_MIDDLE_BLOCK]] ], [ [[N_VEC]], %[[VEC_EPILOG_ITER_CHECK]] ], [ 0, %[[ITER_CHECK]] ]
-; VSCALEFORTUNING2-NEXT:    [[BC_MERGE_RDX13:%.*]] = phi i16 [ [[TMP26]], %[[VEC_EPILOG_MIDDLE_BLOCK]] ], [ [[TMP18]], %[[VEC_EPILOG_ITER_CHECK]] ], [ 0, %[[ITER_CHECK]] ]
+; VSCALEFORTUNING2-NEXT:    [[BC_MERGE_RDX13:%.*]] = phi i16 [ [[TMP23]], %[[VEC_EPILOG_MIDDLE_BLOCK]] ], [ [[TMP18]], %[[VEC_EPILOG_ITER_CHECK]] ], [ 0, %[[ITER_CHECK]] ]
 ; VSCALEFORTUNING2-NEXT:    br label %[[LOOP:.*]]
 ; VSCALEFORTUNING2:       [[LOOP]]:
 ; VSCALEFORTUNING2-NEXT:    [[IV1:%.*]] = phi i64 [ [[BC_RESUME_VAL]], %[[VEC_EPILOG_SCALAR_PH]] ], [ [[IV_NEXT:%.*]], %[[LOOP]] ]
@@ -419,7 +419,7 @@ define i16 @reduce_udiv(ptr %src, i16 %x, i64 %N) #0 {
 ; VSCALEFORTUNING2-NEXT:    [[EC:%.*]] = icmp eq i64 [[IV1]], [[N]]
 ; VSCALEFORTUNING2-NEXT:    br i1 [[EC]], label %[[EXIT]], label %[[LOOP]], !llvm.loop [[LOOP7:![0-9]+]]
 ; VSCALEFORTUNING2:       [[EXIT]]:
-; VSCALEFORTUNING2-NEXT:    [[RED_NEXT_LCSSA:%.*]] = phi i16 [ [[RED_NEXT]], %[[LOOP]] ], [ [[TMP18]], %[[MIDDLE_BLOCK]] ], [ [[TMP26]], %[[VEC_EPILOG_MIDDLE_BLOCK]] ]
+; VSCALEFORTUNING2-NEXT:    [[RED_NEXT_LCSSA:%.*]] = phi i16 [ [[RED_NEXT]], %[[LOOP]] ], [ [[TMP18]], %[[MIDDLE_BLOCK]] ], [ [[TMP23]], %[[VEC_EPILOG_MIDDLE_BLOCK]] ]
 ; VSCALEFORTUNING2-NEXT:    ret i16 [[RED_NEXT_LCSSA]]
 ;
 ; PRED-LABEL: define i16 @reduce_udiv(
