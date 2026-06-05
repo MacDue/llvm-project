@@ -71,6 +71,7 @@ FunctionPass *createAArch64PostCoalescerPass();
 FunctionPass *createAArch64CleanupLocalDynamicTLSPass();
 
 FunctionPass *createAArch64CollectLOHPass();
+FunctionPass *createAArch64PredicateAsCounterLoopRewritesPass();
 FunctionPass *createSMEPeepholeOptPass();
 FunctionPass *createMachineSMEABIPass(CodeGenOptLevel);
 FunctionPass *createAArch64SRLTDefineSuperRegsPass();
@@ -144,6 +145,7 @@ void initializeAArch64A57FPLoadBalancingLegacyPass(PassRegistry &);
 void initializeAArch64AdvSIMDScalarLegacyPass(PassRegistry &);
 void initializeAArch64AsmPrinterPass(PassRegistry &);
 void initializeAArch64PointerAuthLegacyPass(PassRegistry &);
+void initializeAArch64PredicateAsCounterLoopRewritesPass(PassRegistry &);
 void initializeAArch64BranchTargetsLegacyPass(PassRegistry &);
 void initializeAArch64CFIFixupPass(PassRegistry&);
 void initializeAArch64CollectLOHLegacyPass(PassRegistry &);

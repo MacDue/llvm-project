@@ -1239,6 +1239,7 @@ public:
     // Represents the incoming loop-invariant alias-mask. All memory accesses
     // in the loop must stay within the active lanes.
     IncomingAliasMask,
+    ExtractSubVectorForPart,
     CalculateTripCountMinusVF,
     // Increment the canonical IV separately for each unrolled part.
     CanonicalIVIncrementForPart,
@@ -3695,6 +3696,8 @@ protected:
   /// Whether the memory access is masked.
   bool IsMasked = false;
 
+  unsigned ScaleFactor = 1;
+
   void setMask(VPValue *Mask) {
     assert(!IsMasked && "cannot re-set mask");
     if (!Mask)
@@ -3739,6 +3742,10 @@ public:
   InstructionCost computeCost(ElementCount VF, VPCostContext &Ctx) const;
 
   Instruction &getIngredient() const { return Ingredient; }
+
+  void setScaleFactor(unsigned ScaleFactor) { this->ScaleFactor = ScaleFactor; }
+
+  unsigned getScaleFactor() const { return ScaleFactor; }
 };
 
 /// A recipe for widening load operations, using the address to load from and an
@@ -3754,8 +3761,11 @@ struct LLVM_ABI_FOR_TEST VPWidenLoadRecipe final : public VPSingleDefRecipe,
   }
 
   VPWidenLoadRecipe *clone() override {
-    return new VPWidenLoadRecipe(cast<LoadInst>(Ingredient), getAddr(),
-                                 getMask(), Consecutive, *this, getDebugLoc());
+    auto *T =
+        new VPWidenLoadRecipe(cast<LoadInst>(Ingredient), getAddr(), getMask(),
+                              Consecutive, *this, getDebugLoc());
+    T->setScaleFactor(ScaleFactor);
+    return T;
   }
 
   VP_CLASSOF_IMPL(VPRecipeBase::VPWidenLoadSC);
@@ -3986,6 +3996,8 @@ protected:
 /// used to predicate the vector operations.
 class VPActiveLaneMaskPHIRecipe : public VPHeaderPHIRecipe {
 public:
+  Type *MaskType = nullptr;
+
   VPActiveLaneMaskPHIRecipe(VPValue *StartMask, DebugLoc DL)
       : VPHeaderPHIRecipe(VPRecipeBase::VPActiveLaneMaskPHISC, nullptr,
                           StartMask, DL) {}

@@ -25291,6 +25291,13 @@ SDValue DAGCombiner::visitEXTRACT_VECTOR_ELT(SDNode *N) {
       IndexC->getAPIntValue().uge(VecVT.getVectorNumElements()))
     return DAG.getPOISON(ScalarVT);
 
+  if (VecOp.getOpcode() == ISD::INSERT_SUBVECTOR && IndexC &&
+      IndexC->isZero()) {
+    auto *InsertC = dyn_cast<ConstantSDNode>(VecOp->getOperand(2));
+    if (InsertC && InsertC->isZero())
+      return DAG.getExtractVectorElt(DL, ScalarVT, VecOp->getOperand(1), 0);
+  }
+
   // extract_vector_elt (build_vector x, y), 1 -> y
   if (((IndexC && VecOp.getOpcode() == ISD::BUILD_VECTOR) ||
        VecOp.getOpcode() == ISD::SPLAT_VECTOR) &&

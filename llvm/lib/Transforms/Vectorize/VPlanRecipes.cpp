@@ -500,6 +500,8 @@ Type *llvm::computeScalarTypeForInstruction(unsigned Opcode,
     return StructTy->getTypeAtIndex(
         cast<VPConstantInt>(Operands[1])->getZExtValue());
   }
+  case VPInstruction::ExtractSubVectorForPart:
+    return Op0Ty;
   case VPInstruction::FirstActiveLane:
   case VPInstruction::LastActiveLane:
   case VPInstruction::NumActiveLanes:
@@ -602,6 +604,7 @@ unsigned VPInstruction::getNumOperandsForOpcode() const {
   case VPInstruction::PtrAdd:
   case VPInstruction::WidePtrAdd:
   case VPInstruction::WideIVStep:
+  case VPInstruction::ExtractSubVectorForPart:
   case VPInstruction::CalculateTripCountMinusVF:
     return 2;
   case Instruction::InsertElement:
@@ -725,6 +728,18 @@ Value *VPInstruction::generate(VPTransformState &State) {
     Value *Op2 = State.get(getOperand(2), OnlyFirstLaneUsed);
     return Builder.CreateSelectFMF(Cond, Op1, Op2, getFastMathFlags(), Name);
   }
+  case VPInstruction::ExtractSubVectorForPart: {
+    Value *Vec = State.get(getOperand(0));
+    Type *SubTy = VectorType::get(Vec->getType()->getScalarType(), State.VF);
+    if (Vec->getType() == SubTy)
+      return Vec;
+    unsigned WideParts =
+        Vec->getType()->getPrimitiveSizeInBits().getKnownMinValue() /
+        SubTy->getPrimitiveSizeInBits().getKnownMinValue();
+    unsigned Part = cast<VPConstantInt>(getOperand(1))->getZExtValue();
+    return Builder.CreateExtractVector(
+        SubTy, Vec, State.VF.getKnownMinValue() * (Part % WideParts));
+  }
   case VPInstruction::ActiveLaneMask: {
     // Get first lane of vector induction variable.
     Value *VIVElem0 = State.get(getOperand(0), VPLane(0));
@@ -737,9 +752,20 @@ Value *VPInstruction::generate(VPTransformState &State) {
       return Builder.CreateCmp(CmpInst::Predicate::ICMP_ULT, VIVElem0, ScalarTC,
                                Name);
 
+    auto *ALM = findUserOf<VPActiveLaneMaskPHIRecipe>(
+        const_cast<VPValue *>(getVPSingleValue()));
+
     ElementCount EC = State.VF.multiplyCoefficientBy(
         cast<VPConstantInt>(getOperand(2))->getZExtValue());
     auto *PredTy = VectorType::get(Builder.getInt1Ty(), EC);
+    if (ALM->MaskType)
+      return Builder.CreateIntrinsic(
+          Intrinsic::get_active_lane_mask_for_type,
+          {PredTy, ScalarTC->getType()},
+          {VIVElem0, ScalarTC,
+           Builder.getInt64(ALM->MaskType->getScalarSizeInBits() / 8)},
+          nullptr, Name);
+
     return Builder.CreateIntrinsic(Intrinsic::get_active_lane_mask,
                                    {PredTy, ScalarTC->getType()},
                                    {VIVElem0, ScalarTC}, nullptr, Name);
@@ -1525,6 +1551,7 @@ bool VPInstruction::opcodeMayReadOrWriteFromMemory() const {
   case VPInstruction::ExtractPenultimateElement:
   case VPInstruction::ActiveLaneMask:
   case VPInstruction::IncomingAliasMask:
+  case VPInstruction::ExtractSubVectorForPart:
   case VPInstruction::ExitingIVValue:
   case VPInstruction::ExplicitVectorLength:
   case VPInstruction::FirstActiveLane:
@@ -1648,6 +1675,9 @@ void VPInstruction::printRecipe(raw_ostream &O, const Twine &Indent,
     break;
   case VPInstruction::IncomingAliasMask:
     O << "incoming-alias-mask";
+    break;
+  case VPInstruction::ExtractSubVectorForPart:
+    O << "extract-sub-vector-for-part";
     break;
   case VPInstruction::ExplicitVectorLength:
     O << "EXPLICIT-VECTOR-LENGTH";
@@ -4025,7 +4055,7 @@ InstructionCost VPWidenMemoryRecipe::computeCost(ElementCount VF,
 
 void VPWidenLoadRecipe::execute(VPTransformState &State) {
   Type *ScalarDataTy = getScalarType();
-  auto *DataTy = VectorType::get(ScalarDataTy, State.VF);
+  auto *DataTy = VectorType::get(ScalarDataTy, State.VF.multiplyCoefficientBy(ScaleFactor));
   bool CreateGather = !isConsecutive();
 
   auto &Builder = State.Builder;
@@ -4055,6 +4085,8 @@ void VPWidenLoadRecipe::printRecipe(raw_ostream &O, const Twine &Indent,
   O << Indent << "WIDEN ";
   printAsOperand(O, SlotTracker);
   O << " = load ";
+  if (ScaleFactor > 1)
+    O << "x" << ScaleFactor << ' ';
   printOperands(O, SlotTracker);
 }
 #endif

@@ -2605,6 +2605,11 @@ def int_get_active_lane_mask:
             [llvm_anyint_ty, LLVMMatchType<1>],
             [IntrNoMem, IntrSpeculatable]>;
 
+def int_get_active_lane_mask_for_type:
+  DefaultAttrsIntrinsic<[llvm_anyvector_ty],
+            [llvm_anyint_ty, LLVMMatchType<1>, llvm_i64_ty],
+            [IntrNoMem, IntrSpeculatable, ImmArg<ArgIndex<2>>]>;
+
 def int_experimental_get_vector_length:
   DefaultAttrsIntrinsic<[llvm_i32_ty],
                         [llvm_anyint_ty, llvm_i32_ty, llvm_i1_ty],

@@ -5336,6 +5336,119 @@ void VPlanTransforms::materializeFactors(VPlan &Plan, VPBasicBlock *VectorPH,
   VFxUF.replaceAllUsesWith(MulByUF);
 }
 
+static unsigned pickScaleFactorForMemOp(Type* Element, ElementCount VF, unsigned UF) {
+  if (!VF.isScalable() || !isPowerOf2_32(UF))
+    return 1;
+
+  unsigned VectorWidth = VF.getKnownMinValue() * Element->getScalarSizeInBits();
+  if (VectorWidth % 128 != 0)
+    return 1;
+
+  for (unsigned TargetWidth : {512, 256}) {
+    if (VectorWidth < TargetWidth) {
+      unsigned Scale = TargetWidth / VectorWidth;
+      if (Scale <= UF)
+        return Scale;
+    }
+  }
+
+  return 1;
+}
+
+void VPlanTransforms::scaleMemoryAccessesByUF(VPlan &Plan, ElementCount VF, unsigned UF, bool FoldTail) {
+  if (UF == 1)
+    return;
+
+  Type *IVTy = Plan.getVectorLoopRegion()->getCanonicalIVType();
+
+  DenseMap<Type *, SmallVector<VPWidenLoadRecipe *>> MemOpsByMaskType;
+  auto ScaleMemoryAccess = [&](VPWidenLoadRecipe *Load, unsigned ScaleFactor) {
+    if (ScaleFactor == 1)
+      return;
+    Load->setScaleFactor(ScaleFactor);
+
+    auto Builder = VPBuilder::getToInsertAfter(Load);
+    auto *LoadPart =
+        Builder.createNaryOp(VPInstruction::ExtractSubVectorForPart,
+                             {Load, Plan.getConstantInt(IVTy, 0)});
+    Load->replaceUsesWithIf(
+        LoadPart, [&](VPUser &U, unsigned) { return &U != LoadPart; });
+  };
+
+  for (VPBasicBlock *VPBB : VPBlockUtils::blocksOnly<VPBasicBlock>(
+           vp_depth_first_deep(Plan.getVectorLoopRegion()->getEntry()))) {
+    for (VPRecipeBase &R : make_early_inc_range(*VPBB)) {
+      uint64_t Stride;
+      VPValue *Mask = nullptr;
+      if ((!match(&R, m_Load(m_VecPtr(m_VPValue(), m_ConstantInt(Stride)))) &&
+           !match(&R, m_MaskedLoad(m_VecPtr(m_VPValue(), m_ConstantInt(Stride)),
+                                   m_VPValue(Mask)))) ||
+          Stride != 1)
+        continue;
+
+      auto *Load = cast<VPWidenLoadRecipe>(&R);
+      if (!Load->isConsecutive())
+        continue;
+
+      unsigned ScaleFactor =
+          pickScaleFactorForMemOp(Load->getScalarType(), VF, UF);
+
+      if (Mask) {
+        if (!isa<VPActiveLaneMaskPHIRecipe>(Mask))
+          continue;
+        if (ScaleFactor != UF)
+          continue;
+        MemOpsByMaskType[Load->getScalarType()].push_back(Load);
+      } else
+        ScaleMemoryAccess(Load, ScaleFactor);
+    }
+  }
+
+  if (MemOpsByMaskType.empty())
+    return;
+
+  Type *BestMaskType;
+  unsigned MaxOps = 0;
+
+  for (auto [MaskType, MemOps] : MemOpsByMaskType) {
+    if (MemOps.size() > MaxOps) {
+      BestMaskType = MaskType;
+      MaxOps = MemOps.size();
+    }
+  }
+
+  assert(BestMaskType);
+  for (auto *MemOp : MemOpsByMaskType[BestMaskType])
+    ScaleMemoryAccess(MemOp, UF);
+
+  auto *ALM = cast<VPActiveLaneMaskPHIRecipe>(
+      MemOpsByMaskType[BestMaskType][0]->getOperand(1));
+  ALM->MaskType = BestMaskType;
+
+  auto *EntryALM = cast<VPInstruction>(ALM->getStartValue());
+  auto *LoopALM = cast<VPInstruction>(ALM->getBackedgeValue());
+
+  assert((EntryALM->getOpcode() == VPInstruction::ActiveLaneMask &&
+          LoopALM->getOpcode() == VPInstruction::ActiveLaneMask) &&
+         "Expected incoming values of Phi to be ActiveLaneMasks");
+
+  // When using wide lane masks, the return type of the get.active.lane.mask
+  // intrinsic is VF x UF (last operand).
+  VPValue *ALMMultiplier = Plan.getConstantInt(64, UF);
+  EntryALM->setOperand(2, ALMMultiplier);
+  LoopALM->setOperand(2, ALMMultiplier);
+
+  auto Builder = VPBuilder::getToInsertAfter(ALM);
+  auto *MaskPart = Builder.createNaryOp(VPInstruction::ExtractSubVectorForPart,
+                                        {ALM, Plan.getConstantInt(IVTy, 0)});
+
+  ALM->replaceUsesWithIf(MaskPart, [&](VPUser &U, unsigned) {
+    return &U != MaskPart &&
+           !(isa<VPWidenLoadRecipe>(&U) &&
+             cast<VPWidenLoadRecipe>(&U)->getScaleFactor() == UF);
+  });
+}
+
 void VPlanTransforms::attachAliasMaskToHeaderMask(VPlan &Plan) {
   VPSingleDefRecipe *HeaderMask = vputils::findHeaderMask(Plan);
   auto *HeaderMaskDef = HeaderMask->getDefiningRecipe();

@@ -302,6 +302,27 @@ void UnrollState::unrollRecipeByUF(VPRecipeBase &R) {
       return;
     }
   }
+
+  auto InsertPt = std::next(R.getIterator());
+  VPBasicBlock &VPBB = *R.getParent();
+  if (auto *WidenMem = dyn_cast<VPWidenLoadRecipe>(&R);
+      WidenMem && WidenMem->getScaleFactor() > 1) {
+    assert(UF % WidenMem->getScaleFactor() == 0);
+    SmallVector<VPRecipeBase *, 4> Parts(UF / WidenMem->getScaleFactor());
+    Parts[0] = &R;
+    for (unsigned Part = 1; Part < Parts.size(); ++Part) {
+      auto *Copy = R.clone();
+      Copy->insertBefore(VPBB, InsertPt);
+      remapOperands(Copy, Part * WidenMem->getScaleFactor());
+      Parts[Part] = Copy;
+    }
+    for (unsigned Part = 1; Part != UF; ++Part) {
+      VPRecipeBase *Copy = Parts[Part / WidenMem->getScaleFactor()];
+      addRecipeForPart(&R, Copy, Part);
+    }
+    return;
+  }
+
   if (auto *RepR = dyn_cast<VPReplicateRecipe>(&R)) {
     if (isa<StoreInst>(RepR->getUnderlyingValue()) &&
         RepR->getOperand(1)->isDefinedOutsideLoopRegions()) {
@@ -317,8 +338,6 @@ void UnrollState::unrollRecipeByUF(VPRecipeBase &R) {
   }
 
   // Unroll non-uniform recipes.
-  auto InsertPt = std::next(R.getIterator());
-  VPBasicBlock &VPBB = *R.getParent();
   for (unsigned Part = 1; Part != UF; ++Part) {
     VPRecipeBase *Copy = R.clone();
     Copy->insertBefore(VPBB, InsertPt);
@@ -329,6 +348,13 @@ void UnrollState::unrollRecipeByUF(VPRecipeBase &R) {
       continue;
 
     VPValue *Op;
+    if (match(&R, m_VPInstruction<VPInstruction::ExtractSubVectorForPart>(
+                      m_VPValue(Op), m_VPValue()))) {
+      Copy->setOperand(0, getValueForPart(Op, Part));
+      Copy->setOperand(1, getConstantInt(Part));
+      continue;
+    }
+
     if (match(&R, m_VPInstruction<VPInstruction::FirstOrderRecurrenceSplice>(
                       m_VPValue(), m_VPValue(Op)))) {
       Copy->setOperand(0, getValueForPart(Op, Part - 1));
@@ -472,6 +498,20 @@ void UnrollState::unrollBlock(VPBlockBase *VPB) {
     auto *SingleDef = dyn_cast<VPSingleDefRecipe>(&R);
     if (SingleDef && vputils::isUniformAcrossVFsAndUFs(SingleDef)) {
       addUniformForAllParts(SingleDef);
+      continue;
+    }
+
+    auto ALM = dyn_cast<VPActiveLaneMaskPHIRecipe>(&R);
+    if (ALM && ALM->MaskType) {
+      addUniformForAllParts(ALM);
+      continue;
+    }
+
+    uint64_t Scale;
+    if (match(&R, m_VPInstruction<VPInstruction::ActiveLaneMask>(
+                      m_VPValue(), m_VPValue(), m_ConstantInt(Scale))) &&
+        Scale == UF) {
+      addUniformForAllParts(cast<VPSingleDefRecipe>(&R));
       continue;
     }
 
