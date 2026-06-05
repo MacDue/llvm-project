@@ -73,6 +73,8 @@ def SDT_AArch64_LD1Replicate : SDTypeProfile<1, 2, [
 def AArch64ld1rq_z : SDNode<"AArch64ISD::LD1RQ_MERGE_ZERO",  SDT_AArch64_LD1Replicate, [SDNPHasChain, SDNPMayLoad]>;
 def AArch64ld1ro_z : SDNode<"AArch64ISD::LD1RO_MERGE_ZERO",  SDT_AArch64_LD1Replicate, [SDNPHasChain, SDNPMayLoad]>;
 
+def AArch64whilelo_on_flags : SDNode<"AArch64ISD::WHILELO_PN_FLAGS",  SDTypeProfile<2, 3, []>, []>;
+
 // Gather loads - node definitions
 //
 def SDT_AArch64_GATHER_SV : SDTypeProfile<1, 4, [
