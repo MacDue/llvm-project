@@ -5438,7 +5438,7 @@ void VPlanTransforms::scaleMemoryAccessesByUF(VPlan &Plan, ElementCount VF, unsi
   EntryALM->setOperand(2, ALMMultiplier);
   LoopALM->setOperand(2, ALMMultiplier);
 
-  auto Builder = VPBuilder::getToInsertAfter(ALM);
+  auto Builder = VPBuilder(&*ALM->getParent()->getFirstNonPhi());
   auto *MaskPart = Builder.createNaryOp(VPInstruction::ExtractSubVectorForPart,
                                         {ALM, Plan.getConstantInt(IVTy, 0)});
 
