@@ -73,7 +73,7 @@ def SDT_AArch64_LD1Replicate : SDTypeProfile<1, 2, [
 def AArch64ld1rq_z : SDNode<"AArch64ISD::LD1RQ_MERGE_ZERO",  SDT_AArch64_LD1Replicate, [SDNPHasChain, SDNPMayLoad]>;
 def AArch64ld1ro_z : SDNode<"AArch64ISD::LD1RO_MERGE_ZERO",  SDT_AArch64_LD1Replicate, [SDNPHasChain, SDNPMayLoad]>;
 
-def AArch64whilelo_on_flags : SDNode<"AArch64ISD::WHILELO_PN_FLAGS",  SDTypeProfile<2, 3, []>, []>;
+def AArch64whilelo_pn_flag : SDNode<"AArch64ISD::WHILELO_PN_FLAGS",  SDTypeProfile<2, 4, []>, []>;
 
 // Gather loads - node definitions
 //
@@ -4609,14 +4609,14 @@ defm : store_pn_x4<nxv8bf16, int_aarch64_sve_stnt1_pn_x4, STNT1H_4Z_IMM>;
 defm : store_pn_x4<nxv4f32, int_aarch64_sve_stnt1_pn_x4, STNT1W_4Z_IMM>;
 defm : store_pn_x4<nxv2f64, int_aarch64_sve_stnt1_pn_x4, STNT1D_4Z_IMM>;
 
-defm WHILEGE_CXX  : sve2p1_int_while_rr_pn<"whilege", 0b000>;
-defm WHILEGT_CXX  : sve2p1_int_while_rr_pn<"whilegt", 0b001>;
-defm WHILELT_CXX  : sve2p1_int_while_rr_pn<"whilelt", 0b010>;
-defm WHILELE_CXX  : sve2p1_int_while_rr_pn<"whilele", 0b011>;
-defm WHILEHS_CXX  : sve2p1_int_while_rr_pn<"whilehs", 0b100>;
-defm WHILEHI_CXX  : sve2p1_int_while_rr_pn<"whilehi", 0b101>;
-defm WHILELO_CXX  : sve2p1_int_while_rr_pn<"whilelo", 0b110>;
-defm WHILELS_CXX  : sve2p1_int_while_rr_pn<"whilels", 0b111>;
+// defm WHILEGE_CXX  : sve2p1_int_while_rr_pn<"whilege", 0b000, AArch64whilelo_pn_flag>;
+// defm WHILEGT_CXX  : sve2p1_int_while_rr_pn<"whilegt", 0b001, AArch64whilelo_pn_flag>;
+// defm WHILELT_CXX  : sve2p1_int_while_rr_pn<"whilelt", 0b010, AArch64whilelo_pn_flag>;
+// defm WHILELE_CXX  : sve2p1_int_while_rr_pn<"whilele", 0b011, AArch64whilelo_pn_flag>;
+// defm WHILEHS_CXX  : sve2p1_int_while_rr_pn<"whilehs", 0b100, AArch64whilelo_pn_flag>;
+// defm WHILEHI_CXX  : sve2p1_int_while_rr_pn<"whilehi", 0b101, AArch64whilelo_pn_flag>;
+defm WHILELO_CXX  : sve2p1_int_while_rr_pn<"whilelo", 0b110, AArch64whilelo_pn_flag>;
+// defm WHILELS_CXX  : sve2p1_int_while_rr_pn<"whilels", 0b111, AArch64whilelo_pn_flag>;
 } // End HasSVE2p1_or_StreamingSME2
 
 let Predicates = [HasSVE_or_SME] in {

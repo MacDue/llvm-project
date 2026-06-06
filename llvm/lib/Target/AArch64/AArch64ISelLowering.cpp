@@ -6740,6 +6740,42 @@ SDValue AArch64TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
   case Intrinsic::aarch64_sve_whilele:
     return optimizeIncrementingWhile(Op.getNode(), DAG, /*IsSigned=*/true,
                                      /*IsEqual=*/true);
+  case Intrinsic::aarch64_sve_whilelo_c8:
+    return DAG
+        .getNode(AArch64ISD::WHILELO_PN_FLAGS, DL,
+                 DAG.getVTList(Op.getValueType(), FlagsVT), Op.getOperand(1),
+                 Op.getOperand(2),
+                 DAG.getTargetConstant((Op.getConstantOperandVal(3) - 2) / 2,
+                                       DL, MVT::i32),
+                 DAG.getTargetConstant(8, DL, MVT::i64))
+        .getValue(0);
+  case Intrinsic::aarch64_sve_whilelo_c16:
+    return DAG
+        .getNode(AArch64ISD::WHILELO_PN_FLAGS, DL,
+                 DAG.getVTList(Op.getValueType(), FlagsVT), Op.getOperand(1),
+                 Op.getOperand(2),
+                 DAG.getTargetConstant((Op.getConstantOperandVal(3) - 2) / 2,
+                                       DL, MVT::i32),
+                 DAG.getTargetConstant(16, DL, MVT::i64))
+        .getValue(0);
+  case Intrinsic::aarch64_sve_whilelo_c32:
+    return DAG
+        .getNode(AArch64ISD::WHILELO_PN_FLAGS, DL,
+                 DAG.getVTList(Op.getValueType(), FlagsVT), Op.getOperand(1),
+                 Op.getOperand(2),
+                 DAG.getTargetConstant((Op.getConstantOperandVal(3) - 2) / 2,
+                                       DL, MVT::i32),
+                 DAG.getTargetConstant(32, DL, MVT::i64))
+        .getValue(0);
+  case Intrinsic::aarch64_sve_whilelo_c64:
+    return DAG
+        .getNode(AArch64ISD::WHILELO_PN_FLAGS, DL,
+                 DAG.getVTList(Op.getValueType(), FlagsVT), Op.getOperand(1),
+                 Op.getOperand(2),
+                 DAG.getTargetConstant((Op.getConstantOperandVal(3) - 2) / 2,
+                                       DL, MVT::i32),
+                 DAG.getTargetConstant(64, DL, MVT::i64))
+        .getValue(0);
   case Intrinsic::aarch64_sve_sunpkhi:
     return DAG.getNode(AArch64ISD::SUNPKHI, DL, Op.getValueType(),
                        Op.getOperand(1));
@@ -11605,6 +11641,14 @@ SDValue AArch64TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
         }
       }
     }
+    Op.dump();
+    // SDValue CCVal;
+    LHS.dump();
+    RHS.dump();
+    // SDValue Cmp = getAArch64Cmp(LHS, RHS, CC, CCVal, DAG, DL);
+    // return DAG.getNode(AArch64ISD::BRCOND, DL, MVT::Other, Chain, Dest,
+    // CCVal,
+    //                    Cmp);
 
     // If the RHS of the comparison is zero, we can potentially fold this
     // to a specialized branch.
@@ -11616,6 +11660,23 @@ SDValue AArch64TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
 
         return DAG.getNode(AArch64ISD::CBZ, DL, MVT::Other, Chain, LHS, Dest);
       } else if (CC == ISD::SETNE) {
+        // LHS.getOperand(0).dump();
+        using namespace llvm::SDPatternMatch;
+        SDValue Set;
+        if (sd_match(LHS, m_And(m_Value(Set), m_One())) &&
+            sd_match(RHS, m_Zero())) {
+          if (Set.getOpcode() == AArch64ISD::CSINC &&
+              sd_match(Set->getOperand(0), m_Zero()) &&
+              sd_match(Set->getOperand(1), m_Zero())) {
+            AArch64CC::CondCode InvCC =
+                (AArch64CC::CondCode)Set->getConstantOperandVal(2);
+            SDValue Flags = Set->getOperand(3);
+            return DAG.getNode(
+                AArch64ISD::BRCOND, DL, MVT::Other, Chain, Dest,
+                getCondCode(DAG, AArch64CC::getInvertedCondCode(InvCC)), Flags);
+          }
+        }
+
         if (SDValue Result =
                 optimizeBitTest(DL, LHS, Chain, Dest, AArch64ISD::TBNZ, DAG))
           return Result;
@@ -21616,13 +21677,23 @@ performFirstTrueTestVectorCombine(SDNode *N,
   if (!VT.isScalableVectorOf(MVT::i1) || !isNullConstant(N->getOperand(1)))
     return SDValue();
 
+  using namespace llvm::SDPatternMatch;
+  SelectionDAG &DAG = DCI.DAG;
+
+  if (sd_match(N0,
+               m_IntrinsicWOChain<Intrinsic::aarch64_sve_pext>(
+                   m_SpecificOpc(AArch64ISD::WHILELO_PN_FLAGS), m_Zero()))) {
+    SDValue WhileLo = N0->getOperand(1);
+    return getSETCC(AArch64CC::CondCode::FIRST_ACTIVE,
+                    SDValue(WhileLo.getNode(), 1), SDLoc(N), DAG);
+  }
+
   // Restricted the DAG combine to only cases where we're extracting from a
   // flag-setting operation.
   if (!isPredicateCCSettingOp(N0) || N0.getResNo() != 0)
     return SDValue();
 
   // Extracts of lane 0 for SVE can be expressed as PTEST(Op, FIRST) ? 1 : 0
-  SelectionDAG &DAG = DCI.DAG;
   SDValue Pg = DAG.getConstant(1, SDLoc(N), VT);
   return getPTest(DAG, N->getValueType(0), Pg, N0, AArch64CC::FIRST_ACTIVE);
 }
@@ -24191,6 +24262,8 @@ static SDValue performIntrinsicCombine(SDNode *N,
                                        TargetLowering::DAGCombinerInfo &DCI,
                                        const AArch64Subtarget *Subtarget) {
   SelectionDAG &DAG = DCI.DAG;
+  SDLoc DL(N);
+  SDValue Op(N, 0);
   unsigned IID = getIntrinsicID(N);
   switch (IID) {
   default:
@@ -24235,6 +24308,42 @@ static SDValue performIntrinsicCombine(SDNode *N,
                        N->getOperand(1), N->getOperand(2));
   case Intrinsic::aarch64_neon_sqdmull:
     return tryCombineLongOpWithDup(IID, N, DCI, DAG);
+  case Intrinsic::aarch64_sve_whilelo_c8:
+    return DAG
+        .getNode(AArch64ISD::WHILELO_PN_FLAGS, DL,
+                 DAG.getVTList(N->getValueType(0), FlagsVT), Op.getOperand(1),
+                 Op.getOperand(2),
+                 DAG.getTargetConstant((N->getConstantOperandVal(3) - 2) / 2,
+                                       DL, MVT::i32),
+                 DAG.getTargetConstant(8, DL, MVT::i64))
+        .getValue(0);
+  case Intrinsic::aarch64_sve_whilelo_c16:
+    return DAG
+        .getNode(AArch64ISD::WHILELO_PN_FLAGS, DL,
+                 DAG.getVTList(N->getValueType(0), FlagsVT), Op.getOperand(1),
+                 Op.getOperand(2),
+                 DAG.getTargetConstant((N->getConstantOperandVal(3) - 2) / 2,
+                                       DL, MVT::i32),
+                 DAG.getTargetConstant(16, DL, MVT::i64))
+        .getValue(0);
+  case Intrinsic::aarch64_sve_whilelo_c32:
+    return DAG
+        .getNode(AArch64ISD::WHILELO_PN_FLAGS, DL,
+                 DAG.getVTList(N->getValueType(0), FlagsVT), Op.getOperand(1),
+                 Op.getOperand(2),
+                 DAG.getTargetConstant((N->getConstantOperandVal(3) - 2) / 2,
+                                       DL, MVT::i32),
+                 DAG.getTargetConstant(32, DL, MVT::i64))
+        .getValue(0);
+  case Intrinsic::aarch64_sve_whilelo_c64:
+    return DAG
+        .getNode(AArch64ISD::WHILELO_PN_FLAGS, DL,
+                 DAG.getVTList(N->getValueType(0), FlagsVT), Op.getOperand(1),
+                 Op.getOperand(2),
+                 DAG.getTargetConstant((N->getConstantOperandVal(3) - 2) / 2,
+                                       DL, MVT::i32),
+                 DAG.getTargetConstant(64, DL, MVT::i64))
+        .getValue(0);
   case Intrinsic::aarch64_neon_sqshl:
   case Intrinsic::aarch64_neon_uqshl:
   case Intrinsic::aarch64_neon_sqshlu:
