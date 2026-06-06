@@ -5447,7 +5447,7 @@ void VPlanTransforms::scaleMemoryAccessesByUF(VPlan &Plan, ElementCount VF, unsi
 
   // When using wide lane masks, the return type of the get.active.lane.mask
   // intrinsic is VF x UF (last operand).
-  VPValue *ALMMultiplier = Plan.getConstantInt(64, UF);
+  VPValue *ALMMultiplier = Plan.getConstantInt(IVTy, UF);
   EntryALM->setOperand(2, ALMMultiplier);
   LoopALM->setOperand(2, ALMMultiplier);
 

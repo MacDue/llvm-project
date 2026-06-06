@@ -25291,7 +25291,7 @@ SDValue DAGCombiner::visitEXTRACT_VECTOR_ELT(SDNode *N) {
       IndexC->getAPIntValue().uge(VecVT.getVectorNumElements()))
     return DAG.getPOISON(ScalarVT);
 
-  if (VecOp.getOpcode() == ISD::INSERT_SUBVECTOR && IndexC &&
+  if (!LegalTypes && VecOp.getOpcode() == ISD::INSERT_SUBVECTOR && IndexC &&
       IndexC->isZero()) {
     auto *InsertC = dyn_cast<ConstantSDNode>(VecOp->getOperand(2));
     if (InsertC && InsertC->isZero())

@@ -104,6 +104,10 @@ static bool hasOnlySupportedPhiUsers(Value *V, PHINode *AllowedPhi = nullptr) {
 
 static Value *createWhileLO(IRBuilder<> &Builder, unsigned MaskElemType,
                             Value *Start, Value *End, unsigned Scale) {
+  if (Start->getType()->getIntegerBitWidth() < 64) {
+    Start = Builder.CreateZExt(Start, Builder.getInt64Ty());
+    End = Builder.CreateZExt(End, Builder.getInt64Ty());
+  }
   Module *M = Builder.GetInsertBlock()->getModule();
   auto ID = getWhileLOIntrinsic(MaskElemType);
   FunctionCallee WhileLT = Intrinsic::getOrInsertDeclaration(M, ID);
@@ -299,10 +303,8 @@ AArch64PredicateAsCounterLoopRewrites::matchMaskPhi(Loop &L,
   if (!StartMask || !NextMask || NextMask->getParent() != Latch)
     return std::nullopt;
 
-  if (!StartMask->getArgOperand(0)->getType()->isIntegerTy(64) ||
-      !StartMask->getArgOperand(1)->getType()->isIntegerTy(64) ||
-      !NextMask->getArgOperand(0)->getType()->isIntegerTy(64) ||
-      !NextMask->getArgOperand(1)->getType()->isIntegerTy(64) ||
+  if (StartMask->getArgOperand(0)->getType()->getIntegerBitWidth() > 64 ||
+      NextMask->getArgOperand(0)->getType()->getIntegerBitWidth() > 64 ||
       StartMask->getArgOperand(2) != NextMask->getArgOperand(2))
     return std::nullopt;
 

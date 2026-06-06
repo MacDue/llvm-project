@@ -11696,7 +11696,6 @@ SDValue AArch64TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
 
         return DAG.getNode(AArch64ISD::CBZ, DL, MVT::Other, Chain, LHS, Dest);
       } else if (CC == ISD::SETNE) {
-        // LHS.getOperand(0).dump();
         using namespace llvm::SDPatternMatch;
         SDValue Set;
         if (sd_match(LHS, m_And(m_Value(Set), m_One())) &&
