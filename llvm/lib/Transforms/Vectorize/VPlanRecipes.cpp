@@ -500,6 +500,7 @@ Type *llvm::computeScalarTypeForInstruction(unsigned Opcode,
     return StructTy->getTypeAtIndex(
         cast<VPConstantInt>(Operands[1])->getZExtValue());
   }
+  case VPInstruction::InsertSubVectorForPart:
   case VPInstruction::ExtractSubVectorForPart:
     return Op0Ty;
   case VPInstruction::FirstActiveLane:
@@ -627,6 +628,7 @@ unsigned VPInstruction::getNumOperandsForOpcode() const {
   case VPInstruction::LastActiveLane:
   case VPInstruction::ExtractLane:
   case VPInstruction::ExtractLastActive:
+  case VPInstruction::InsertSubVectorForPart:
     // Cannot determine the number of operands from the opcode.
     return -1u;
   }
@@ -739,6 +741,17 @@ Value *VPInstruction::generate(VPTransformState &State) {
     unsigned Part = cast<VPConstantInt>(getOperand(1))->getZExtValue();
     return Builder.CreateExtractVector(
         SubTy, Vec, State.VF.getKnownMinValue() * (Part % WideParts));
+  }
+  case VPInstruction::InsertSubVectorForPart: {
+    auto *WideDataTy = VectorType::get(
+        getScalarType(), State.VF.multiplyCoefficientBy(getNumOperands()));
+    Value *WideData = PoisonValue::get(WideDataTy);
+    for (unsigned I = 0; I < getNumOperands(); ++I) {
+      Value *Part = State.get(getOperand(I));
+      WideData = Builder.CreateInsertVector(WideDataTy, WideData, Part,
+                                            I * State.VF.getKnownMinValue());
+    }
+    return WideData;
   }
   case VPInstruction::ActiveLaneMask: {
     // Get first lane of vector induction variable.
@@ -1552,6 +1565,7 @@ bool VPInstruction::opcodeMayReadOrWriteFromMemory() const {
   case VPInstruction::ActiveLaneMask:
   case VPInstruction::IncomingAliasMask:
   case VPInstruction::ExtractSubVectorForPart:
+  case VPInstruction::InsertSubVectorForPart:
   case VPInstruction::ExitingIVValue:
   case VPInstruction::ExplicitVectorLength:
   case VPInstruction::FirstActiveLane:
@@ -1678,6 +1692,9 @@ void VPInstruction::printRecipe(raw_ostream &O, const Twine &Indent,
     break;
   case VPInstruction::ExtractSubVectorForPart:
     O << "extract-sub-vector-for-part";
+    break;
+  case VPInstruction::InsertSubVectorForPart:
+    O << "insert-sub-vector-for-part";
     break;
   case VPInstruction::ExplicitVectorLength:
     O << "EXPLICIT-VECTOR-LENGTH";

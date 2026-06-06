@@ -5361,46 +5361,61 @@ void VPlanTransforms::scaleMemoryAccessesByUF(VPlan &Plan, ElementCount VF, unsi
 
   Type *IVTy = Plan.getVectorLoopRegion()->getCanonicalIVType();
 
-  DenseMap<Type *, SmallVector<VPWidenLoadRecipe *>> MemOpsByMaskType;
-  auto ScaleMemoryAccess = [&](VPWidenLoadRecipe *Load, unsigned ScaleFactor) {
+  DenseMap<Type *, SmallVector<VPWidenMemoryRecipe *>> MemOpsByMaskType;
+  auto ScaleMemoryAccess = [&](VPWidenMemoryRecipe *MemOp, unsigned ScaleFactor) {
     if (ScaleFactor == 1)
       return;
-    Load->setScaleFactor(ScaleFactor);
+    MemOp->setScaleFactor(ScaleFactor);
 
-    auto Builder = VPBuilder::getToInsertAfter(Load);
+
+    if (auto* Load = dyn_cast<VPWidenLoadRecipe>(MemOp->getAsRecipe())) {
+    auto Builder = VPBuilder::getToInsertAfter(MemOp->getAsRecipe());
     auto *LoadPart =
         Builder.createNaryOp(VPInstruction::ExtractSubVectorForPart,
                              {Load, Plan.getConstantInt(IVTy, 0)});
     Load->replaceUsesWithIf(
         LoadPart, [&](VPUser &U, unsigned) { return &U != LoadPart; });
+    } else {
+          auto Builder = VPBuilder(MemOp->getAsRecipe());
+      auto* Store = cast<VPWidenStoreRecipe>(MemOp->getAsRecipe());
+      auto* WideVal = Builder.createNaryOp(VPInstruction::InsertSubVectorForPart,
+        Store->getStoredValue());
+      Store->setOperand(1, WideVal);
+    }
   };
+
+  VPActiveLaneMaskPHIRecipe* ALM = nullptr;
 
   for (VPBasicBlock *VPBB : VPBlockUtils::blocksOnly<VPBasicBlock>(
            vp_depth_first_deep(Plan.getVectorLoopRegion()->getEntry()))) {
     for (VPRecipeBase &R : make_early_inc_range(*VPBB)) {
       uint64_t Stride;
       VPValue *Mask = nullptr;
+      VPValue* StoredValue = nullptr;
       if ((!match(&R, m_Load(m_VecPtr(m_VPValue(), m_ConstantInt(Stride)))) &&
            !match(&R, m_MaskedLoad(m_VecPtr(m_VPValue(), m_ConstantInt(Stride)),
-                                   m_VPValue(Mask)))) ||
+                                   m_VPValue(Mask)))
+          && !match(&R, m_MaskedStore(m_VecPtr(m_VPValue(), m_ConstantInt(Stride)), m_VPValue(StoredValue), m_VPValue(Mask)))) ||
           Stride != 1)
         continue;
 
-      auto *Load = cast<VPWidenLoadRecipe>(&R);
-      if (!Load->isConsecutive())
+      auto *MemOp = cast<VPWidenMemoryRecipe>(&R);
+      if (!MemOp->isConsecutive())
         continue;
 
-      unsigned ScaleFactor =
-          pickScaleFactorForMemOp(Load->getScalarType(), VF, UF);
+      Type* AccessType = StoredValue ? StoredValue->getScalarType() : R.getVPSingleValue()->getScalarType();
+
+      unsigned ScaleFactor = pickScaleFactorForMemOp(AccessType, VF, UF);
 
       if (Mask) {
         if (!isa<VPActiveLaneMaskPHIRecipe>(Mask))
           continue;
+        ALM = cast<VPActiveLaneMaskPHIRecipe>(Mask);
         if (ScaleFactor != UF)
           continue;
-        MemOpsByMaskType[Load->getScalarType()].push_back(Load);
+        MemOpsByMaskType[AccessType].push_back(MemOp);
       } else
-        ScaleMemoryAccess(Load, ScaleFactor);
+        ScaleMemoryAccess(MemOp, ScaleFactor);
     }
   }
 
@@ -5421,8 +5436,6 @@ void VPlanTransforms::scaleMemoryAccessesByUF(VPlan &Plan, ElementCount VF, unsi
   for (auto *MemOp : MemOpsByMaskType[BestMaskType])
     ScaleMemoryAccess(MemOp, UF);
 
-  auto *ALM = cast<VPActiveLaneMaskPHIRecipe>(
-      MemOpsByMaskType[BestMaskType][0]->getOperand(1));
   ALM->MaskType = BestMaskType;
 
   auto *EntryALM = cast<VPInstruction>(ALM->getStartValue());
@@ -5444,8 +5457,10 @@ void VPlanTransforms::scaleMemoryAccessesByUF(VPlan &Plan, ElementCount VF, unsi
 
   ALM->replaceUsesWithIf(MaskPart, [&](VPUser &U, unsigned) {
     return &U != MaskPart &&
-           !(isa<VPWidenLoadRecipe>(&U) &&
-             cast<VPWidenLoadRecipe>(&U)->getScaleFactor() == UF);
+           !((isa<VPWidenLoadRecipe>(&U) &&
+             cast<VPWidenLoadRecipe>(&U)->getScaleFactor() == UF)
+            || isa<VPWidenStoreRecipe>(&U) &&
+             cast<VPWidenStoreRecipe>(&U)->getScaleFactor() == UF);
   });
 }
 

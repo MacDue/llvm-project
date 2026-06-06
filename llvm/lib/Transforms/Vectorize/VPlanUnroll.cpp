@@ -305,7 +305,7 @@ void UnrollState::unrollRecipeByUF(VPRecipeBase &R) {
 
   auto InsertPt = std::next(R.getIterator());
   VPBasicBlock &VPBB = *R.getParent();
-  if (auto *WidenMem = dyn_cast<VPWidenLoadRecipe>(&R);
+  if (auto *WidenMem = dyn_cast<VPWidenMemoryRecipe>(&R);
       WidenMem && WidenMem->getScaleFactor() > 1) {
     assert(UF % WidenMem->getScaleFactor() == 0);
     SmallVector<VPRecipeBase *, 4> Parts(UF / WidenMem->getScaleFactor());
@@ -461,6 +461,14 @@ void UnrollState::unrollBlock(VPBlockBase *VPB) {
       addUniformForAllParts(cast<VPInstruction>(&R));
       for (unsigned Part = 1; Part != UF; ++Part)
         R.addOperand(getValueForPart(Op1, Part));
+      continue;
+    }
+
+    if (match(&R, m_VPInstruction<VPInstruction::InsertSubVectorForPart>(
+                      m_VPValue(Op0)))) {
+      addUniformForAllParts(cast<VPInstruction>(&R));
+      for (unsigned Part = 1; Part != UF; ++Part)
+        R.addOperand(getValueForPart(Op0, Part));
       continue;
     }
 

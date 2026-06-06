@@ -182,15 +182,15 @@ static bool tryRewriteMaskedStoreUser(Instruction &UserI,
                                       Value *Count) {
   auto *II = dyn_cast<IntrinsicInst>(&UserI);
   if (!II || II->getIntrinsicID() != Intrinsic::masked_store ||
-      II->getArgOperand(1)->getType() != C.MaskPhi->getType() ||
-      II->getArgOperand(2)->getType()->getScalarSizeInBits() / 8 !=
+      II->getArgOperand(2)->getType() != C.MaskPhi->getType() ||
+      II->getArgOperand(0)->getType()->getScalarSizeInBits() / 8 !=
           C.ElementSizeInBytes)
     return false;
 
   IRBuilder<> Builder(II);
   Builder.SetCurrentDebugLocation(II->getDebugLoc());
 
-  Type *ScalarType = II->getArgOperand(2)->getType()->getScalarType();
+  Type *ScalarType = II->getArgOperand(0)->getType()->getScalarType();
   auto *LegalDataTy = ScalableVectorType::get(ScalarType, C.LegalLanes);
 
   SmallVector<Value *, 6> StoreArgs;

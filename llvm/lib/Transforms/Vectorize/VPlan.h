@@ -1240,6 +1240,7 @@ public:
     // in the loop must stay within the active lanes.
     IncomingAliasMask,
     ExtractSubVectorForPart,
+    InsertSubVectorForPart,
     CalculateTripCountMinusVF,
     // Increment the canonical IV separately for each unrolled part.
     CanonicalIVIncrementForPart,
