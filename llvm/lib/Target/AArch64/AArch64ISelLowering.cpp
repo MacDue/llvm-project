@@ -6490,6 +6490,42 @@ SDValue AArch64TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     EVT PtrVT = getPointerTy(DAG.getDataLayout());
     return DAG.getNode(AArch64ISD::THREAD_POINTER, DL, PtrVT);
   }
+  case Intrinsic::aarch64_sve_pext: {
+    unsigned Idx = Op->getConstantOperandVal(2);
+    unsigned MatchingIdx = Idx & 1 ? Idx - 1 : Idx + 1;
+    SDNode *MatchingPExt = nullptr;
+    SDValue PredCounter = Op->getOperand(1);
+    for (SDNode *User : PredCounter->users()) {
+      using namespace llvm::SDPatternMatch;
+      if (sd_match(User, m_IntrinsicWOChain<Intrinsic::aarch64_sve_pext>(
+                             m_Value(), m_SpecificInt(MatchingIdx)))) {
+        MatchingPExt = User;
+        break;
+      }
+    }
+
+    if (MatchingPExt) {
+      SDValue P0 = DAG.getNode(
+          ISD::INTRINSIC_WO_CHAIN, DL,
+          DAG.getVTList(Op.getValueType(), Op.getValueType()),
+          DAG.getTargetConstant(Intrinsic::aarch64_sve_pext_x2, DL, MVT::i64),
+          PredCounter,
+          DAG.getTargetConstant(std::min(Idx, MatchingIdx) / 2, DL, MVT::i64));
+
+      SDValue P1(P0.getNode(), 1);
+
+      if (Idx > MatchingIdx)
+        std::swap(P0, P1);
+
+      DAG.ReplaceAllUsesWith(MatchingPExt, &P1);
+      return P0;
+    }
+
+    // DAG.getInt
+
+    return Op;
+  }
+
   case Intrinsic::aarch64_sve_whilewr_b:
     return DAG.getNode(ISD::LOOP_DEPENDENCE_WAR_MASK, DL, Op.getValueType(),
                        Op.getOperand(1), Op.getOperand(2),
@@ -11641,10 +11677,10 @@ SDValue AArch64TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
         }
       }
     }
-    Op.dump();
-    // SDValue CCVal;
-    LHS.dump();
-    RHS.dump();
+    // Op.dump();
+    // // SDValue CCVal;
+    // LHS.dump();
+    // RHS.dump();
     // SDValue Cmp = getAArch64Cmp(LHS, RHS, CC, CCVal, DAG, DL);
     // return DAG.getNode(AArch64ISD::BRCOND, DL, MVT::Other, Chain, Dest,
     // CCVal,
