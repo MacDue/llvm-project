@@ -771,12 +771,12 @@ Value *VPInstruction::generate(VPTransformState &State) {
     ElementCount EC = State.VF.multiplyCoefficientBy(
         cast<VPConstantInt>(getOperand(2))->getZExtValue());
     auto *PredTy = VectorType::get(Builder.getInt1Ty(), EC);
-    if (ALM->MaskType)
+    if (ALM && ALM->MaskElementSizeInBytes)
       return Builder.CreateIntrinsic(
           Intrinsic::get_active_lane_mask_for_type,
           {PredTy, ScalarTC->getType()},
           {VIVElem0, ScalarTC,
-           Builder.getInt64(ALM->MaskType->getScalarSizeInBits() / 8)},
+           Builder.getInt64(ALM->MaskElementSizeInBytes)},
           nullptr, Name);
 
     return Builder.CreateIntrinsic(Intrinsic::get_active_lane_mask,

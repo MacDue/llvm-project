@@ -5361,7 +5361,7 @@ void VPlanTransforms::scaleMemoryAccessesByUF(VPlan &Plan, ElementCount VF, unsi
 
   Type *IVTy = Plan.getVectorLoopRegion()->getCanonicalIVType();
 
-  DenseMap<Type *, SmallVector<VPWidenMemoryRecipe *>> MemOpsByMaskType;
+  DenseMap<unsigned, SmallVector<VPWidenMemoryRecipe *>> MemOpsByAccessSize;
   auto ScaleMemoryAccess = [&](VPWidenMemoryRecipe *MemOp, unsigned ScaleFactor) {
     if (ScaleFactor == 1)
       return;
@@ -5413,30 +5413,30 @@ void VPlanTransforms::scaleMemoryAccessesByUF(VPlan &Plan, ElementCount VF, unsi
         ALM = cast<VPActiveLaneMaskPHIRecipe>(Mask);
         if (ScaleFactor != UF)
           continue;
-        MemOpsByMaskType[AccessType].push_back(MemOp);
+        MemOpsByAccessSize[AccessType->getScalarSizeInBits() / 8].push_back(MemOp);
       } else
         ScaleMemoryAccess(MemOp, ScaleFactor);
     }
   }
 
-  if (MemOpsByMaskType.empty())
+  if (MemOpsByAccessSize.empty())
     return;
 
-  Type *BestMaskType;
+  unsigned BestMaskSize = 0;
   unsigned MaxOps = 0;
 
-  for (auto [MaskType, MemOps] : MemOpsByMaskType) {
+  for (auto [MaskSize, MemOps] : MemOpsByAccessSize) {
     if (MemOps.size() > MaxOps) {
-      BestMaskType = MaskType;
+      BestMaskSize = MaskSize;
       MaxOps = MemOps.size();
     }
   }
 
-  assert(BestMaskType);
-  for (auto *MemOp : MemOpsByMaskType[BestMaskType])
+  assert(BestMaskSize != 0);
+  for (auto *MemOp : MemOpsByAccessSize[BestMaskSize])
     ScaleMemoryAccess(MemOp, UF);
 
-  ALM->MaskType = BestMaskType;
+  ALM->MaskElementSizeInBytes = BestMaskSize;
 
   auto *EntryALM = cast<VPInstruction>(ALM->getStartValue());
   auto *LoopALM = cast<VPInstruction>(ALM->getBackedgeValue());

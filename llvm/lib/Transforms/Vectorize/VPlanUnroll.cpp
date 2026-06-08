@@ -510,7 +510,7 @@ void UnrollState::unrollBlock(VPBlockBase *VPB) {
     }
 
     auto ALM = dyn_cast<VPActiveLaneMaskPHIRecipe>(&R);
-    if (ALM && ALM->MaskType) {
+    if (ALM && ALM->MaskElementSizeInBytes) {
       addUniformForAllParts(ALM);
       continue;
     }

@@ -3997,7 +3997,7 @@ protected:
 /// used to predicate the vector operations.
 class VPActiveLaneMaskPHIRecipe : public VPHeaderPHIRecipe {
 public:
-  Type *MaskType = nullptr;
+  unsigned MaskElementSizeInBytes= 0;
 
   VPActiveLaneMaskPHIRecipe(VPValue *StartMask, DebugLoc DL)
       : VPHeaderPHIRecipe(VPRecipeBase::VPActiveLaneMaskPHISC, nullptr,
