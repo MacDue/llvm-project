@@ -19558,9 +19558,9 @@ bool AArch64TargetLowering::isLegalAddressingMode(const DataLayout &DL,
       // legalization by splitting.
       uint64_t VecNumBytes = DL.getTypeSizeInBits(Ty).getKnownMinValue() / 8;
       if (AM.HasBaseReg && !AM.BaseOffs && AM.ScalableOffset && !AM.Scale &&
-          (AM.ScalableOffset % VecNumBytes == 0) && VecNumBytes <= 16 &&
+          (AM.ScalableOffset % VecNumBytes == 0) && VecNumBytes <= 16 * 4 &&
           isPowerOf2_64(VecNumBytes))
-        return isInt<4>(AM.ScalableOffset / (int64_t)VecNumBytes);
+        return isInt<16>(AM.ScalableOffset / (int64_t)VecNumBytes);
 
       uint64_t VecElemNumBytes =
           DL.getTypeSizeInBits(cast<VectorType>(Ty)->getElementType()) / 8;
