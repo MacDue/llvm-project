@@ -2227,7 +2227,7 @@ static bool tryToReplaceALMWithWideALM(VPlan &Plan, ElementCount VF,
 
   using namespace llvm::VPlanPatternMatch;
   if (!match(Term, m_BranchOnCond(m_Not(m_ActiveLaneMask(
-                       m_VPValue(), m_VPValue(), m_VPValue())))))
+                       m_VPValue(), m_VPValue(), m_VPValue(), m_VPValue())))))
     return false;
 
   auto *Header = cast<VPBasicBlock>(VectorRegion->getEntry());
@@ -2255,7 +2255,8 @@ static bool tryToReplaceALMWithWideALM(VPlan &Plan, ElementCount VF,
       continue;
     VPValue *Index = nullptr;
     match(Phi->getBackedgeValue(),
-          m_ActiveLaneMask(m_VPValue(Index), m_VPValue(), m_VPValue()));
+          m_ActiveLaneMask(m_VPValue(Index), m_VPValue(), m_VPValue(),
+                           m_VPValue()));
     assert(Index && "Expected index from ActiveLaneMask instruction");
 
     uint64_t Part;
@@ -2324,7 +2325,7 @@ static bool simplifyBranchConditionForVFAndUF(VPlan &Plan, ElementCount BestVF,
                       m_CombineOr(m_CanIVInc, m_c_Add(m_CanIVInc, m_LiveIn())),
                       m_VPValue())) ||
       match(Term, m_BranchOnCond(m_Not(m_ActiveLaneMask(
-                      m_VPValue(), m_VPValue(), m_VPValue()))))) {
+                      m_VPValue(), m_VPValue(), m_VPValue(), m_VPValue()))))) {
     // Try to simplify the branch condition if VectorTC <= VF * UF when the
     // latch terminator is BranchOnCount or BranchOnCond(Not(ActiveLaneMask)).
     const SCEV *VectorTripCount =
@@ -2888,9 +2889,12 @@ addVPLaneMaskPhiAndUpdateExitBranch(VPlan &Plan) {
   // Create the active lane mask instruction in the VPlan preheader.
   VPValue *ALMMultiplier =
       Plan.getConstantInt(TopRegion->getCanonicalIVType(), 1);
-  auto *EntryALM = Builder.createNaryOp(VPInstruction::ActiveLaneMask,
-                                        {EntryIncrement, TC, ALMMultiplier}, DL,
-                                        "active.lane.mask.entry");
+  VPValue *MaskElementSizeInBytes =
+      Plan.getConstantInt(TopRegion->getCanonicalIVType(), 0);
+  auto *EntryALM = Builder.createNaryOp(
+      VPInstruction::ActiveLaneMask,
+      {EntryIncrement, TC, ALMMultiplier, MaskElementSizeInBytes}, DL,
+      "active.lane.mask.entry");
 
   // Now create the ActiveLaneMaskPhi recipe in the main loop using the
   // preheader ActiveLaneMask instruction.
@@ -2906,9 +2910,10 @@ addVPLaneMaskPhiAndUpdateExitBranch(VPlan &Plan) {
   auto *InLoopIncrement = Builder.createOverflowingOp(
       VPInstruction::CanonicalIVIncrementForPart,
       {CanonicalIVIncrement, &Plan.getVF()}, {false, false}, DL);
-  auto *ALM = Builder.createNaryOp(VPInstruction::ActiveLaneMask,
-                                   {InLoopIncrement, TC, ALMMultiplier}, DL,
-                                   "active.lane.mask.next");
+  auto *ALM = Builder.createNaryOp(
+      VPInstruction::ActiveLaneMask,
+      {InLoopIncrement, TC, ALMMultiplier, MaskElementSizeInBytes}, DL,
+      "active.lane.mask.next");
   LaneMaskPhi->addBackedgeValue(ALM);
 
   // Replace the original terminator with BranchOnCond. We have to invert the
@@ -2934,10 +2939,12 @@ void VPlanTransforms::addActiveLaneMask(VPlan &Plan,
     VPBuilder B = VPBuilder::getToInsertAfter(WideCanonicalIV);
     VPValue *ALMMultiplier =
         Plan.getConstantInt(LoopRegion->getCanonicalIVType(), 1);
-    LaneMask =
-        B.createNaryOp(VPInstruction::ActiveLaneMask,
-                       {WideCanonicalIV, Plan.getTripCount(), ALMMultiplier},
-                       nullptr, "active.lane.mask");
+    VPValue *MaskElementSizeInBytes =
+        Plan.getConstantInt(LoopRegion->getCanonicalIVType(), 0);
+    LaneMask = B.createNaryOp(VPInstruction::ActiveLaneMask,
+                              {WideCanonicalIV, Plan.getTripCount(),
+                               ALMMultiplier, MaskElementSizeInBytes},
+                              nullptr, "active.lane.mask");
   }
 
   // Walk users of WideCanonicalIV and replace the header mask of the form
@@ -4385,12 +4392,14 @@ static bool handleUncountableExitsWithSideEffects(
   Type *IVScalarTy = IV->getScalarType();
   Type *FirstActiveTy = FirstActive->getScalarType();
   VPValue *ALMMultiplier = Plan.getConstantInt(IVScalarTy, 1);
+  VPValue *MaskElementSizeInBytes = Plan.getConstantInt(IVScalarTy, 0);
   VPValue *Zero = Plan.getZero(IVScalarTy);
   FirstActive = MaskBuilder.createScalarZExtOrTrunc(FirstActive, IVScalarTy,
                                                     FirstActiveTy, DebugLoc());
-  VPValue *Mask = MaskBuilder.createNaryOp(VPInstruction::ActiveLaneMask,
-                                           {Zero, FirstActive, ALMMultiplier},
-                                           DebugLoc(), "uncountable.exit.mask");
+  VPValue *Mask = MaskBuilder.createNaryOp(
+      VPInstruction::ActiveLaneMask,
+      {Zero, FirstActive, ALMMultiplier, MaskElementSizeInBytes}, DebugLoc(),
+      "uncountable.exit.mask");
 
   // Convert all other memory operations to use the mask.
   for (VPBasicBlock *VPBB : vp_rpo_plain_cfg_loop_body(HeaderVPBB))
@@ -5397,6 +5406,128 @@ void VPlanTransforms::materializeFactors(VPlan &Plan, VPBasicBlock *VectorPH,
       {RuntimeVF, Plan.getConstantInt(TCTy, Plan.getConcreteUF())},
       {true, false});
   VFxUF.replaceAllUsesWith(MulByUF);
+}
+
+void VPlanTransforms::scaleMemoryAccessesByUF(VPlan &Plan, ElementCount VF,
+                                              unsigned UF, bool FoldTail,
+                                              const TargetTransformInfo &TTI) {
+  if (UF == 1)
+    return;
+
+  Type *IVTy = Plan.getVectorLoopRegion()->getCanonicalIVType();
+
+  auto ScaleMemoryAccess = [&](VPWidenMemoryRecipe *MemOp,
+                               unsigned ScaleFactor) {
+    if (ScaleFactor == 1)
+      return;
+
+    MemOp->setScaleFactor(ScaleFactor);
+    if (auto *Load = dyn_cast<VPWidenLoadRecipe>(MemOp->getAsRecipe())) {
+      auto Builder = VPBuilder::getToInsertAfter(MemOp->getAsRecipe());
+      auto *LoadPart =
+          Builder.createNaryOp(VPInstruction::ExtractSubVectorForPart,
+                               {Load, Plan.getConstantInt(IVTy, 0)});
+      Load->replaceUsesWithIf(
+          LoadPart, [&](VPUser &U, unsigned) { return &U != LoadPart; });
+    } else {
+      auto Builder = VPBuilder(MemOp->getAsRecipe());
+      auto *Store = cast<VPWidenStoreRecipe>(MemOp->getAsRecipe());
+      auto *WideVal = Builder.createNaryOp(
+          VPInstruction::InsertSubVectorForPart, Store->getStoredValue());
+      Store->setOperand(1, WideVal);
+    }
+  };
+
+  /// Gathers masked memory operations that could be scaled. All operations will
+  /// be scaled by UF (to match the mask type). Only one access size will be
+  /// scaled (as the mask is only valid for one element type).
+  DenseMap<unsigned, SmallVector<VPWidenMemoryRecipe *>>
+      MemoryAccessByAccessSize;
+
+  VPActiveLaneMaskPHIRecipe *ALM = nullptr;
+
+  for (VPBasicBlock *VPBB : VPBlockUtils::blocksOnly<VPBasicBlock>(
+           vp_depth_first_deep(Plan.getVectorLoopRegion()->getEntry()))) {
+    for (VPRecipeBase &R : make_early_inc_range(*VPBB)) {
+      uint64_t Stride;
+      VPValue *Mask = nullptr;
+      VPValue *StoredValue = nullptr;
+      if ((!match(&R, m_Load(m_VecPtr(m_VPValue(), m_ConstantInt(Stride)))) &&
+           !match(&R, m_MaskedLoad(m_VecPtr(m_VPValue(), m_ConstantInt(Stride)),
+                                   m_VPValue(Mask))) &&
+           !match(&R,
+                  m_MaskedStore(m_VecPtr(m_VPValue(), m_ConstantInt(Stride)),
+                                m_VPValue(StoredValue), m_VPValue(Mask)))) ||
+          Stride != 1)
+        continue;
+
+      auto *MemOp = cast<VPWidenMemoryRecipe>(&R);
+      if (!MemOp->isConsecutive())
+        continue;
+
+      Type *AccessType = StoredValue ? StoredValue->getScalarType()
+                                     : R.getVPSingleValue()->getScalarType();
+      unsigned Opcode =
+          isa<VPWidenLoadRecipe, VPWidenLoadEVLRecipe>(MemOp->getAsRecipe())
+              ? Instruction::Load
+              : Instruction::Store;
+      unsigned ScaleFactor = TTI.preferredScaleFactorForContiguousMemoryOp(
+          Opcode, AccessType, VF, UF);
+
+      if (Mask) {
+        auto *LaneMask = dyn_cast<VPActiveLaneMaskPHIRecipe>(Mask);
+        if (!LaneMask)
+          continue;
+        if (ScaleFactor != UF)
+          continue;
+        ALM = LaneMask;
+        unsigned AccessSizeInBytes = AccessType->getScalarSizeInBits() / 8;
+        MemoryAccessByAccessSize[AccessSizeInBytes].push_back(MemOp);
+      } else {
+        ScaleMemoryAccess(MemOp, ScaleFactor);
+      }
+    }
+  }
+
+  if (!ALM || MemoryAccessByAccessSize.empty())
+    return;
+
+  // Choose to mask the access size that results in the most memory operations
+  // being scaled. Tie-break on the access size (favoring larger access sizes).
+  auto [MaskElementSizeInBytes, ScaledMaskedMemOps] = *llvm::max_element(
+      MemoryAccessByAccessSize, [](const auto &L, const auto &R) {
+        return std::pair(L.second.size(), L.first) <
+               std::pair(R.second.size(), R.first);
+      });
+
+  for (VPWidenMemoryRecipe *MemOp : ScaledMaskedMemOps)
+    ScaleMemoryAccess(MemOp, UF);
+
+  auto *EntryALM = cast<VPInstruction>(ALM->getStartValue());
+  auto *LoopALM = cast<VPInstruction>(ALM->getBackedgeValue());
+
+  assert((EntryALM->getOpcode() == VPInstruction::ActiveLaneMask &&
+          LoopALM->getOpcode() == VPInstruction::ActiveLaneMask) &&
+         "Expected incoming values of Phi to be ActiveLaneMasks");
+
+  // When using wide lane masks, the return type of the get.active.lane.mask
+  // intrinsic is VF x UF (last operand).
+  VPValue *ALMMultiplier = Plan.getConstantInt(IVTy, UF);
+  VPValue *MaskElementSize = Plan.getConstantInt(IVTy, MaskElementSizeInBytes);
+  for (auto *Mask : {EntryALM, LoopALM}) {
+    Mask->setOperand(2, ALMMultiplier);
+    Mask->setOperand(3, MaskElementSize);
+  }
+
+  auto Builder = VPBuilder(&*ALM->getParent()->getFirstNonPhi());
+  auto *MaskPart = Builder.createNaryOp(VPInstruction::ExtractSubVectorForPart,
+                                        {ALM, Plan.getConstantInt(IVTy, 0)});
+
+  ALM->replaceUsesWithIf(MaskPart, [&](VPUser &U, unsigned) {
+    auto *R =
+        dyn_cast_if_present<VPWidenMemoryRecipe>(dyn_cast<VPRecipeBase>(&U));
+    return &U != MaskPart && !(R && R->getScaleFactor() == UF);
+  });
 }
 
 void VPlanTransforms::attachAliasMaskToHeaderMask(VPlan &Plan) {

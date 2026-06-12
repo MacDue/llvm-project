@@ -941,6 +941,14 @@ public:
   /// Return true if the target supports strided load.
   LLVM_ABI bool isLegalStridedLoadStore(Type *DataType, Align Alignment) const;
 
+  /// Return the preferred scale factor for a contiguous load/store operation.
+  /// Returning 1 indicates the operation should not be scaled.
+  ///
+  /// \p Opcode must be either Instruction::Load or Instruction::Store.
+  LLVM_ABI unsigned
+  preferredScaleFactorForContiguousMemoryOp(unsigned Opcode, Type *DataType,
+                                            ElementCount VF, unsigned UF) const;
+
   /// Return true is the target supports interleaved access for the given vector
   /// type \p VTy, interleave factor \p Factor, alignment \p Alignment and
   /// address space \p AddrSpace.

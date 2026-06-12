@@ -548,6 +548,12 @@ bool TargetTransformInfo::isLegalStridedLoadStore(Type *DataType,
   return TTIImpl->isLegalStridedLoadStore(DataType, Alignment);
 }
 
+unsigned TargetTransformInfo::preferredScaleFactorForContiguousMemoryOp(
+    unsigned Opcode, Type *DataType, ElementCount VF, unsigned UF) const {
+  return TTIImpl->preferredScaleFactorForContiguousMemoryOp(Opcode, DataType,
+                                                            VF, UF);
+}
+
 bool TargetTransformInfo::isLegalInterleavedAccessType(
     VectorType *VTy, unsigned Factor, Align Alignment,
     unsigned AddrSpace) const {

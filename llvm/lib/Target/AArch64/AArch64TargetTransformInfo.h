@@ -280,6 +280,11 @@ public:
 
   bool isLegalMaskedExpandLoad(Type *DataTy, Align Alignment) const override;
 
+  unsigned
+  preferredScaleFactorForContiguousMemoryOp(unsigned Opcode, Type *DataType,
+                                            ElementCount VF,
+                                            unsigned UF) const override;
+
   void getUnrollingPreferences(Loop *L, ScalarEvolution &SE,
                                TTI::UnrollingPreferences &UP,
                                OptimizationRemarkEmitter *ORE) const override;

@@ -5191,6 +5191,30 @@ bool AArch64TTIImpl::isLegalMaskedExpandLoad(Type *DataTy,
          (ST->isSVEorStreamingSVEAvailable() && ST->hasSME2p2());
 }
 
+unsigned AArch64TTIImpl::preferredScaleFactorForContiguousMemoryOp(
+    unsigned Opcode, Type *DataTy, ElementCount VF, unsigned UF) const {
+  assert((Opcode == Instruction::Load || Opcode == Instruction::Store) &&
+         "expected load/store opcode");
+
+  if ((Opcode != Instruction::Load && Opcode != Instruction::Store) ||
+      !ST->hasSVE2p1() || !VF.isScalable() || !isPowerOf2_32(UF))
+    return 1;
+
+  unsigned VectorWidth = VF.getKnownMinValue() * DataTy->getScalarSizeInBits();
+  if (VectorWidth % 128 != 0)
+    return 1;
+
+  for (unsigned TargetWidth : {512u, 256u}) {
+    if (VectorWidth < TargetWidth) {
+      unsigned Scale = TargetWidth / VectorWidth;
+      if (Scale <= UF)
+        return Scale;
+    }
+  }
+
+  return 1;
+}
+
 unsigned AArch64TTIImpl::getMaxInterleaveFactor(ElementCount VF) const {
   if (VF.isScalar())
     return 4;

@@ -505,6 +505,9 @@ Type *llvm::computeScalarTypeForInstruction(unsigned Opcode,
     return StructTy->getTypeAtIndex(
         cast<VPConstantInt>(Operands[1])->getZExtValue());
   }
+  case VPInstruction::InsertSubVectorForPart:
+  case VPInstruction::ExtractSubVectorForPart:
+    return Op0Ty;
   case VPInstruction::FirstActiveLane:
   case VPInstruction::LastActiveLane:
   case VPInstruction::NumActiveLanes:
@@ -606,17 +609,19 @@ unsigned VPInstruction::getNumOperandsForOpcode() const {
   case VPInstruction::PtrAdd:
   case VPInstruction::WidePtrAdd:
   case VPInstruction::WideIVStep:
+  case VPInstruction::ExtractSubVectorForPart:
   case VPInstruction::CalculateTripCountMinusVF:
   case VPInstruction::ResumeForEpilogue:
     return 2;
   case Instruction::InsertElement:
   case Instruction::Select:
-  case VPInstruction::ActiveLaneMask:
   case VPInstruction::ReductionStartVector:
     return 3;
   case Instruction::Call:
     return getCalledFnOperandIndex(ArrayRef<VPValue *>(op_begin(), op_end())) +
            1;
+  case VPInstruction::ActiveLaneMask:
+    return 4;
   case Instruction::GetElementPtr:
   case Instruction::PHI:
   case Instruction::Switch:
@@ -629,6 +634,7 @@ unsigned VPInstruction::getNumOperandsForOpcode() const {
   case VPInstruction::LastActiveLane:
   case VPInstruction::ExtractLane:
   case VPInstruction::ExtractLastActive:
+  case VPInstruction::InsertSubVectorForPart:
     // Cannot determine the number of operands from the opcode.
     return -1u;
   }
@@ -731,6 +737,29 @@ Value *VPInstruction::generate(VPTransformState &State) {
     return Builder.CreateSelectFMF(Cond, Op1, Op2, getFastMathFlagsOrNone(),
                                    Name);
   }
+  case VPInstruction::ExtractSubVectorForPart: {
+    Value *Vec = State.get(getOperand(0));
+    Type *SubTy = VectorType::get(Vec->getType()->getScalarType(), State.VF);
+    if (Vec->getType() == SubTy)
+      return Vec;
+    unsigned WideParts =
+        Vec->getType()->getPrimitiveSizeInBits().getKnownMinValue() /
+        SubTy->getPrimitiveSizeInBits().getKnownMinValue();
+    unsigned Part = cast<VPConstantInt>(getOperand(1))->getZExtValue();
+    return Builder.CreateExtractVector(
+        SubTy, Vec, State.VF.getKnownMinValue() * (Part % WideParts));
+  }
+  case VPInstruction::InsertSubVectorForPart: {
+    auto *WideDataTy = VectorType::get(
+        getScalarType(), State.VF.multiplyCoefficientBy(getNumOperands()));
+    Value *WideData = PoisonValue::get(WideDataTy);
+    for (unsigned I = 0; I < getNumOperands(); ++I) {
+      Value *Part = State.get(getOperand(I));
+      WideData = Builder.CreateInsertVector(WideDataTy, WideData, Part,
+                                            I * State.VF.getKnownMinValue());
+    }
+    return WideData;
+  }
   case VPInstruction::ActiveLaneMask: {
     // Get first lane of vector induction variable.
     Value *VIVElem0 = State.get(getOperand(0), VPLane(0));
@@ -746,6 +775,16 @@ Value *VPInstruction::generate(VPTransformState &State) {
     ElementCount EC = State.VF.multiplyCoefficientBy(
         cast<VPConstantInt>(getOperand(2))->getZExtValue());
     auto *PredTy = VectorType::get(Builder.getInt1Ty(), EC);
+
+    unsigned MaskElementSizeInBytes =
+        cast<VPConstantInt>(getOperand(3))->getZExtValue();
+    if (MaskElementSizeInBytes > 0)
+      return Builder.CreateIntrinsic(
+          Intrinsic::get_active_lane_mask_for_type,
+          {PredTy, ScalarTC->getType()},
+          {VIVElem0, ScalarTC, Builder.getInt64(MaskElementSizeInBytes)},
+          nullptr, Name);
+
     return Builder.CreateIntrinsic(Intrinsic::get_active_lane_mask,
                                    {PredTy, ScalarTC->getType()},
                                    {VIVElem0, ScalarTC}, nullptr, Name);
@@ -1483,6 +1522,7 @@ void VPInstruction::addOperand(VPValue *Op) {
   case VPInstruction::ComputeReductionResult:
   case VPInstruction::BuildVector:
   case VPInstruction::BuildStructVector:
+  case VPInstruction::InsertSubVectorForPart:
     assert(Ty == getOperand(0)->getScalarType() &&
            "appended operand must match operand 0's scalar type");
     break;
@@ -1573,6 +1613,8 @@ bool VPInstruction::opcodeMayReadOrWriteFromMemory() const {
   case VPInstruction::ExtractPenultimateElement:
   case VPInstruction::ActiveLaneMask:
   case VPInstruction::IncomingAliasMask:
+  case VPInstruction::ExtractSubVectorForPart:
+  case VPInstruction::InsertSubVectorForPart:
   case VPInstruction::ExitingIVValue:
   case VPInstruction::ExplicitVectorLength:
   case VPInstruction::FirstActiveLane:
@@ -1697,6 +1739,12 @@ void VPInstruction::printRecipe(raw_ostream &O, const Twine &Indent,
     break;
   case VPInstruction::IncomingAliasMask:
     O << "incoming-alias-mask";
+    break;
+  case VPInstruction::ExtractSubVectorForPart:
+    O << "extract-sub-vector-for-part";
+    break;
+  case VPInstruction::InsertSubVectorForPart:
+    O << "insert-sub-vector-for-part";
     break;
   case VPInstruction::ExplicitVectorLength:
     O << "EXPLICIT-VECTOR-LENGTH";
@@ -4045,7 +4093,8 @@ InstructionCost VPWidenMemoryRecipe::computeCost(ElementCount VF,
 
 void VPWidenLoadRecipe::execute(VPTransformState &State) {
   Type *ScalarDataTy = getScalarType();
-  auto *DataTy = VectorType::get(ScalarDataTy, State.VF);
+  auto *DataTy = VectorType::get(ScalarDataTy,
+                                 State.VF.multiplyCoefficientBy(ScaleFactor));
   bool CreateGather = !isConsecutive();
 
   auto &Builder = State.Builder;
@@ -4075,6 +4124,8 @@ void VPWidenLoadRecipe::printRecipe(raw_ostream &O, const Twine &Indent,
   O << Indent << "WIDEN ";
   printAsOperand(O, SlotTracker);
   O << " = load ";
+  if (ScaleFactor > 1)
+    O << "x" << ScaleFactor << ' ';
   printOperands(O, SlotTracker);
 }
 #endif
@@ -4163,6 +4214,8 @@ void VPWidenStoreRecipe::execute(VPTransformState &State) {
 void VPWidenStoreRecipe::printRecipe(raw_ostream &O, const Twine &Indent,
                                      VPSlotTracker &SlotTracker) const {
   O << Indent << "WIDEN store ";
+  if (ScaleFactor > 1)
+    O << "x" << ScaleFactor << ' ';
   printOperands(O, SlotTracker);
 }
 #endif

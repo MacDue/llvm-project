@@ -340,6 +340,9 @@ static cl::opt<bool> ForceOrderedReductions(
     cl::desc("Enable the vectorisation of loops with in-order (strict) "
              "FP reductions"));
 
+static cl::opt<bool> ForceWideMemOps("force-wide-mem-ops", cl::init(false),
+                                     cl::Hidden, cl::desc("Foo"));
+
 static cl::opt<bool> PreferPredicatedReductionSelect(
     "prefer-predicated-reduction-select", cl::init(false), cl::Hidden,
     cl::desc(
@@ -5918,6 +5921,9 @@ DenseMap<const SCEV *, Value *> LoopVectorizationPlanner::executePlan(
                  CM.ValuesToIgnore);
   // TODO: Move to VPlan transform stage once the transition to the VPlan-based
   // cost model is complete for better cost estimates.
+  if (ForceWideMemOps)
+    RUN_VPLAN_PASS(VPlanTransforms::scaleMemoryAccessesByUF, BestVPlan, BestVF,
+                   BestUF, CM.foldTailByMasking(), CM.TTI);
   RUN_VPLAN_PASS(VPlanTransforms::unrollByUF, BestVPlan, BestUF);
   RUN_VPLAN_PASS(VPlanTransforms::materializePacksAndUnpacks, BestVPlan);
   RUN_VPLAN_PASS(VPlanTransforms::materializeBroadcasts, BestVPlan);

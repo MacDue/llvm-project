@@ -422,6 +422,11 @@ public:
     return false;
   }
 
+  virtual unsigned preferredScaleFactorForContiguousMemoryOp(
+      unsigned Opcode, Type *DataType, ElementCount VF, unsigned UF) const {
+    return 1;
+  }
+
   virtual bool isLegalInterleavedAccessType(VectorType *VTy, unsigned Factor,
                                             Align Alignment,
                                             unsigned AddrSpace) const {
