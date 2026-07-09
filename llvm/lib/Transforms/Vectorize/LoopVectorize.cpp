@@ -203,7 +203,7 @@ static cl::opt<unsigned> VectorizeMemoryCheckThreshold(
     cl::desc("The maximum allowed number of runtime memory checks"));
 
 static cl::opt<bool> ForcePartialAliasingVectorization(
-    "force-partial-aliasing-vectorization", cl::init(false), cl::Hidden,
+    "force-partial-aliasing-vectorization", cl::init(true), cl::Hidden,
     cl::desc("Replace pointer diff checks with alias masks."));
 
 /// Option tail-folding-policy controls the tail-folding strategy and lists all
@@ -214,7 +214,8 @@ static cl::opt<bool> ForcePartialAliasingVectorization(
 enum class TailFoldingPolicyTy { None = 0, PreferFoldTail, MustFoldTail };
 
 static cl::opt<TailFoldingPolicyTy> TailFoldingPolicy(
-    "tail-folding-policy", cl::init(TailFoldingPolicyTy::None), cl::Hidden,
+    "tail-folding-policy", cl::init(TailFoldingPolicyTy::MustFoldTail),
+    cl::Hidden,
     cl::desc("Tail-folding preferences over creating an epilogue loop."),
     cl::values(
         clEnumValN(TailFoldingPolicyTy::None, "dont-fold-tail",
@@ -7159,23 +7160,23 @@ getEpilogueLowering(Function *F, Loop *L, LoopVectorizeHints &Hints,
     return CM_EpilogueNotAllowedOptSize;
 
   // 2) If set, obey the directives
-  if (TailFoldingPolicy.getNumOccurrences()) {
-    switch (TailFoldingPolicy) {
-    case TailFoldingPolicyTy::None:
-      return CM_EpilogueAllowed;
-    case TailFoldingPolicyTy::PreferFoldTail:
-      return CM_EpilogueNotNeededFoldTail;
-    case TailFoldingPolicyTy::MustFoldTail:
-      return CM_EpilogueNotAllowedFoldTail;
-    };
-  }
-
-  // 3) If set, obey the hints
-  switch (Hints.getPredicate()) {
-  case LoopVectorizeHints::FK_Enabled:
-    return CM_EpilogueNotNeededFoldTail;
-  case LoopVectorizeHints::FK_Disabled:
+  // if (TailFoldingPolicy.getNumOccurrences()) {
+  switch (TailFoldingPolicy) {
+  case TailFoldingPolicyTy::None:
     return CM_EpilogueAllowed;
+  case TailFoldingPolicyTy::PreferFoldTail:
+    return CM_EpilogueNotNeededFoldTail;
+  case TailFoldingPolicyTy::MustFoldTail:
+    return CM_EpilogueNotAllowedFoldTail;
+    };
+    // }
+
+    // 3) If set, obey the hints
+    switch (Hints.getPredicate()) {
+    case LoopVectorizeHints::FK_Enabled:
+      return CM_EpilogueNotNeededFoldTail;
+    case LoopVectorizeHints::FK_Disabled:
+      return CM_EpilogueAllowed;
   };
 
   // 4) if the TTI hook indicates this is profitable, request tail-folding.
@@ -8362,6 +8363,9 @@ bool LoopVectorizePass::processLoop(Loop *L) {
 }
 
 LoopVectorizeResult LoopVectorizePass::runImpl(Function &F) {
+
+  TailFoldingPolicy = TailFoldingPolicyTy::MustFoldTail;
+  TailFoldingPolicy.setNumOccurrencesFlag(cl::NumOccurrencesFlag::Required);
 
   // Don't attempt if
   // 1. the target claims to have no vector registers, and
