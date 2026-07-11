@@ -17,6 +17,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
@@ -162,6 +163,7 @@ private:
   bool shrinkType(Instruction &I);
   bool shrinkLoadForShuffles(Instruction &I);
   bool shrinkPhiOfShuffles(Instruction &I);
+  bool foldDeinterleaveInterleavePair(Instruction &I);
 
   void replaceValue(Instruction &Old, Value &New, bool Erase = true) {
     LLVM_DEBUG(dbgs() << "VC: Replacing: " << Old << '\n');
@@ -5882,6 +5884,212 @@ bool VectorCombine::foldInsExtVectorToShuffle(Instruction &I) {
   return true;
 }
 
+/// Tries to fold away a matched pair of vector.deinterleave/interleave
+/// intrinsics with a chain of elementwise operations on each between the
+/// deinterleave and interleave.
+///
+/// For example:
+///  ```
+///  %d = call { <2 x i16>, <2 x i16> } @deinterleave2.v4i16(<4 x i16> %v)
+///  %f0 = extractvalue { <2 x i16>, <2 x i16> } %d, 0
+///  %f1 = extractvalue { <2 x i16>, <2 x i16> } %d, 1
+///
+///  %u0 = add <2 x i16> %f0, splat (i16 3)
+///  %u1 = add <2 x i16> %f1, splat (i16 3)
+///
+///  %r = call <4 x i16> @interleave2.v4i16(<2 x i16> %u0, <2 x i16> %u1)
+///  ```
+/// Folds to:
+///  ```
+///  %r = add <4 x i16> %v, splat (i16 3)
+///  ```
+bool VectorCombine::foldDeinterleaveInterleavePair(Instruction &I) {
+  auto *II = dyn_cast<IntrinsicInst>(&I);
+  if (!II)
+    return false;
+
+  Value *WideValue = I.getOperand(0);
+  if (!WideValue->getType()->isScalableTy())
+    return false;
+
+  unsigned Segments;
+  Intrinsic::ID InterleaveIID;
+
+  switch (II->getIntrinsicID()) {
+  case Intrinsic::vector_deinterleave2:
+    Segments = 2;
+    InterleaveIID = Intrinsic::vector_interleave2;
+    break;
+  case Intrinsic::vector_deinterleave3:
+    Segments = 3;
+    InterleaveIID = Intrinsic::vector_interleave3;
+    break;
+  case Intrinsic::vector_deinterleave4:
+    Segments = 4;
+    InterleaveIID = Intrinsic::vector_interleave4;
+    break;
+  case Intrinsic::vector_deinterleave5:
+    Segments = 5;
+    InterleaveIID = Intrinsic::vector_interleave5;
+    break;
+  case Intrinsic::vector_deinterleave6:
+    Segments = 6;
+    InterleaveIID = Intrinsic::vector_interleave6;
+    break;
+  case Intrinsic::vector_deinterleave7:
+    Segments = 7;
+    InterleaveIID = Intrinsic::vector_interleave7;
+    break;
+  case Intrinsic::vector_deinterleave8:
+    Segments = 8;
+    InterleaveIID = Intrinsic::vector_interleave8;
+    break;
+  default:
+    return false;
+  }
+
+  if (II->getNumUses() != Segments)
+    return false;
+
+  using InterleaveOps = SmallVector<Use *>;
+
+  InterleaveOps Ops(Segments);
+  for (Use &U : II->uses()) {
+    auto *UI = dyn_cast<Instruction>(U.getUser());
+    if (!UI || !match(UI, m_ExtractValue(m_Specific(II))))
+      return false;
+
+    auto *Extract = cast<ExtractValueInst>(UI);
+    Ops[Extract->getIndices().front()] = &U;
+  }
+
+  SmallVector<InterleaveOps> RewriteChain;
+  IntrinsicInst *InterleaveII = nullptr;
+
+  LLVM_DEBUG(dbgs() << "Trying to fold deinterleave/interleave chain...\n");
+
+  unsigned Step = 1;
+  while (Step < MaxInstrsToScan) {
+    unsigned UseIdx;
+    const Instruction *PrevInst = nullptr;
+
+    LLVM_DEBUG(dbgs() << "Step: " << Step << '\n');
+
+    for (auto [I, Op] : enumerate(Ops)) {
+      if (!Op)
+        return false;
+
+      Value *V = Op->getUser();
+      if (!V)
+        return false;
+
+      LLVM_DEBUG(dbgs() << "Inspecting chain: " << I << '\n');
+      LLVM_DEBUG(V->dump());
+
+      Use *U = V->getSingleUndroppableUse();
+      if (!U)
+        return false;
+
+      auto *UI = dyn_cast_if_present<Instruction>(U->getUser());
+      if (!UI)
+        return false;
+
+      unsigned OpIdx = U->getOperandNo();
+
+      // Allow elementwise operations uses each deinterleaved segment.
+      if (isa<BinaryOperator, TruncInst>(UI)) {
+        if (InterleaveII)
+          return false;
+
+        Ops[I] = U;
+
+        if (!PrevInst) {
+          PrevInst = UI;
+          UseIdx = OpIdx;
+          continue;
+        }
+
+        // Each use must be identical (other than using a different segment).
+        if (UseIdx != OpIdx || UI->getOpcode() != PrevInst->getOpcode() ||
+            UI->getType() != PrevInst->getType())
+          return false;
+
+        if (UI->getNumOperands() > 1) {
+          Value *OtherOp = UI->getOperand(1 - OpIdx);
+          // TODO: This probably could be extended beyond splat values.
+          if (OtherOp != PrevInst->getOperand(1 - OpIdx) ||
+              !getSplatValue(OtherOp))
+            return false;
+        }
+      } else if (isa<IntrinsicInst>(UI)) {
+        if (PrevInst)
+          return false;
+
+        auto *UII = cast<IntrinsicInst>(UI);
+
+        if (UII->getIntrinsicID() != InterleaveIID ||
+            (InterleaveII && UII != InterleaveII) || OpIdx != I)
+          return false;
+
+        LLVM_DEBUG(dbgs() << "Found interleave: " << OpIdx << '\n');
+
+        InterleaveII = UII;
+      } else {
+        // TODO: Extend this combine to handle more instructions.
+        return false;
+      }
+    }
+
+    if (InterleaveII)
+      break;
+
+    RewriteChain.push_back(Ops);
+    ++Step;
+  }
+
+  if (!InterleaveII)
+    return false;
+
+  LLVM_DEBUG(dbgs() << "Replacing deinterleave/interleave chain\n");
+  Builder.SetInsertPoint(&I);
+
+  for (InterleaveOps &Ops : RewriteChain) {
+    auto *Inst = cast<Instruction>(Ops[0]->getUser());
+    VectorType *WideVecTy = cast<VectorType>(WideValue->getType());
+    unsigned WideUseIdx = Ops[0]->getOperandNo();
+
+    Builder.SetInsertPoint(Inst);
+    Builder.SetCurrentDebugLocation(Inst->getDebugLoc());
+
+    if (auto *BinOp = dyn_cast<BinaryOperator>(Inst)) {
+      Value *Splat = BinOp->getOperand(1 - WideUseIdx);
+      Value *SplatValue = getSplatValue(Splat);
+
+      Value *LHS = WideValue;
+      Value *RHS =
+          Builder.CreateVectorSplat(WideVecTy->getElementCount(), SplatValue);
+      if (WideUseIdx != 0)
+        std::swap(LHS, RHS);
+
+      WideValue = Builder.CreateBinOp(BinOp->getOpcode(), LHS, RHS);
+    } else if (auto *Trunc = dyn_cast<TruncInst>(Inst)) {
+      VectorType *TruncTy = VectorType::get(Trunc->getDestTy()->getScalarType(),
+                                            WideVecTy->getElementCount());
+
+      WideValue = Builder.CreateTrunc(WideValue, TruncTy);
+    } else {
+      llvm_unreachable("Unexpected instruction!");
+    }
+    WideUseIdx = Inst->use_begin()->getOperandNo();
+    propagateIRFlags(WideValue, map_to_vector(Ops, [](Use *U) -> Value * {
+                       return U->getUser();
+                     }));
+  }
+
+  replaceValue(*InterleaveII, *WideValue);
+  return true;
+}
+
 /// If we're interleaving 2 constant splats, for instance `<vscale x 8 x i32>
 /// <splat of 666>` and `<vscale x 8 x i32> <splat of 777>`, we can create a
 /// larger splat `<vscale x 8 x i64> <splat of ((777 << 32) | 666)>` first
@@ -5952,6 +6160,9 @@ bool VectorCombine::foldInterleaveIntrinsics(Instruction &I) {
 /// %merge1 = bitcast <vscale x 16 x i16> %f1 to <vscale x 8 x i32>
 /// ```
 bool VectorCombine::foldDeinterleaveIntrinsics(Instruction &I) {
+  if (foldDeinterleaveInterleavePair(I))
+    return true;
+
   // This pattern involves bitcast that is not compatible with big endian.
   if (DL->isBigEndian())
     return false;
