@@ -706,6 +706,11 @@ bool LoopVectorizationPlanner::isMoreProfitable(const VectorizationFactor &A,
         !B.Width.isScalar())
       return true;
 
+  // Prefer fixed VFs for the epilogue when the trip count is unknown.
+  if (!MaxTripCount && IsEpilogue && A.Width.isFixed() && CostA.isValid() &&
+      B.Width.isScalable())
+    return true;
+
   // Improve estimate for the vector width if it is scalable.
   unsigned EstimatedWidthA = A.Width.getKnownMinValue();
   unsigned EstimatedWidthB = B.Width.getKnownMinValue();
