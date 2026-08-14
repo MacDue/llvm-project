@@ -1829,5 +1829,6 @@ bool MonotonicDescriptor::isMonotonicVal(Value *Val, const Loop *L,
     return false;
 
   ValueToSCEVMapTy Map{{CurInst, Desc.getExpr()}};
-  return Desc.setSCEV(SCEVParameterRewriter::rewrite(SE.getSCEV(Val), SE, Map));
+  return Desc.setIfAffineAddRec(
+      SCEVParameterRewriter::rewrite(SE.getSCEV(Val), SE, Map));
 }
