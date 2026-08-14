@@ -1697,7 +1697,7 @@ bool InductionDescriptor::isInductionPHI(
   return true;
 }
 
-bool MonotonicDescriptor::setSCEV(const SCEV *NewExpr) {
+bool MonotonicDescriptor::setIfAffineAddRec(const SCEV *NewExpr) {
   auto *AddRec = dyn_cast<SCEVAddRecExpr>(NewExpr);
   if (!AddRec || !AddRec->isAffine())
     return false;

@@ -498,7 +498,7 @@ public:
   MonotonicDescriptor(SmallPtrSetImpl<PHINode *> &Chain, Instruction *StepInst,
                       Edge PredEdge, const SCEV *Expr)
       : Chain(llvm::from_range, Chain), StepInst(StepInst), PredEdge(PredEdge) {
-    setSCEV(Expr);
+    setIfAffineAddRec(Expr);
   }
 
   /// Returns the PHIs that feed into the backedge of the monotonic PHI.
@@ -548,7 +548,7 @@ private:
   /// Set the SCEV expression for this descriptor. Returns true if the
   /// expression was successfully updated, this requires \p NewExpr must be an
   /// affine SCEVAddRec.
-  bool setSCEV(const SCEV *NewExpr);
+  bool setIfAffineAddRec(const SCEV *NewExpr);
 };
 
 } // end namespace llvm
