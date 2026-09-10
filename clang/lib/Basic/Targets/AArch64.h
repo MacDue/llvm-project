@@ -15,7 +15,7 @@
 
 #include "OSTargets.h"
 #include "clang/Basic/TargetBuiltins.h"
-#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/TargetParser/AArch64TargetParser.h"
 #include <optional>
 
@@ -30,7 +30,7 @@ static constexpr LangASMap ARM64AddrSpaceMap = {
     {LangAS::ptr64, static_cast<unsigned>(AArch64AddrSpace::ptr64)},
 };
 
-using AArch64FeatureSet = llvm::SmallDenseSet<StringRef, 32>;
+using AArch64FeatureSet = llvm::StringSet<>;
 
 class LLVM_LIBRARY_VISIBILITY AArch64TargetInfo : public TargetInfo {
   static const TargetInfo::GCCRegAlias GCCRegAliases[];
