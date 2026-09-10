@@ -24,7 +24,8 @@ namespace llvm {
 class AArch64TargetMachine : public CodeGenTargetMachineImpl {
 protected:
   std::unique_ptr<TargetLoweringObjectFile> TLOF;
-  mutable StringMap<std::unique_ptr<AArch64Subtarget>> SubtargetMap;
+  using CacheKey = std::tuple<uint64_t, StringRef, StringRef, StringRef>;
+  mutable DenseMap<CacheKey, std::unique_ptr<AArch64Subtarget>> SubtargetMap;
 
   /// Reset internal state.
   void reset() override;

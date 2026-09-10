@@ -475,23 +475,14 @@ AArch64TargetMachine::getSubtargetImpl(const Function &F) const {
     MaxSVEVectorSize = std::max(MinSVEVectorSize, MaxSVEVectorSize);
   }
 
-  SmallString<512> Key;
-  // This lookup is hot during repeated TTI queries, so build the key directly
-  // instead of formatting through raw_svector_ostream.
-  Key += "SVEMin";
-  Key += utostr(MinSVEVectorSize);
-  Key += "SVEMax";
-  Key += utostr(MaxSVEVectorSize);
-  Key += "IsStreaming=";
-  Key += utostr(IsStreaming);
-  Key += "IsStreamingCompatible=";
-  Key += utostr(IsStreamingCompatible);
-  Key += CPU;
-  Key += TuneCPU;
-  Key += FS;
-  Key += "HasMinSize=";
-  Key += utostr(HasMinSize);
+  // Assume MinSVEVectorSize and MaxSVEVectorSize are 16-bit. Place those in
+  // the top 32-bits. Store all flags in the bottom 32-bits.
+  uint64_t Props =
+      (uint64_t(uint16_t(MinSVEVectorSize)) << 48) |
+      (uint64_t(uint16_t(MaxSVEVectorSize)) << 32) | uint64_t(IsStreaming) |
+      (uint64_t(IsStreamingCompatible) << 1) | (uint64_t(HasMinSize) << 2);
 
+  CacheKey Key(Props, CPU, TuneCPU, FS);
   auto &I = SubtargetMap[Key];
   if (!I) {
     I = std::make_unique<AArch64Subtarget>(
