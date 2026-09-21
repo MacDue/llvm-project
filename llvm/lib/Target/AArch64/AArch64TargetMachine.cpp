@@ -54,6 +54,7 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/LowerIFunc.h"
 #include "llvm/Transforms/Vectorize/LoopIdiomVectorize.h"
+#include "llvm/Transforms/Vectorize/LoopVectorize.h"
 #include <memory>
 
 using namespace llvm;
@@ -658,20 +659,27 @@ void AArch64TargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
           PM.addPass(LowerIFuncPass());
         });
 
-  PB.registerExtraVectorizerPassesEPCallback(
-      [TM = this](FunctionPassManager &FPM, OptimizationLevel Level) {
-        // Try to use tbl in place of other shuffling operations if doing so
-        // would reduce the total number of instructions. Shuffle masks for big
-        // endian may be different, so require a little endian target.
-        LoopPassManager LPM;
-        if (Level >= OptimizationLevel::O2 &&
-            EnableSVEShuffleOpt == EnableVectorPass::AfterLoopVec &&
-            TM->getTargetTriple().isLittleEndian())
-          LPM.addPass(AArch64SVEShuffleOptsPass(*TM));
+  PB.registerVectorizerEndEPCallback([TM = this](FunctionPassManager &FPM,
+                                                 OptimizationLevel Level) {
+    // Try to use tbl in place of other shuffling operations if doing so
+    // would reduce the total number of instructions. Shuffle masks for big
+    // endian may be different, so require a little endian target.
+    LoopPassManager LPM;
+    if (Level >= OptimizationLevel::O2 &&
+        EnableSVEShuffleOpt == EnableVectorPass::AfterLoopVec &&
+        TM->getTargetTriple().isLittleEndian())
+      LPM.addPass(AArch64SVEShuffleOptsPass(*TM));
 
-        if (!LPM.isEmpty())
-          FPM.addPass(createFunctionToLoopPassAdaptor(std::move(LPM)));
-      });
+    if (LPM.isEmpty())
+      return;
+
+    // FIXME: This will fail if -extra-vectorizer-passes is set, which consumes
+    // ShouldRunExtraVectorPasses.
+    ExtraFunctionPassManager<ShouldRunExtraVectorPasses> PostVectorizePasses;
+    PostVectorizePasses.addPass(
+        createFunctionToLoopPassAdaptor(std::move(LPM)));
+    FPM.addPass(std::move(PostVectorizePasses));
+  });
 }
 
 TargetTransformInfo
