@@ -10318,6 +10318,7 @@ multiclass sve2p1_mem_cld_si_2z<string mnemonic, bits<2> msz, bit n,
   def NAME : sve2p1_mem_cld_si_2z<mnemonic, msz, n, vector_ty>;
   def : InstAlias<mnemonic # " $Zt, $PNg/z, [$Rn]",
                   (!cast<Instruction>(NAME) vector_ty:$Zt, PNRAny_p8to15:$PNg, GPR64sp:$Rn, 0), 1>;
+  let hasSideEffects = 0, mayLoad = 1 in
   def NAME # _PSEUDO : Pseudo<(outs vector_pseudo_ty:$Zt), (ins PNRAny_p8to15:$PNg, GPR64sp:$Rn, simm4s2:$imm4), []>;
 }
 
@@ -10382,6 +10383,7 @@ multiclass sve2p1_mem_cld_si_4z<string mnemonic, bits<2> msz, bit n,
   def NAME : sve2p1_mem_cld_si_4z<mnemonic, msz, n, vector_ty>;
   def : InstAlias<mnemonic # " $Zt, $PNg/z, [$Rn]",
                   (!cast<Instruction>(NAME) vector_ty:$Zt, PNRAny_p8to15:$PNg, GPR64sp:$Rn, 0), 1>;
+  let hasSideEffects = 0, mayLoad = 1 in
   def NAME # _PSEUDO : Pseudo<(outs vector_pseudo_ty:$Zt), (ins PNRAny_p8to15:$PNg, GPR64sp:$Rn, simm4s4:$imm4), []>;
 }
 
