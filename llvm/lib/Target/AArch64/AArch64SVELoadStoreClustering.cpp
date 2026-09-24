@@ -31,7 +31,7 @@ using namespace llvm;
 namespace {
 
 struct SVELoadStoreCluster {
-  Register Base;
+  MachineOperand Base;
   int64_t LowOffset;
   SmallVector<MachineInstr *, 4> OffsetToMI;
   MachineBasicBlock::iterator FirstIt;
@@ -80,8 +80,11 @@ private:
   }
 
   static bool isClusterableAccess(const MachineInstr &MI) {
-    if (!isSupportedAccess(MI) || MI.isBundled() ||
-        MI.getOperand(1).getSubReg())
+    if (!isSupportedAccess(MI) || MI.isBundled())
+      return false;
+
+    const MachineOperand &Base = MI.getOperand(1);
+    if ((!Base.isReg() && !Base.isFI()) || (Base.isReg() && Base.getSubReg()))
       return false;
 
     for (const MachineOperand &MO : MI.operands()) {
@@ -122,7 +125,8 @@ void AArch64SVELoadStoreClustering::collectClusters(
     }
 
     unsigned Opcode = It->getOpcode();
-    Register Base = It->getOperand(1).getReg();
+    MachineOperand Base = It->getOperand(1);
+    Base.clearParent();
     MachineBasicBlock::iterator FirstIt = It;
     MachineBasicBlock::iterator LastIt = It;
     int64_t LowOffset = It->getOperand(2).getImm();
@@ -134,7 +138,7 @@ void AArch64SVELoadStoreClustering::collectClusters(
 
     while (It != MBB.end()) {
       if (!isClusterableAccess(*It) || It->getOpcode() != Opcode ||
-          It->getOperand(1).getReg() != Base) {
+          !It->getOperand(1).isIdenticalTo(Base)) {
         bool SawStore = true;
         if (!It->isDebugInstr() && (It->modifiesRegister(AArch64::VG, &TRI) ||
                                     !It->isSafeToMove(SawStore)))
@@ -251,6 +255,11 @@ static bool getElementSize(SVELoadStoreCluster &Cluster,
         return false;
 
       unsigned Size = MMO->getMemoryType().getScalarSizeInBits();
+      // Type legalization represents full-register LDR/STR accesses using an
+      // opaque scalable i128 element. Fall back to D for these on little
+      // endian, as for accesses without a memory operand.
+      if (Size == 128)
+        continue;
       if (Size != 8 && Size != 16 && Size != 32 && Size != 64)
         return false;
       if (ElementSize && ElementSize != Size)
@@ -320,7 +329,7 @@ bool AArch64SVELoadStoreClustering::rewriteClusters(
       if (Cluster.IsLoad) {
         BuildMI(MBB, InsertIt, DL, TII.get(Opcode), Tuple)
             .addReg(Pred)
-            .addReg(Cluster.Base)
+            .add(Cluster.Base)
             .addImm(Group.StartIndex / Group.NumVectors)
             .setMemRefs(MemRefs);
         for (unsigned I = 0; I != Group.NumVectors; ++I) {
@@ -345,7 +354,7 @@ bool AArch64SVELoadStoreClustering::rewriteClusters(
       BuildMI(MBB, InsertIt, DL, TII.get(Opcode))
           .addReg(Tuple)
           .addReg(Pred)
-          .addReg(Cluster.Base)
+          .add(Cluster.Base)
           .addImm(Group.StartIndex / Group.NumVectors)
           .setMemRefs(MemRefs);
     }
@@ -381,9 +390,13 @@ bool AArch64SVELoadStoreClustering::runOnMachineFunction(MachineFunction &MF) {
              << " cluster in bb." << MBB.getNumber();
       if (MBB.hasName())
         dbgs() << '.' << MBB.getName();
-      dbgs() << ": base "
-             << printReg(Cluster.Base, MF.getSubtarget().getRegisterInfo())
-             << ", low offset " << Cluster.LowOffset << ", "
+      dbgs() << ": base ";
+      if (Cluster.Base.isReg())
+        dbgs() << printReg(Cluster.Base.getReg(),
+                           MF.getSubtarget().getRegisterInfo());
+      else
+        Cluster.Base.print(dbgs(), MF.getSubtarget().getRegisterInfo());
+      dbgs() << ", low offset " << Cluster.LowOffset << ", "
              << Cluster.NumInstructions << " instructions\n";
       dbgs() << "  offset-to-reg:";
       for (unsigned Offset = 0; Offset != Cluster.OffsetToMI.size(); ++Offset)

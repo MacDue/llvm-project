@@ -190,7 +190,7 @@ body:             |
 ...
 
 ---
-name:            unsupported_element_size
+name:            opaque_element_size
 tracksRegLiveness: true
 isSSA:           true
 registers:
@@ -199,19 +199,21 @@ registers:
   - { id: 2, class: zpr }
 body:             |
   bb.0:
-    ; SVE2P1-LABEL: name: unsupported_element_size
+    ; SVE2P1-LABEL: name: opaque_element_size
     ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
-    ; SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 1 x s128>))
-    ; SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 1 x s128>))
+    ; SVE2P1-NEXT: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
+    ; SVE2P1-NEXT: [[LD1D_2Z:%[0-9]+]]:zpr2mul2 = LD1D_2Z_IMM_PSEUDO [[PTRUE_C_B]], [[DEF]], 0 :: (load (<vscale x 1 x s128>)), (load (<vscale x 1 x s128>))
+    ; SVE2P1-NEXT: [[COPY:%[0-9]+]]:zpr = COPY [[LD1D_2Z]].zsub0
+    ; SVE2P1-NEXT: [[COPY1:%[0-9]+]]:zpr = COPY [[LD1D_2Z]].zsub1
     ; SVE2P1-NEXT: RET_ReallyLR
     ;
-    ; NO-SVE2P1-LABEL: name: unsupported_element_size
+    ; NO-SVE2P1-LABEL: name: opaque_element_size
     ; NO-SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; NO-SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 1 x s128>))
     ; NO-SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 1 x s128>))
     ; NO-SVE2P1-NEXT: RET_ReallyLR
     ;
-    ; BE-LABEL: name: unsupported_element_size
+    ; BE-LABEL: name: opaque_element_size
     ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; BE-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 1 x s128>))
     ; BE-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 1 x s128>))
@@ -219,6 +221,38 @@ body:             |
     %0:gpr64sp = IMPLICIT_DEF
     %1:zpr = LDR_ZXI %0, 0 :: (load (<vscale x 1 x s128>))
     %2:zpr = LDR_ZXI %0, 1 :: (load (<vscale x 1 x s128>))
+    RET_ReallyLR
+...
+
+---
+name:            frame_index_base
+tracksRegLiveness: true
+isSSA:           true
+registers:
+  - { id: 0, class: zpr }
+  - { id: 1, class: zpr }
+stack:
+  - { id: 0, stack-id: scalable-vector, size: 32, alignment: 16 }
+body:             |
+  bb.0:
+    ; SVE2P1-LABEL: name: frame_index_base
+    ; SVE2P1: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
+    ; SVE2P1-NEXT: [[LD1D_2Z:%[0-9]+]]:zpr2mul2 = LD1D_2Z_IMM_PSEUDO [[PTRUE_C_B]], %stack.0, 0 :: (load (<vscale x 1 x s128>) from %stack.0), (load (<vscale x 1 x s128>) from %stack.0)
+    ; SVE2P1-NEXT: [[COPY:%[0-9]+]]:zpr = COPY [[LD1D_2Z]].zsub0
+    ; SVE2P1-NEXT: [[COPY1:%[0-9]+]]:zpr = COPY [[LD1D_2Z]].zsub1
+    ; SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; NO-SVE2P1-LABEL: name: frame_index_base
+    ; NO-SVE2P1: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI %stack.0, 0 :: (load (<vscale x 1 x s128>) from %stack.0)
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI %stack.0, 1 :: (load (<vscale x 1 x s128>) from %stack.0)
+    ; NO-SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; BE-LABEL: name: frame_index_base
+    ; BE: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI %stack.0, 0 :: (load (<vscale x 1 x s128>) from %stack.0)
+    ; BE-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI %stack.0, 1 :: (load (<vscale x 1 x s128>) from %stack.0)
+    ; BE-NEXT: RET_ReallyLR
+    %0:zpr = LDR_ZXI %stack.0, 0 :: (load (<vscale x 1 x s128>) from %stack.0)
+    %1:zpr = LDR_ZXI %stack.0, 1 :: (load (<vscale x 1 x s128>) from %stack.0)
     RET_ReallyLR
 ...
 
