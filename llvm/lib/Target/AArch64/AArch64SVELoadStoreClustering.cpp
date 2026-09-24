@@ -79,7 +79,26 @@ private:
            MI.getOpcode() == AArch64::STR_ZXI;
   }
 
+  static bool isClusterableAccess(const MachineInstr &MI) {
+    if (!isSupportedAccess(MI) || MI.isBundled() ||
+        MI.getOperand(1).getSubReg())
+      return false;
+
+    for (const MachineOperand &MO : MI.operands()) {
+      if (MO.isReg() && (MO.getReg().isPhysical() || MO.isUndef()))
+        return false;
+    }
+
+    for (MachineMemOperand *MMO : MI.memoperands()) {
+      if (MMO->isVolatile() || MMO->isAtomic())
+        return false;
+    }
+
+    return true;
+  }
+
   static void collectClusters(MachineBasicBlock &MBB,
+                              const TargetRegisterInfo &TRI,
                               SmallVectorImpl<SVELoadStoreCluster> &Clusters);
   static bool rewriteClusters(MachineFunction &MF,
                               SmallVectorImpl<SVELoadStoreCluster> &Clusters);
@@ -93,10 +112,11 @@ INITIALIZE_PASS(AArch64SVELoadStoreClustering, DEBUG_TYPE,
                 "AArch64 SVE Load/Store Clustering", false, false)
 
 void AArch64SVELoadStoreClustering::collectClusters(
-    MachineBasicBlock &MBB, SmallVectorImpl<SVELoadStoreCluster> &Clusters) {
+    MachineBasicBlock &MBB, const TargetRegisterInfo &TRI,
+    SmallVectorImpl<SVELoadStoreCluster> &Clusters) {
   MachineBasicBlock::iterator It = MBB.begin();
   while (It != MBB.end()) {
-    if (!isSupportedAccess(*It)) {
+    if (!isClusterableAccess(*It)) {
       ++It;
       continue;
     }
@@ -113,9 +133,11 @@ void AArch64SVELoadStoreClustering::collectClusters(
     bool HasDuplicateOffset = false;
 
     while (It != MBB.end()) {
-      if (!isSupportedAccess(*It) || It->getOpcode() != Opcode ||
+      if (!isClusterableAccess(*It) || It->getOpcode() != Opcode ||
           It->getOperand(1).getReg() != Base) {
-        if (It->mayLoadOrStore())
+        bool SawStore = true;
+        if (!It->isDebugInstr() && (It->modifiesRegister(AArch64::VG, &TRI) ||
+                                    !It->isSafeToMove(SawStore)))
           break;
         ++It;
         continue;
@@ -199,8 +221,13 @@ static Register getOrCreatePTrue(MachineBasicBlock &MBB,
                                  MachineBasicBlock::iterator Before,
                                  MachineRegisterInfo &MRI,
                                  const AArch64InstrInfo &TII) {
-  for (MachineBasicBlock::iterator It = MBB.begin(); It != Before; ++It) {
-    if (It->getOpcode() != AArch64::PTRUE_C_B)
+  MachineBasicBlock::iterator It = Before;
+  while (It != MBB.begin()) {
+    --It;
+    if (It->modifiesRegister(AArch64::VG, &TII.getRegisterInfo()))
+      break;
+    if (It->getOpcode() != AArch64::PTRUE_C_B ||
+        !It->getOperand(0).getReg().isVirtual())
       continue;
 
     Register Pred = It->getOperand(0).getReg();
@@ -210,22 +237,22 @@ static Register getOrCreatePTrue(MachineBasicBlock &MBB,
   }
 
   Register Pred = MRI.createVirtualRegister(&AArch64::PNR_p8to15RegClass);
-  BuildMI(MBB, MBB.getFirstNonPHI(), Before->getDebugLoc(),
-          TII.get(AArch64::PTRUE_C_B), Pred);
+  BuildMI(MBB, Before, Before->getDebugLoc(), TII.get(AArch64::PTRUE_C_B),
+          Pred);
   return Pred;
 }
 
-static bool getElementSize(SVELoadStoreCluster &Cluster, bool IsLittleEndian,
+static bool getElementSize(SVELoadStoreCluster &Cluster,
                            unsigned &ElementSize) {
   ElementSize = 0;
   for (MachineInstr *MI : Cluster.OffsetToMI) {
     for (MachineMemOperand *MMO : MI->memoperands()) {
       if (!MMO->getMemoryType().isValid())
-        continue;
+        return false;
 
       unsigned Size = MMO->getMemoryType().getScalarSizeInBits();
       if (Size != 8 && Size != 16 && Size != 32 && Size != 64)
-        continue;
+        return false;
       if (ElementSize && ElementSize != Size)
         return false;
       ElementSize = Size;
@@ -234,8 +261,6 @@ static bool getElementSize(SVELoadStoreCluster &Cluster, bool IsLittleEndian,
 
   if (ElementSize)
     return true;
-  if (!IsLittleEndian)
-    return false;
   ElementSize = 64;
   return true;
 }
@@ -266,9 +291,7 @@ bool AArch64SVELoadStoreClustering::rewriteClusters(
       continue;
 
     unsigned ElementSize;
-    if (!getElementSize(Cluster,
-                        MF.getSubtarget<AArch64Subtarget>().isLittleEndian(),
-                        ElementSize))
+    if (!getElementSize(Cluster, ElementSize))
       continue;
 
     MultiVectorOpcodes Opcodes;
@@ -278,7 +301,7 @@ bool AArch64SVELoadStoreClustering::rewriteClusters(
     MachineBasicBlock &MBB = *Cluster.FirstIt->getParent();
     MachineBasicBlock::iterator InsertIt =
         Cluster.IsLoad ? Cluster.FirstIt : Cluster.LastIt;
-    Register Pred = getOrCreatePTrue(MBB, InsertIt, MRI, TII);
+    Register Pred = getOrCreatePTrue(MBB, Cluster.FirstIt, MRI, TII);
     DebugLoc DL = InsertIt->getDebugLoc();
 
     for (RewriteGroup &Group : Groups) {
@@ -300,22 +323,25 @@ bool AArch64SVELoadStoreClustering::rewriteClusters(
             .addReg(Cluster.Base)
             .addImm(Group.StartIndex / Group.NumVectors)
             .setMemRefs(MemRefs);
-        for (unsigned I = 0; I != Group.NumVectors; ++I)
-          BuildMI(
-              MBB, InsertIt, DL, TII.get(TargetOpcode::COPY),
-              Cluster.OffsetToMI[Group.StartIndex + I]->getOperand(0).getReg())
+        for (unsigned I = 0; I != Group.NumVectors; ++I) {
+          MachineOperand &Dest =
+              Cluster.OffsetToMI[Group.StartIndex + I]->getOperand(0);
+          BuildMI(MBB, InsertIt, DL, TII.get(TargetOpcode::COPY))
+              .add(Dest)
               .addReg(Tuple, RegState{}, getSubRegIndex(I));
+        }
         continue;
       }
 
       MachineInstrBuilder RegSequence = BuildMI(
           MBB, InsertIt, DL, TII.get(TargetOpcode::REG_SEQUENCE), Tuple);
-      for (unsigned I = 0; I != Group.NumVectors; ++I)
-        RegSequence
-            .addReg(Cluster.OffsetToMI[Group.StartIndex + I]
-                        ->getOperand(0)
-                        .getReg())
+      for (unsigned I = 0; I != Group.NumVectors; ++I) {
+        MachineOperand &Value =
+            Cluster.OffsetToMI[Group.StartIndex + I]->getOperand(0);
+        MRI.clearKillFlags(Value.getReg());
+        RegSequence.addReg(Value.getReg(), RegState{}, Value.getSubReg())
             .addImm(getSubRegIndex(I));
+      }
       BuildMI(MBB, InsertIt, DL, TII.get(Opcode))
           .addReg(Tuple)
           .addReg(Pred)
@@ -337,7 +363,8 @@ bool AArch64SVELoadStoreClustering::rewriteClusters(
 bool AArch64SVELoadStoreClustering::runOnMachineFunction(MachineFunction &MF) {
   assert(MF.getRegInfo().isSSA() && "Expected Machine SSA form");
 
-  if (!MF.getSubtarget<AArch64Subtarget>().enableSubRegLiveness() ||
+  if (!MF.getSubtarget<AArch64Subtarget>().isLittleEndian() ||
+      !MF.getSubtarget<AArch64Subtarget>().enableSubRegLiveness() ||
       (!MF.getSubtarget<AArch64Subtarget>().hasSVE2p1() &&
        !(MF.getSubtarget<AArch64Subtarget>().hasSME2() &&
          MF.getSubtarget<AArch64Subtarget>().isStreaming())))
@@ -345,7 +372,7 @@ bool AArch64SVELoadStoreClustering::runOnMachineFunction(MachineFunction &MF) {
 
   SmallVector<SVELoadStoreCluster, 4> Clusters;
   for (MachineBasicBlock &MBB : MF)
-    collectClusters(MBB, Clusters);
+    collectClusters(MBB, *MF.getSubtarget().getRegisterInfo(), Clusters);
 
   LLVM_DEBUG({
     for (SVELoadStoreCluster &Cluster : Clusters) {

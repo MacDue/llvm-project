@@ -20,8 +20,8 @@ registers:
 body:             |
   bb.0:
     ; SVE2P1-LABEL: name: rewrite_six
-    ; SVE2P1: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; SVE2P1-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
     ; SVE2P1-NEXT: [[LD1W_4Z:%[0-9]+]]:zpr4mul4 = LD1W_4Z_IMM_PSEUDO [[PTRUE_C_B]], [[DEF]], 0 :: (load (<vscale x 4 x s32>)), (load (<vscale x 4 x s32>)), (load (<vscale x 4 x s32>)), (load (<vscale x 4 x s32>))
     ; SVE2P1-NEXT: [[COPY:%[0-9]+]]:zpr = COPY [[LD1W_4Z]].zsub0
     ; SVE2P1-NEXT: [[COPY1:%[0-9]+]]:zpr = COPY [[LD1W_4Z]].zsub1
@@ -57,22 +57,21 @@ body:             |
     ; NO-SVE2P1-NEXT: RET_ReallyLR
     ;
     ; BE-LABEL: name: rewrite_six
-    ; BE: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; BE-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
-    ; BE-NEXT: [[LD1W_4Z:%[0-9]+]]:zpr4mul4 = LD1W_4Z_IMM_PSEUDO [[PTRUE_C_B]], [[DEF]], 0 :: (load (<vscale x 4 x s32>)), (load (<vscale x 4 x s32>)), (load (<vscale x 4 x s32>)), (load (<vscale x 4 x s32>))
-    ; BE-NEXT: [[COPY:%[0-9]+]]:zpr = COPY [[LD1W_4Z]].zsub0
-    ; BE-NEXT: [[COPY1:%[0-9]+]]:zpr = COPY [[LD1W_4Z]].zsub1
-    ; BE-NEXT: [[COPY2:%[0-9]+]]:zpr = COPY [[LD1W_4Z]].zsub2
-    ; BE-NEXT: [[COPY3:%[0-9]+]]:zpr = COPY [[LD1W_4Z]].zsub3
-    ; BE-NEXT: [[LD1W_2Z:%[0-9]+]]:zpr2mul2 = LD1W_2Z_IMM_PSEUDO [[PTRUE_C_B]], [[DEF]], 2 :: (load (<vscale x 4 x s32>)), (load (<vscale x 4 x s32>))
-    ; BE-NEXT: [[COPY4:%[0-9]+]]:zpr = COPY [[LD1W_2Z]].zsub0
-    ; BE-NEXT: [[COPY5:%[0-9]+]]:zpr = COPY [[LD1W_2Z]].zsub1
+    ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 4 x s32>))
     ; BE-NEXT: [[DEF1:%[0-9]+]]:gpr64 = IMPLICIT_DEF
+    ; BE-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: [[LDR_ZXI2:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 3 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: [[LDR_ZXI3:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 2 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: [[LDR_ZXI4:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 5 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: [[LDR_ZXI5:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 4 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: STR_ZXI [[LDR_ZXI]], [[DEF]], 1 :: (store (<vscale x 4 x s32>))
     ; BE-NEXT: [[DEF2:%[0-9]+]]:gpr64 = IMPLICIT_DEF
-    ; BE-NEXT: [[REG_SEQUENCE:%[0-9]+]]:zpr4mul4 = REG_SEQUENCE [[COPY]], %subreg.zsub0, [[COPY1]], %subreg.zsub1, [[COPY2]], %subreg.zsub2, [[COPY3]], %subreg.zsub3
-    ; BE-NEXT: ST1W_4Z_IMM_PSEUDO [[REG_SEQUENCE]], [[PTRUE_C_B]], [[DEF]], 0 :: (store (<vscale x 4 x s32>)), (store (<vscale x 4 x s32>)), (store (<vscale x 4 x s32>)), (store (<vscale x 4 x s32>))
-    ; BE-NEXT: [[REG_SEQUENCE1:%[0-9]+]]:zpr2mul2 = REG_SEQUENCE [[COPY4]], %subreg.zsub0, [[COPY5]], %subreg.zsub1
-    ; BE-NEXT: ST1W_2Z_IMM_PSEUDO [[REG_SEQUENCE1]], [[PTRUE_C_B]], [[DEF]], 2 :: (store (<vscale x 4 x s32>)), (store (<vscale x 4 x s32>))
+    ; BE-NEXT: STR_ZXI [[LDR_ZXI1]], [[DEF]], 0 :: (store (<vscale x 4 x s32>))
+    ; BE-NEXT: STR_ZXI [[LDR_ZXI2]], [[DEF]], 3 :: (store (<vscale x 4 x s32>))
+    ; BE-NEXT: STR_ZXI [[LDR_ZXI3]], [[DEF]], 2 :: (store (<vscale x 4 x s32>))
+    ; BE-NEXT: STR_ZXI [[LDR_ZXI4]], [[DEF]], 5 :: (store (<vscale x 4 x s32>))
+    ; BE-NEXT: STR_ZXI [[LDR_ZXI5]], [[DEF]], 4 :: (store (<vscale x 4 x s32>))
     ; BE-NEXT: RET_ReallyLR
     %0:gpr64sp = IMPLICIT_DEF
     %1:zpr = LDR_ZXI %0, 1 :: (load (<vscale x 4 x s32>))
@@ -104,8 +103,8 @@ registers:
 body:             |
   bb.0:
     ; SVE2P1-LABEL: name: rewrite_prefix
-    ; SVE2P1: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; SVE2P1-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
     ; SVE2P1-NEXT: [[LD1B_2Z:%[0-9]+]]:zpr2mul2 = LD1B_2Z_IMM_PSEUDO [[PTRUE_C_B]], [[DEF]], 0 :: (load (<vscale x 16 x s8>)), (load (<vscale x 16 x s8>))
     ; SVE2P1-NEXT: [[COPY:%[0-9]+]]:zpr = COPY [[LD1B_2Z]].zsub0
     ; SVE2P1-NEXT: [[COPY1:%[0-9]+]]:zpr = COPY [[LD1B_2Z]].zsub1
@@ -120,12 +119,10 @@ body:             |
     ; NO-SVE2P1-NEXT: RET_ReallyLR
     ;
     ; BE-LABEL: name: rewrite_prefix
-    ; BE: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; BE-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
-    ; BE-NEXT: [[LD1B_2Z:%[0-9]+]]:zpr2mul2 = LD1B_2Z_IMM_PSEUDO [[PTRUE_C_B]], [[DEF]], 0 :: (load (<vscale x 16 x s8>)), (load (<vscale x 16 x s8>))
-    ; BE-NEXT: [[COPY:%[0-9]+]]:zpr = COPY [[LD1B_2Z]].zsub0
-    ; BE-NEXT: [[COPY1:%[0-9]+]]:zpr = COPY [[LD1B_2Z]].zsub1
+    ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; BE-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 2 :: (load (<vscale x 16 x s8>))
+    ; BE-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 16 x s8>))
+    ; BE-NEXT: [[LDR_ZXI2:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 16 x s8>))
     ; BE-NEXT: RET_ReallyLR
     %0:gpr64sp = IMPLICIT_DEF
     %1:zpr = LDR_ZXI %0, 2 :: (load (<vscale x 16 x s8>))
@@ -148,9 +145,9 @@ registers:
 body:             |
   bb.0:
     ; SVE2P1-LABEL: name: element_widths
-    ; SVE2P1: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; SVE2P1-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; SVE2P1-NEXT: [[DEF1:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
     ; SVE2P1-NEXT: [[LD1H_2Z:%[0-9]+]]:zpr2mul2 = LD1H_2Z_IMM_PSEUDO [[PTRUE_C_B]], [[DEF]], 0 :: (load (<vscale x 8 x s16>)), (load (<vscale x 8 x s16>))
     ; SVE2P1-NEXT: [[COPY:%[0-9]+]]:zpr = COPY [[LD1H_2Z]].zsub0
     ; SVE2P1-NEXT: [[COPY1:%[0-9]+]]:zpr = COPY [[LD1H_2Z]].zsub1
@@ -172,16 +169,14 @@ body:             |
     ; NO-SVE2P1-NEXT: RET_ReallyLR
     ;
     ; BE-LABEL: name: element_widths
-    ; BE: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; BE-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; BE-NEXT: [[DEF1:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
-    ; BE-NEXT: [[LD1H_2Z:%[0-9]+]]:zpr2mul2 = LD1H_2Z_IMM_PSEUDO [[PTRUE_C_B]], [[DEF]], 0 :: (load (<vscale x 8 x s16>)), (load (<vscale x 8 x s16>))
-    ; BE-NEXT: [[COPY:%[0-9]+]]:zpr = COPY [[LD1H_2Z]].zsub0
-    ; BE-NEXT: [[COPY1:%[0-9]+]]:zpr = COPY [[LD1H_2Z]].zsub1
+    ; BE-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 8 x s16>))
+    ; BE-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 8 x s16>))
     ; BE-NEXT: [[DEF2:%[0-9]+]]:zpr = IMPLICIT_DEF
     ; BE-NEXT: [[DEF3:%[0-9]+]]:zpr = IMPLICIT_DEF
-    ; BE-NEXT: [[REG_SEQUENCE:%[0-9]+]]:zpr2mul2 = REG_SEQUENCE [[DEF2]], %subreg.zsub0, [[DEF3]], %subreg.zsub1
-    ; BE-NEXT: ST1D_2Z_IMM_PSEUDO [[REG_SEQUENCE]], [[PTRUE_C_B]], [[DEF1]], 0 :: (store (<vscale x 2 x s64>)), (store (<vscale x 2 x s64>))
+    ; BE-NEXT: STR_ZXI [[DEF2]], [[DEF1]], 0 :: (store (<vscale x 2 x s64>))
+    ; BE-NEXT: STR_ZXI [[DEF3]], [[DEF1]], 1 :: (store (<vscale x 2 x s64>))
     ; BE-NEXT: RET_ReallyLR
     %0:gpr64sp = IMPLICIT_DEF
     %1:gpr64sp = IMPLICIT_DEF
@@ -195,7 +190,7 @@ body:             |
 ...
 
 ---
-name:            fallback
+name:            unsupported_element_size
 tracksRegLiveness: true
 isSSA:           true
 registers:
@@ -204,21 +199,19 @@ registers:
   - { id: 2, class: zpr }
 body:             |
   bb.0:
-    ; SVE2P1-LABEL: name: fallback
-    ; SVE2P1: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; SVE2P1-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
-    ; SVE2P1-NEXT: [[LD1D_2Z:%[0-9]+]]:zpr2mul2 = LD1D_2Z_IMM_PSEUDO [[PTRUE_C_B]], [[DEF]], 0 :: (load (<vscale x 1 x s128>)), (load (<vscale x 1 x s128>))
-    ; SVE2P1-NEXT: [[COPY:%[0-9]+]]:zpr = COPY [[LD1D_2Z]].zsub0
-    ; SVE2P1-NEXT: [[COPY1:%[0-9]+]]:zpr = COPY [[LD1D_2Z]].zsub1
+    ; SVE2P1-LABEL: name: unsupported_element_size
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 1 x s128>))
+    ; SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 1 x s128>))
     ; SVE2P1-NEXT: RET_ReallyLR
     ;
-    ; NO-SVE2P1-LABEL: name: fallback
+    ; NO-SVE2P1-LABEL: name: unsupported_element_size
     ; NO-SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; NO-SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 1 x s128>))
     ; NO-SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 1 x s128>))
     ; NO-SVE2P1-NEXT: RET_ReallyLR
     ;
-    ; BE-LABEL: name: fallback
+    ; BE-LABEL: name: unsupported_element_size
     ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; BE-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 1 x s128>))
     ; BE-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 1 x s128>))
@@ -226,6 +219,219 @@ body:             |
     %0:gpr64sp = IMPLICIT_DEF
     %1:zpr = LDR_ZXI %0, 0 :: (load (<vscale x 1 x s128>))
     %2:zpr = LDR_ZXI %0, 1 :: (load (<vscale x 1 x s128>))
+    RET_ReallyLR
+...
+
+---
+name:            side_effect_barriers
+tracksRegLiveness: true
+isSSA:           true
+registers:
+  - { id: 0, class: gpr64sp }
+  - { id: 1, class: gpr64sp }
+  - { id: 2, class: zpr }
+  - { id: 3, class: zpr }
+  - { id: 4, class: zpr }
+  - { id: 5, class: zpr }
+body:             |
+  bb.0:
+    ; SVE2P1-LABEL: name: side_effect_barriers
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[DEF1:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
+    ; SVE2P1-NEXT: [[LD1W_2Z:%[0-9]+]]:zpr2mul2 = LD1W_2Z_IMM_PSEUDO [[PTRUE_C_B]], [[DEF]], 0 :: (load (<vscale x 4 x s32>)), (load (<vscale x 4 x s32>))
+    ; SVE2P1-NEXT: [[COPY:%[0-9]+]]:zpr = COPY [[LD1W_2Z]].zsub0
+    ; SVE2P1-NEXT: [[COPY1:%[0-9]+]]:zpr = COPY [[LD1W_2Z]].zsub1
+    ; SVE2P1-NEXT: MSRpstatesvcrImm1 1, 1, csr_aarch64_smstartstop, implicit-def dead $nzcv, implicit $vg, implicit-def $vg
+    ; SVE2P1-NEXT: [[PTRUE_C_B1:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
+    ; SVE2P1-NEXT: [[LD1W_2Z1:%[0-9]+]]:zpr2mul2 = LD1W_2Z_IMM_PSEUDO [[PTRUE_C_B1]], [[DEF1]], 0 :: (load (<vscale x 4 x s32>)), (load (<vscale x 4 x s32>))
+    ; SVE2P1-NEXT: [[COPY2:%[0-9]+]]:zpr = COPY [[LD1W_2Z1]].zsub0
+    ; SVE2P1-NEXT: [[COPY3:%[0-9]+]]:zpr = COPY [[LD1W_2Z1]].zsub1
+    ; SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; NO-SVE2P1-LABEL: name: side_effect_barriers
+    ; NO-SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; NO-SVE2P1-NEXT: [[DEF1:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: MSRpstatesvcrImm1 1, 1, csr_aarch64_smstartstop, implicit-def dead $nzcv, implicit $vg, implicit-def $vg
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI2:%[0-9]+]]:zpr = LDR_ZXI [[DEF1]], 0 :: (load (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI3:%[0-9]+]]:zpr = LDR_ZXI [[DEF1]], 1 :: (load (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; BE-LABEL: name: side_effect_barriers
+    ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE-NEXT: [[DEF1:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: MSRpstatesvcrImm1 1, 1, csr_aarch64_smstartstop, implicit-def dead $nzcv, implicit $vg, implicit-def $vg
+    ; BE-NEXT: [[LDR_ZXI2:%[0-9]+]]:zpr = LDR_ZXI [[DEF1]], 0 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: [[LDR_ZXI3:%[0-9]+]]:zpr = LDR_ZXI [[DEF1]], 1 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: RET_ReallyLR
+    %0:gpr64sp = IMPLICIT_DEF
+    %1:gpr64sp = IMPLICIT_DEF
+    %2:zpr = LDR_ZXI %0, 0 :: (load (<vscale x 4 x s32>))
+    %3:zpr = LDR_ZXI %0, 1 :: (load (<vscale x 4 x s32>))
+    MSRpstatesvcrImm1 1, 1, csr_aarch64_smstartstop, implicit-def dead $nzcv, implicit $vg, implicit-def $vg
+    %4:zpr = LDR_ZXI %1, 0 :: (load (<vscale x 4 x s32>))
+    %5:zpr = LDR_ZXI %1, 1 :: (load (<vscale x 4 x s32>))
+    RET_ReallyLR
+...
+
+---
+name:            call_barrier
+tracksRegLiveness: true
+isSSA:           true
+registers:
+  - { id: 0, class: gpr64sp }
+  - { id: 1, class: zpr }
+  - { id: 2, class: zpr }
+body:             |
+  bb.0:
+    liveins: $sp
+    ; SVE2P1-LABEL: name: call_barrier
+    ; SVE2P1: liveins: $sp
+    ; SVE2P1-NEXT: {{  $}}
+    ; SVE2P1-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 4 x s32>))
+    ; SVE2P1-NEXT: BL &foo, csr_aarch64_aapcs, implicit-def $lr, implicit $sp, implicit-def $sp
+    ; SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 4 x s32>))
+    ; SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; NO-SVE2P1-LABEL: name: call_barrier
+    ; NO-SVE2P1: liveins: $sp
+    ; NO-SVE2P1-NEXT: {{  $}}
+    ; NO-SVE2P1-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: BL &foo, csr_aarch64_aapcs, implicit-def $lr, implicit $sp, implicit-def $sp
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; BE-LABEL: name: call_barrier
+    ; BE: liveins: $sp
+    ; BE-NEXT: {{  $}}
+    ; BE-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: BL &foo, csr_aarch64_aapcs, implicit-def $lr, implicit $sp, implicit-def $sp
+    ; BE-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load (<vscale x 4 x s32>))
+    ; BE-NEXT: RET_ReallyLR
+    %0:gpr64sp = IMPLICIT_DEF
+    %1:zpr = LDR_ZXI %0, 0 :: (load (<vscale x 4 x s32>))
+    BL &foo, csr_aarch64_aapcs, implicit-def $lr, implicit $sp, implicit-def $sp
+    %2:zpr = LDR_ZXI %0, 1 :: (load (<vscale x 4 x s32>))
+    RET_ReallyLR
+...
+
+---
+name:            ordered_accesses
+tracksRegLiveness: true
+isSSA:           true
+registers:
+  - { id: 0, class: gpr64sp }
+  - { id: 1, class: zpr }
+  - { id: 2, class: zpr }
+  - { id: 3, class: zpr }
+  - { id: 4, class: zpr }
+body:             |
+  bb.0:
+    ; SVE2P1-LABEL: name: ordered_accesses
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (volatile load (<vscale x 4 x s32>))
+    ; SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (volatile load (<vscale x 4 x s32>))
+    ; SVE2P1-NEXT: [[LDR_ZXI2:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load monotonic (<vscale x 4 x s32>))
+    ; SVE2P1-NEXT: [[LDR_ZXI3:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load monotonic (<vscale x 4 x s32>))
+    ; SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; NO-SVE2P1-LABEL: name: ordered_accesses
+    ; NO-SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (volatile load (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (volatile load (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI2:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load monotonic (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI3:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load monotonic (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; BE-LABEL: name: ordered_accesses
+    ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (volatile load (<vscale x 4 x s32>))
+    ; BE-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (volatile load (<vscale x 4 x s32>))
+    ; BE-NEXT: [[LDR_ZXI2:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load monotonic (<vscale x 4 x s32>))
+    ; BE-NEXT: [[LDR_ZXI3:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load monotonic (<vscale x 4 x s32>))
+    ; BE-NEXT: RET_ReallyLR
+    %0:gpr64sp = IMPLICIT_DEF
+    %1:zpr = LDR_ZXI %0, 0 :: (volatile load (<vscale x 4 x s32>))
+    %2:zpr = LDR_ZXI %0, 1 :: (volatile load (<vscale x 4 x s32>))
+    %3:zpr = LDR_ZXI %0, 0 :: (load monotonic (<vscale x 4 x s32>))
+    %4:zpr = LDR_ZXI %0, 1 :: (load monotonic (<vscale x 4 x s32>))
+    RET_ReallyLR
+...
+
+---
+name:            unknown_element_size
+tracksRegLiveness: true
+isSSA:           true
+registers:
+  - { id: 0, class: gpr64sp }
+  - { id: 1, class: zpr }
+  - { id: 2, class: zpr }
+body:             |
+  bb.0:
+    ; SVE2P1-LABEL: name: unknown_element_size
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load unknown-size, align 1)
+    ; SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load unknown-size, align 1)
+    ; SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; NO-SVE2P1-LABEL: name: unknown_element_size
+    ; NO-SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load unknown-size, align 1)
+    ; NO-SVE2P1-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load unknown-size, align 1)
+    ; NO-SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; BE-LABEL: name: unknown_element_size
+    ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE-NEXT: [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 0 :: (load unknown-size, align 1)
+    ; BE-NEXT: [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI [[DEF]], 1 :: (load unknown-size, align 1)
+    ; BE-NEXT: RET_ReallyLR
+    %0:gpr64sp = IMPLICIT_DEF
+    %1:zpr = LDR_ZXI %0, 0 :: (load unknown-size)
+    %2:zpr = LDR_ZXI %0, 1 :: (load unknown-size)
+    RET_ReallyLR
+...
+
+---
+name:            store_subregisters
+tracksRegLiveness: true
+isSSA:           true
+registers:
+  - { id: 0, class: gpr64sp }
+  - { id: 1, class: zpr2 }
+body:             |
+  bb.0:
+    ; SVE2P1-LABEL: name: store_subregisters
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[DEF1:%[0-9]+]]:zpr2 = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
+    ; SVE2P1-NEXT: [[REG_SEQUENCE:%[0-9]+]]:zpr2mul2 = REG_SEQUENCE [[DEF1]].zsub0, %subreg.zsub0, [[DEF1]].zsub1, %subreg.zsub1
+    ; SVE2P1-NEXT: ST1W_2Z_IMM_PSEUDO [[REG_SEQUENCE]], [[PTRUE_C_B]], [[DEF]], 0 :: (store (<vscale x 4 x s32>)), (store (<vscale x 4 x s32>))
+    ; SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; NO-SVE2P1-LABEL: name: store_subregisters
+    ; NO-SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; NO-SVE2P1-NEXT: [[DEF1:%[0-9]+]]:zpr2 = IMPLICIT_DEF
+    ; NO-SVE2P1-NEXT: STR_ZXI [[DEF1]].zsub0, [[DEF]], 0 :: (store (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: STR_ZXI [[DEF1]].zsub1, [[DEF]], 1 :: (store (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; BE-LABEL: name: store_subregisters
+    ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE-NEXT: [[DEF1:%[0-9]+]]:zpr2 = IMPLICIT_DEF
+    ; BE-NEXT: STR_ZXI [[DEF1]].zsub0, [[DEF]], 0 :: (store (<vscale x 4 x s32>))
+    ; BE-NEXT: STR_ZXI [[DEF1]].zsub1, [[DEF]], 1 :: (store (<vscale x 4 x s32>))
+    ; BE-NEXT: RET_ReallyLR
+    %0:gpr64sp = IMPLICIT_DEF
+    %1:zpr2 = IMPLICIT_DEF
+    STR_ZXI %1.zsub0, %0, 0 :: (store (<vscale x 4 x s32>))
+    STR_ZXI %1.zsub1, %0, 1 :: (store (<vscale x 4 x s32>))
     RET_ReallyLR
 ...
 
@@ -241,11 +447,11 @@ registers:
 body:             |
   bb.0:
     ; SVE2P1-LABEL: name: duplicate_store_values
-    ; SVE2P1: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; SVE2P1-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; SVE2P1-NEXT: [[DEF1:%[0-9]+]]:zpr = IMPLICIT_DEF
     ; SVE2P1-NEXT: [[DEF2:%[0-9]+]]:zpr = IMPLICIT_DEF
     ; SVE2P1-NEXT: [[DEF3:%[0-9]+]]:zpr = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
     ; SVE2P1-NEXT: [[REG_SEQUENCE:%[0-9]+]]:zpr2mul2 = REG_SEQUENCE [[DEF1]], %subreg.zsub0, [[DEF1]], %subreg.zsub1
     ; SVE2P1-NEXT: ST1W_2Z_IMM_PSEUDO [[REG_SEQUENCE]], [[PTRUE_C_B]], [[DEF]], 0 :: (store (<vscale x 4 x s32>)), (store (<vscale x 4 x s32>))
     ; SVE2P1-NEXT: STR_ZXI [[DEF2]], [[DEF]], 2 :: (store (<vscale x 4 x s32>))
@@ -268,13 +474,12 @@ body:             |
     ; NO-SVE2P1-NEXT: RET_ReallyLR
     ;
     ; BE-LABEL: name: duplicate_store_values
-    ; BE: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; BE-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; BE-NEXT: [[DEF1:%[0-9]+]]:zpr = IMPLICIT_DEF
     ; BE-NEXT: [[DEF2:%[0-9]+]]:zpr = IMPLICIT_DEF
     ; BE-NEXT: [[DEF3:%[0-9]+]]:zpr = IMPLICIT_DEF
-    ; BE-NEXT: [[REG_SEQUENCE:%[0-9]+]]:zpr2mul2 = REG_SEQUENCE [[DEF1]], %subreg.zsub0, [[DEF1]], %subreg.zsub1
-    ; BE-NEXT: ST1W_2Z_IMM_PSEUDO [[REG_SEQUENCE]], [[PTRUE_C_B]], [[DEF]], 0 :: (store (<vscale x 4 x s32>)), (store (<vscale x 4 x s32>))
+    ; BE-NEXT: STR_ZXI [[DEF1]], [[DEF]], 0 :: (store (<vscale x 4 x s32>))
+    ; BE-NEXT: STR_ZXI [[DEF1]], [[DEF]], 1 :: (store (<vscale x 4 x s32>))
     ; BE-NEXT: STR_ZXI [[DEF2]], [[DEF]], 2 :: (store (<vscale x 4 x s32>))
     ; BE-NEXT: HINT 0
     ; BE-NEXT: STR_ZXI [[DEF2]], [[DEF]], 1 :: (store (<vscale x 4 x s32>))
@@ -304,9 +509,9 @@ registers:
 body:             |
   bb.0:
     ; SVE2P1-LABEL: name: store_inputs_between_accesses
-    ; SVE2P1: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; SVE2P1-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; SVE2P1-NEXT: [[DEF1:%[0-9]+]]:zpr = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
     ; SVE2P1-NEXT: [[DEF2:%[0-9]+]]:zpr = IMPLICIT_DEF
     ; SVE2P1-NEXT: [[REG_SEQUENCE:%[0-9]+]]:zpr2mul2 = REG_SEQUENCE [[DEF1]], %subreg.zsub0, [[DEF2]], %subreg.zsub1
     ; SVE2P1-NEXT: ST1W_2Z_IMM_PSEUDO [[REG_SEQUENCE]], [[PTRUE_C_B]], [[DEF]], 0 :: (store (<vscale x 4 x s32>)), (store (<vscale x 4 x s32>))
@@ -321,17 +526,63 @@ body:             |
     ; NO-SVE2P1-NEXT: RET_ReallyLR
     ;
     ; BE-LABEL: name: store_inputs_between_accesses
-    ; BE: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
-    ; BE-NEXT: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
     ; BE-NEXT: [[DEF1:%[0-9]+]]:zpr = IMPLICIT_DEF
+    ; BE-NEXT: STR_ZXI [[DEF1]], [[DEF]], 0 :: (store (<vscale x 4 x s32>))
     ; BE-NEXT: [[DEF2:%[0-9]+]]:zpr = IMPLICIT_DEF
-    ; BE-NEXT: [[REG_SEQUENCE:%[0-9]+]]:zpr2mul2 = REG_SEQUENCE [[DEF1]], %subreg.zsub0, [[DEF2]], %subreg.zsub1
-    ; BE-NEXT: ST1W_2Z_IMM_PSEUDO [[REG_SEQUENCE]], [[PTRUE_C_B]], [[DEF]], 0 :: (store (<vscale x 4 x s32>)), (store (<vscale x 4 x s32>))
+    ; BE-NEXT: STR_ZXI [[DEF2]], [[DEF]], 1 :: (store (<vscale x 4 x s32>))
     ; BE-NEXT: RET_ReallyLR
     %0:gpr64sp = IMPLICIT_DEF
     %1:zpr = IMPLICIT_DEF
     STR_ZXI %1, %0, 0 :: (store (<vscale x 4 x s32>))
     %2:zpr = IMPLICIT_DEF
+    STR_ZXI %2, %0, 1 :: (store (<vscale x 4 x s32>))
+    RET_ReallyLR
+...
+
+---
+name:            clear_store_kill_flags
+tracksRegLiveness: true
+isSSA:           true
+registers:
+  - { id: 0, class: gpr64sp }
+  - { id: 1, class: zpr }
+  - { id: 2, class: zpr }
+  - { id: 3, class: zpr }
+body:             |
+  bb.0:
+    ; SVE2P1-LABEL: name: clear_store_kill_flags
+    ; SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[DEF1:%[0-9]+]]:zpr = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[DEF2:%[0-9]+]]:zpr = IMPLICIT_DEF
+    ; SVE2P1-NEXT: [[PTRUE_C_B:%[0-9]+]]:pnr_p8to15 = PTRUE_C_B implicit $vg
+    ; SVE2P1-NEXT: dead [[COPY:%[0-9]+]]:zpr = COPY [[DEF1]]
+    ; SVE2P1-NEXT: [[REG_SEQUENCE:%[0-9]+]]:zpr2mul2 = REG_SEQUENCE [[DEF1]], %subreg.zsub0, [[DEF2]], %subreg.zsub1
+    ; SVE2P1-NEXT: ST1W_2Z_IMM_PSEUDO [[REG_SEQUENCE]], [[PTRUE_C_B]], [[DEF]], 0 :: (store (<vscale x 4 x s32>)), (store (<vscale x 4 x s32>))
+    ; SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; NO-SVE2P1-LABEL: name: clear_store_kill_flags
+    ; NO-SVE2P1: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; NO-SVE2P1-NEXT: [[DEF1:%[0-9]+]]:zpr = IMPLICIT_DEF
+    ; NO-SVE2P1-NEXT: [[DEF2:%[0-9]+]]:zpr = IMPLICIT_DEF
+    ; NO-SVE2P1-NEXT: STR_ZXI [[DEF1]], [[DEF]], 0 :: (store (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: dead [[COPY:%[0-9]+]]:zpr = COPY killed [[DEF1]]
+    ; NO-SVE2P1-NEXT: STR_ZXI [[DEF2]], [[DEF]], 1 :: (store (<vscale x 4 x s32>))
+    ; NO-SVE2P1-NEXT: RET_ReallyLR
+    ;
+    ; BE-LABEL: name: clear_store_kill_flags
+    ; BE: [[DEF:%[0-9]+]]:gpr64sp = IMPLICIT_DEF
+    ; BE-NEXT: [[DEF1:%[0-9]+]]:zpr = IMPLICIT_DEF
+    ; BE-NEXT: [[DEF2:%[0-9]+]]:zpr = IMPLICIT_DEF
+    ; BE-NEXT: STR_ZXI [[DEF1]], [[DEF]], 0 :: (store (<vscale x 4 x s32>))
+    ; BE-NEXT: dead [[COPY:%[0-9]+]]:zpr = COPY killed [[DEF1]]
+    ; BE-NEXT: STR_ZXI [[DEF2]], [[DEF]], 1 :: (store (<vscale x 4 x s32>))
+    ; BE-NEXT: RET_ReallyLR
+    %0:gpr64sp = IMPLICIT_DEF
+    %1:zpr = IMPLICIT_DEF
+    %2:zpr = IMPLICIT_DEF
+    STR_ZXI %1, %0, 0 :: (store (<vscale x 4 x s32>))
+    dead %3:zpr = COPY killed %1
     STR_ZXI %2, %0, 1 :: (store (<vscale x 4 x s32>))
     RET_ReallyLR
 ...
