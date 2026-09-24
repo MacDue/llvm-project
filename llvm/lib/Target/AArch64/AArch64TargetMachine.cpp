@@ -255,6 +255,7 @@ LLVMInitializeAArch64Target() {
   initializeAArch64ExpandPseudoLegacyPass(PR);
   initializeAArch64LoadStoreOptLegacyPass(PR);
   initializeAArch64MIPeepholeOptLegacyPass(PR);
+  initializeAArch64SVELoadStoreClusteringPass(PR);
   initializeAArch64PTrueCoalescingLegacyPass(PR);
   initializeAArch64SIMDInstrOptLegacyPass(PR);
   initializeAArch64O0PreLegalizerCombinerLegacyPass(PR);
@@ -825,6 +826,7 @@ void AArch64PassConfig::addMachineSSAOptimization() {
   TargetPassConfig::addMachineSSAOptimization();
 
   if (TM->getOptLevel() != CodeGenOptLevel::None) {
+    addPass(createAArch64SVELoadStoreClusteringPass());
     addPass(createAArch64MIPeepholeOptLegacyPass());
     addPass(createAArch64PTrueCoalescingLegacyPass());
   }
