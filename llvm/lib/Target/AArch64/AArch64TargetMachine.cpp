@@ -822,11 +822,13 @@ void AArch64PassConfig::addMachineSSAOptimization() {
   if (TM->getOptLevel() != CodeGenOptLevel::None && EnableSMEPeepholeOpt)
     addPass(createSMEPeepholeOptPass());
 
+  if (TM->getOptLevel() != CodeGenOptLevel::None)
+    addPass(createAArch64SVELoadStoreClusteringPass());
+
   // Run default MachineSSAOptimization first.
   TargetPassConfig::addMachineSSAOptimization();
 
   if (TM->getOptLevel() != CodeGenOptLevel::None) {
-    addPass(createAArch64SVELoadStoreClusteringPass());
     addPass(createAArch64MIPeepholeOptLegacyPass());
     addPass(createAArch64PTrueCoalescingLegacyPass());
   }

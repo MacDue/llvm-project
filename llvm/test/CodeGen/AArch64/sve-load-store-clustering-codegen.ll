@@ -121,8 +121,6 @@ define void @register_offset(ptr %base, i64 %idx) {
 ; CHECK-LABEL: register_offset:
 ; CHECK:       // %bb.0: // %entry
 ; CHECK-NEXT:    ptrue pn8.b
-; CHECK-NEXT:    ptrue p0.h
-; CHECK-NEXT:    add xzr, x0, x1, lsl #1
 ; CHECK-NEXT:    ld1h { z0.h, z1.h }, pn8/z, [x0, x1, lsl #1]
 ; CHECK-NEXT:    add z0.h, z0.h, #5 // =0x5
 ; CHECK-NEXT:    add z1.h, z1.h, #5 // =0x5
