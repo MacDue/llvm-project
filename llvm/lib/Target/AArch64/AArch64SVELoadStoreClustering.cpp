@@ -559,14 +559,9 @@ bool AArch64SVELoadStoreClustering::runOnMachineFunction(MachineFunction &MF) {
                            MF.getSubtarget().getRegisterInfo());
       dbgs() << ", low offset " << Cluster.LowOffset << ", "
              << Cluster.NumInstructions << " instructions\n";
-      dbgs() << "  offset-to-reg:";
+      dbgs() << "  offset-to-mi:\n";
       for (unsigned Offset = 0; Offset != Cluster.OffsetToMI.size(); ++Offset)
-        dbgs() << ' ' << Offset << '='
-               << printReg(Cluster.OffsetToMI[Offset]->getOperand(0).getReg(),
-                           MF.getSubtarget().getRegisterInfo());
-      dbgs() << '\n';
-      dbgs() << "  first: " << *Cluster.FirstIt;
-      dbgs() << "  last:  " << *Cluster.LastIt;
+        dbgs() << "    " << Offset << ": " << *Cluster.OffsetToMI[Offset];
     }
   });
 
