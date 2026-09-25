@@ -716,16 +716,16 @@ define void @za_write_vg1x4_f64(i32 %slice, <vscale x 2 x double> %za1, <vscale 
 define void @za_write_vg1x4_f64_tuple(i64 %stride, ptr %ptr) {
 ; CHECK-LABEL: za_write_vg1x4_f64_tuple:
 ; CHECK:       // %bb.0: // %entry
-; CHECK-NEXT:    lsl x9, x0, #1
-; CHECK-NEXT:    add x10, x1, x0
+; CHECK-NEXT:    lsl x8, x0, #1
+; CHECK-NEXT:    add x9, x1, x0
 ; CHECK-NEXT:    ptrue pn8.b
 ; CHECK-NEXT:    ld1d { z16.d, z20.d, z24.d, z28.d }, pn8/z, [x1]
-; CHECK-NEXT:    ld1d { z17.d, z21.d, z25.d, z29.d }, pn8/z, [x10]
+; CHECK-NEXT:    ld1d { z17.d, z21.d, z25.d, z29.d }, pn8/z, [x9]
+; CHECK-NEXT:    add x10, x1, x8
+; CHECK-NEXT:    add x8, x9, x8
+; CHECK-NEXT:    ld1d { z18.d, z22.d, z26.d, z30.d }, pn8/z, [x10]
+; CHECK-NEXT:    ld1d { z19.d, z23.d, z27.d, z31.d }, pn8/z, [x8]
 ; CHECK-NEXT:    mov w8, wzr
-; CHECK-NEXT:    add x11, x1, x9
-; CHECK-NEXT:    add x9, x10, x9
-; CHECK-NEXT:    ld1d { z18.d, z22.d, z26.d, z30.d }, pn8/z, [x11]
-; CHECK-NEXT:    ld1d { z19.d, z23.d, z27.d, z31.d }, pn8/z, [x9]
 ; CHECK-NEXT:    mov za.d[w8, 0, vgx4], { z16.d - z19.d }
 ; CHECK-NEXT:    mov za.d[w8, 0, vgx4], { z20.d - z23.d }
 ; CHECK-NEXT:    mov za.d[w8, 0, vgx4], { z24.d - z27.d }

@@ -244,10 +244,10 @@ define void @multi_vector_add_za_vg1x2_f64_tuple(i64 %stride, ptr %ptr) {
 ; CHECK-LABEL: multi_vector_add_za_vg1x2_f64_tuple:
 ; CHECK:       // %bb.0: // %entry
 ; CHECK-NEXT:    ptrue pn8.b
-; CHECK-NEXT:    add x9, x1, x0
-; CHECK-NEXT:    mov w8, wzr
+; CHECK-NEXT:    add x8, x1, x0
 ; CHECK-NEXT:    ld1d { z16.d, z24.d }, pn8/z, [x1]
-; CHECK-NEXT:    ld1d { z17.d, z25.d }, pn8/z, [x9]
+; CHECK-NEXT:    ld1d { z17.d, z25.d }, pn8/z, [x8]
+; CHECK-NEXT:    mov w8, wzr
 ; CHECK-NEXT:    fadd za.d[w8, 0, vgx2], { z16.d, z17.d }
 ; CHECK-NEXT:    fadd za.d[w8, 0, vgx2], { z24.d, z25.d }
 ; CHECK-NEXT:    ret
@@ -321,16 +321,16 @@ define void @multi_vector_add_za_vg1x4_f32(i32 %slice, <vscale x 4 x float> %zn0
 define void @multi_vector_add_za_vg1x4_f32_tuple(i64 %stride, ptr %ptr) {
 ; CHECK-LABEL: multi_vector_add_za_vg1x4_f32_tuple:
 ; CHECK:       // %bb.0: // %entry
-; CHECK-NEXT:    lsl x9, x0, #1
-; CHECK-NEXT:    add x10, x1, x0
+; CHECK-NEXT:    lsl x8, x0, #1
+; CHECK-NEXT:    add x9, x1, x0
 ; CHECK-NEXT:    ptrue pn8.b
 ; CHECK-NEXT:    ld1w { z16.s, z20.s, z24.s, z28.s }, pn8/z, [x1]
-; CHECK-NEXT:    ld1w { z17.s, z21.s, z25.s, z29.s }, pn8/z, [x10]
+; CHECK-NEXT:    ld1w { z17.s, z21.s, z25.s, z29.s }, pn8/z, [x9]
+; CHECK-NEXT:    add x10, x1, x8
+; CHECK-NEXT:    add x8, x9, x8
+; CHECK-NEXT:    ld1w { z18.s, z22.s, z26.s, z30.s }, pn8/z, [x10]
+; CHECK-NEXT:    ld1w { z19.s, z23.s, z27.s, z31.s }, pn8/z, [x8]
 ; CHECK-NEXT:    mov w8, wzr
-; CHECK-NEXT:    add x11, x1, x9
-; CHECK-NEXT:    add x9, x10, x9
-; CHECK-NEXT:    ld1w { z18.s, z22.s, z26.s, z30.s }, pn8/z, [x11]
-; CHECK-NEXT:    ld1w { z19.s, z23.s, z27.s, z31.s }, pn8/z, [x9]
 ; CHECK-NEXT:    fadd za.s[w8, 0, vgx4], { z16.s - z19.s }
 ; CHECK-NEXT:    fadd za.s[w8, 0, vgx4], { z20.s - z23.s }
 ; CHECK-NEXT:    fadd za.s[w8, 0, vgx4], { z24.s - z27.s }

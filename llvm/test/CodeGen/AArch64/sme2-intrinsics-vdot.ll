@@ -78,10 +78,10 @@ define void @svdot_form_2x_tuple(ptr %ptr, i64 %stride) #0 {
 ; CHECK-LABEL: svdot_form_2x_tuple:
 ; CHECK:       // %bb.0: // %entry
 ; CHECK-NEXT:    ptrue pn8.b
-; CHECK-NEXT:    add x9, x0, x1
-; CHECK-NEXT:    mov w8, wzr
+; CHECK-NEXT:    add x8, x0, x1
 ; CHECK-NEXT:    ld1h { z16.h, z24.h }, pn8/z, [x0]
-; CHECK-NEXT:    ld1h { z17.h, z25.h }, pn8/z, [x9]
+; CHECK-NEXT:    ld1h { z17.h, z25.h }, pn8/z, [x8]
+; CHECK-NEXT:    mov w8, wzr
 ; CHECK-NEXT:    svdot za.s[w8, 0, vgx2], { z16.h, z17.h }, z0.h[0]
 ; CHECK-NEXT:    svdot za.s[w8, 0, vgx2], { z24.h, z25.h }, z0.h[0]
 ; CHECK-NEXT:    ret
@@ -106,12 +106,12 @@ define void @svdot_form_2x_tuple_svecc(ptr %ptr, i64 %stride, <vscale x 8 x i16>
 ; CHECK-NEXT:    addvl sp, sp, #-3
 ; CHECK-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
 ; CHECK-NEXT:    ptrue pn8.b
-; CHECK-NEXT:    add x9, x0, x1
+; CHECK-NEXT:    add x8, x0, x1
 ; CHECK-NEXT:    str z11, [sp, #1, mul vl] // 16-byte Folded Spill
-; CHECK-NEXT:    mov w8, wzr
 ; CHECK-NEXT:    str z10, [sp, #2, mul vl] // 16-byte Folded Spill
 ; CHECK-NEXT:    ld1h { z2.h, z10.h }, pn8/z, [x0]
-; CHECK-NEXT:    ld1h { z3.h, z11.h }, pn8/z, [x9]
+; CHECK-NEXT:    ld1h { z3.h, z11.h }, pn8/z, [x8]
+; CHECK-NEXT:    mov w8, wzr
 ; CHECK-NEXT:    svdot za.s[w8, 0, vgx2], { z2.h, z3.h }, z0.h[0]
 ; CHECK-NEXT:    svdot za.s[w8, 0, vgx2], { z10.h, z11.h }, z0.h[0]
 ; CHECK-NEXT:    ldr z11, [sp, #1, mul vl] // 16-byte Folded Reload
@@ -301,10 +301,10 @@ define void @uvdot_form_2x_tuple(ptr %ptr, i64 %stride) #0 {
 ; CHECK-LABEL: uvdot_form_2x_tuple:
 ; CHECK:       // %bb.0: // %entry
 ; CHECK-NEXT:    ptrue pn8.b
-; CHECK-NEXT:    add x9, x0, x1
-; CHECK-NEXT:    mov w8, wzr
+; CHECK-NEXT:    add x8, x0, x1
 ; CHECK-NEXT:    ld1h { z16.h, z24.h }, pn8/z, [x0]
-; CHECK-NEXT:    ld1h { z17.h, z25.h }, pn8/z, [x9]
+; CHECK-NEXT:    ld1h { z17.h, z25.h }, pn8/z, [x8]
+; CHECK-NEXT:    mov w8, wzr
 ; CHECK-NEXT:    uvdot za.s[w8, 0, vgx2], { z16.h, z17.h }, z0.h[0]
 ; CHECK-NEXT:    uvdot za.s[w8, 0, vgx2], { z24.h, z25.h }, z0.h[0]
 ; CHECK-NEXT:    ret
@@ -329,12 +329,12 @@ define void @uvdot_form_2x_tuple_svecc(ptr %ptr, i64 %stride, <vscale x 8 x i16>
 ; CHECK-NEXT:    addvl sp, sp, #-3
 ; CHECK-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
 ; CHECK-NEXT:    ptrue pn8.b
-; CHECK-NEXT:    add x9, x0, x1
+; CHECK-NEXT:    add x8, x0, x1
 ; CHECK-NEXT:    str z11, [sp, #1, mul vl] // 16-byte Folded Spill
-; CHECK-NEXT:    mov w8, wzr
 ; CHECK-NEXT:    str z10, [sp, #2, mul vl] // 16-byte Folded Spill
 ; CHECK-NEXT:    ld1h { z2.h, z10.h }, pn8/z, [x0]
-; CHECK-NEXT:    ld1h { z3.h, z11.h }, pn8/z, [x9]
+; CHECK-NEXT:    ld1h { z3.h, z11.h }, pn8/z, [x8]
+; CHECK-NEXT:    mov w8, wzr
 ; CHECK-NEXT:    uvdot za.s[w8, 0, vgx2], { z2.h, z3.h }, z0.h[0]
 ; CHECK-NEXT:    uvdot za.s[w8, 0, vgx2], { z10.h, z11.h }, z0.h[0]
 ; CHECK-NEXT:    ldr z11, [sp, #1, mul vl] // 16-byte Folded Reload

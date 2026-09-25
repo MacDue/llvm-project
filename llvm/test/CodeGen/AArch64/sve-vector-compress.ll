@@ -210,7 +210,7 @@ define <vscale x 8 x i32> @test_compress_large(<vscale x 8 x i32> %vec, <vscale 
 ; CHECK-SME2p2-NEXT:    .cfi_offset w29, -16
 ; CHECK-SME2p2-NEXT:    punpklo p1.h, p0.b
 ; CHECK-SME2p2-NEXT:    mov x8, #-1 // =0xffffffffffffffff
-; CHECK-SME2p2-NEXT:    ptrue pn8.s
+; CHECK-SME2p2-NEXT:    ptrue pn8.b
 ; CHECK-SME2p2-NEXT:    punpkhi p0.h, p0.b
 ; CHECK-SME2p2-NEXT:    inch x8
 ; CHECK-SME2p2-NEXT:    cntp x9, p1, p1.s

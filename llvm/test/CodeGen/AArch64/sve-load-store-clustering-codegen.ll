@@ -7,29 +7,25 @@ define void @contiguous_tuples_only(ptr %base, i64 %n) {
 ; CHECK-LABEL: contiguous_tuples_only:
 ; CHECK:       // %bb.0: // %entry
 ; CHECK-NEXT:    cntw x8, all, mul #3
-; CHECK-NEXT:    ptrue pn8.d
+; CHECK-NEXT:    ptrue pn8.b
 ; CHECK-NEXT:  .LBB0_1: // %loop
 ; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
 ; CHECK-NEXT:    incb x8
-; CHECK-NEXT:    ld1d { z0.d, z1.d }, pn8/z, [x0]
-; CHECK-NEXT:    ld1d { z2.d, z3.d }, pn8/z, [x0, #2, mul vl]
-; CHECK-NEXT:    ld1d { z4.d, z5.d }, pn8/z, [x0, #4, mul vl]
-; CHECK-NEXT:    ld1d { z6.d, z7.d }, pn8/z, [x0, #6, mul vl]
+; CHECK-NEXT:    ld1d { z0.d - z3.d }, pn8/z, [x0]
+; CHECK-NEXT:    ld1d { z4.d - z7.d }, pn8/z, [x0, #4, mul vl]
 ; CHECK-NEXT:    mov x9, x8
-; CHECK-NEXT:    add z1.d, z1.d, #1 // =0x1
-; CHECK-NEXT:    add z3.d, z3.d, #1 // =0x1
 ; CHECK-NEXT:    add z0.d, z0.d, #1 // =0x1
-; CHECK-NEXT:    add z2.d, z2.d, #1 // =0x1
-; CHECK-NEXT:    add z5.d, z5.d, #1 // =0x1
-; CHECK-NEXT:    add z7.d, z7.d, #1 // =0x1
-; CHECK-NEXT:    decw x9, all, mul #3
 ; CHECK-NEXT:    add z4.d, z4.d, #1 // =0x1
+; CHECK-NEXT:    add z1.d, z1.d, #1 // =0x1
+; CHECK-NEXT:    add z5.d, z5.d, #1 // =0x1
+; CHECK-NEXT:    add z2.d, z2.d, #1 // =0x1
 ; CHECK-NEXT:    add z6.d, z6.d, #1 // =0x1
-; CHECK-NEXT:    st1d { z0.d, z1.d }, pn8, [x0]
-; CHECK-NEXT:    st1d { z2.d, z3.d }, pn8, [x0, #2, mul vl]
+; CHECK-NEXT:    decw x9, all, mul #3
+; CHECK-NEXT:    add z3.d, z3.d, #1 // =0x1
+; CHECK-NEXT:    add z7.d, z7.d, #1 // =0x1
 ; CHECK-NEXT:    cmp x9, x1
-; CHECK-NEXT:    st1d { z4.d, z5.d }, pn8, [x0, #4, mul vl]
-; CHECK-NEXT:    st1d { z6.d, z7.d }, pn8, [x0, #6, mul vl]
+; CHECK-NEXT:    st1d { z0.d - z3.d }, pn8, [x0]
+; CHECK-NEXT:    st1d { z4.d - z7.d }, pn8, [x0, #4, mul vl]
 ; CHECK-NEXT:    addvl x0, x0, #8
 ; CHECK-NEXT:    b.lo .LBB0_1
 ; CHECK-NEXT:  // %bb.2: // %exit
@@ -60,6 +56,59 @@ loop:
   store <vscale x 4 x i64> %add.1, ptr %ptr.1, align 8
   store <vscale x 4 x i64> %add.2, ptr %ptr.2, align 8
   store <vscale x 4 x i64> %add.3, ptr %ptr.3, align 8
+  %index.next = add nuw i64 %index, %vector.width
+  %done = icmp uge i64 %index.next, %n
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret void
+}
+
+define void @contiguous_i32_tuples(ptr %base, i64 %n) {
+; CHECK-LABEL: contiguous_i32_tuples:
+; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    mov x8, xzr
+; CHECK-NEXT:    ptrue pn8.b
+; CHECK-NEXT:  .LBB1_1: // %loop
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    ld1w { z0.s - z3.s }, pn8/z, [x0]
+; CHECK-NEXT:    incb x8
+; CHECK-NEXT:    add z0.s, z0.s, #1 // =0x1
+; CHECK-NEXT:    add z1.s, z1.s, #1 // =0x1
+; CHECK-NEXT:    add z2.s, z2.s, #1 // =0x1
+; CHECK-NEXT:    add z3.s, z3.s, #1 // =0x1
+; CHECK-NEXT:    cmp x8, x1
+; CHECK-NEXT:    st1w { z0.s - z3.s }, pn8, [x0]
+; CHECK-NEXT:    incb x0, all, mul #4
+; CHECK-NEXT:    b.lo .LBB1_1
+; CHECK-NEXT:  // %bb.2: // %exit
+; CHECK-NEXT:    ret
+entry:
+  %vscale = call i64 @llvm.vscale.i64()
+  %vector.width = shl nuw i64 %vscale, 4
+  %vector.offset = shl nuw i64 %vscale, 2
+  br label %loop
+
+loop:
+  %index = phi i64 [ 0, %entry ], [ %index.next, %loop ]
+  %ptr.0 = getelementptr inbounds i32, ptr %base, i64 %index
+  %offset.2 = shl nuw i64 %vector.offset, 1
+  %offset.3 = mul nuw i64 %vector.offset, 3
+  %ptr.1 = getelementptr inbounds i32, ptr %ptr.0, i64 %vector.offset
+  %ptr.2 = getelementptr inbounds i32, ptr %ptr.0, i64 %offset.2
+  %ptr.3 = getelementptr inbounds i32, ptr %ptr.0, i64 %offset.3
+  %value.0 = load <vscale x 4 x i32>, ptr %ptr.0, align 4
+  %value.1 = load <vscale x 4 x i32>, ptr %ptr.1, align 4
+  %value.2 = load <vscale x 4 x i32>, ptr %ptr.2, align 4
+  %value.3 = load <vscale x 4 x i32>, ptr %ptr.3, align 4
+  %add.0 = add <vscale x 4 x i32> %value.0, splat (i32 1)
+  %add.1 = add <vscale x 4 x i32> %value.1, splat (i32 1)
+  %add.2 = add <vscale x 4 x i32> %value.2, splat (i32 1)
+  %add.3 = add <vscale x 4 x i32> %value.3, splat (i32 1)
+  store <vscale x 4 x i32> %add.0, ptr %ptr.0, align 4
+  store <vscale x 4 x i32> %add.1, ptr %ptr.1, align 4
+  store <vscale x 4 x i32> %add.2, ptr %ptr.2, align 4
+  store <vscale x 4 x i32> %add.3, ptr %ptr.3, align 4
   %index.next = add nuw i64 %index, %vector.width
   %done = icmp uge i64 %index.next, %n
   br i1 %done, label %exit, label %loop

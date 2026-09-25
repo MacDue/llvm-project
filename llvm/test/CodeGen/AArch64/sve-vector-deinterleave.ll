@@ -232,191 +232,381 @@ define {<vscale x 2 x i64>, <vscale x 2 x i64>} @vector_deinterleave_nxv2i64_nxv
 }
 
 define {<vscale x 2 x half>, <vscale x 2 x half>, <vscale x 2 x half>} @vector_deinterleave_nxv2f16_nxv6f16(<vscale x 6 x half> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv2f16_nxv6f16:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    uunpkhi z1.s, z0.h
-; CHECK-NEXT:    uunpklo z0.s, z0.h
-; CHECK-NEXT:    ptrue p0.d
-; CHECK-NEXT:    uunpklo z1.d, z1.s
-; CHECK-NEXT:    uunpkhi z2.d, z0.s
-; CHECK-NEXT:    uunpklo z0.d, z0.s
-; CHECK-NEXT:    str z1, [sp, #2, mul vl]
-; CHECK-NEXT:    str z2, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv2f16_nxv6f16:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    uunpkhi z1.s, z0.h
+; SVE-NEXT:    uunpklo z0.s, z0.h
+; SVE-NEXT:    ptrue p0.d
+; SVE-NEXT:    uunpklo z1.d, z1.s
+; SVE-NEXT:    uunpkhi z2.d, z0.s
+; SVE-NEXT:    uunpklo z0.d, z0.s
+; SVE-NEXT:    str z1, [sp, #2, mul vl]
+; SVE-NEXT:    str z2, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv2f16_nxv6f16:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    uunpklo z1.s, z0.h
+; SME2-NEXT:    uunpkhi z0.s, z0.h
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ptrue p0.d
+; SME2-NEXT:    uunpkhi z3.d, z1.s
+; SME2-NEXT:    uunpklo z0.d, z0.s
+; SME2-NEXT:    uunpklo z2.d, z1.s
+; SME2-NEXT:    str z0, [sp, #2, mul vl]
+; SME2-NEXT:    st1h { z2.h, z3.h }, pn8, [sp]
+; SME2-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 2 x half>, <vscale x 2 x half>, <vscale x 2 x half>} @llvm.vector.deinterleave3.nxv6f16(<vscale x 6 x half> %vec)
   ret {<vscale x 2 x half>, <vscale x 2 x half>, <vscale x 2 x half>} %retval
 }
 
 define {<vscale x 4 x half>, <vscale x 4 x half>, <vscale x 4 x half>} @vector_deinterleave_nxv4f16_nxv12f16(<vscale x 12 x half> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv4f16_nxv12f16:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    uunpklo z1.s, z1.h
-; CHECK-NEXT:    uunpkhi z2.s, z0.h
-; CHECK-NEXT:    uunpklo z0.s, z0.h
-; CHECK-NEXT:    ptrue p0.s
-; CHECK-NEXT:    str z1, [sp, #2, mul vl]
-; CHECK-NEXT:    str z2, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv4f16_nxv12f16:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    uunpklo z1.s, z1.h
+; SVE-NEXT:    uunpkhi z2.s, z0.h
+; SVE-NEXT:    uunpklo z0.s, z0.h
+; SVE-NEXT:    ptrue p0.s
+; SVE-NEXT:    str z1, [sp, #2, mul vl]
+; SVE-NEXT:    str z2, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv4f16_nxv12f16:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    uunpkhi z3.s, z0.h
+; SME2-NEXT:    uunpklo z1.s, z1.h
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    uunpklo z2.s, z0.h
+; SME2-NEXT:    ptrue p0.s
+; SME2-NEXT:    str z1, [sp, #2, mul vl]
+; SME2-NEXT:    st1h { z2.h, z3.h }, pn8, [sp]
+; SME2-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 4 x half>, <vscale x 4 x half>, <vscale x 4 x half>} @llvm.vector.deinterleave3.nxv12f16(<vscale x 12 x half> %vec)
   ret {<vscale x 4 x half>, <vscale x 4 x half>, <vscale x 4 x half>} %retval
 }
 
 define {<vscale x 8 x half>, <vscale x 8 x half>, <vscale x 8 x half>} @vector_deinterleave_nxv8f16_nxv24f16(<vscale x 24 x half> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv8f16_nxv24f16:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    ptrue p0.h
-; CHECK-NEXT:    str z2, [sp, #2, mul vl]
-; CHECK-NEXT:    str z1, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3h { z0.h - z2.h }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv8f16_nxv24f16:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    ptrue p0.h
+; SVE-NEXT:    str z2, [sp, #2, mul vl]
+; SVE-NEXT:    str z1, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3h { z0.h - z2.h }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv8f16_nxv24f16:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ptrue p0.h
+; SME2-NEXT:    str z2, [sp, #2, mul vl]
+; SME2-NEXT:    st1h { z0.h, z1.h }, pn8, [sp]
+; SME2-NEXT:    ld3h { z0.h - z2.h }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 8 x half>, <vscale x 8 x half>, <vscale x 8 x half>} @llvm.vector.deinterleave3.nxv24f16(<vscale x 24 x half> %vec)
   ret {<vscale x 8 x half>, <vscale x 8 x half>, <vscale x 8 x half>} %retval
 }
 
 define {<vscale x 2 x float>, <vscale x 2 x float>, <vscale x 2 x float>} @vector_deinterleave_nxv2f32_nxv6f32(<vscale x 6 x float> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv2f32_nxv6f32:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    uunpklo z1.d, z1.s
-; CHECK-NEXT:    uunpkhi z2.d, z0.s
-; CHECK-NEXT:    uunpklo z0.d, z0.s
-; CHECK-NEXT:    ptrue p0.d
-; CHECK-NEXT:    str z1, [sp, #2, mul vl]
-; CHECK-NEXT:    str z2, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv2f32_nxv6f32:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    uunpklo z1.d, z1.s
+; SVE-NEXT:    uunpkhi z2.d, z0.s
+; SVE-NEXT:    uunpklo z0.d, z0.s
+; SVE-NEXT:    ptrue p0.d
+; SVE-NEXT:    str z1, [sp, #2, mul vl]
+; SVE-NEXT:    str z2, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv2f32_nxv6f32:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    uunpkhi z3.d, z0.s
+; SME2-NEXT:    uunpklo z1.d, z1.s
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    uunpklo z2.d, z0.s
+; SME2-NEXT:    ptrue p0.d
+; SME2-NEXT:    str z1, [sp, #2, mul vl]
+; SME2-NEXT:    st1w { z2.s, z3.s }, pn8, [sp]
+; SME2-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 2 x float>, <vscale x 2 x float>, <vscale x 2 x float>} @llvm.vector.deinterleave3.nxv6f32(<vscale x 6 x float> %vec)
   ret {<vscale x 2 x float>, <vscale x 2 x float>, <vscale x 2 x float>} %retval
 }
 
 define {<vscale x 4 x float>, <vscale x 4 x float>, <vscale x 4 x float>} @vector_deinterleave_nxv4f32_nxv12f32(<vscale x 12 x float> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv4f32_nxv12f32:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    ptrue p0.s
-; CHECK-NEXT:    str z2, [sp, #2, mul vl]
-; CHECK-NEXT:    str z1, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv4f32_nxv12f32:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    ptrue p0.s
+; SVE-NEXT:    str z2, [sp, #2, mul vl]
+; SVE-NEXT:    str z1, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv4f32_nxv12f32:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ptrue p0.s
+; SME2-NEXT:    str z2, [sp, #2, mul vl]
+; SME2-NEXT:    st1w { z0.s, z1.s }, pn8, [sp]
+; SME2-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 4 x float>, <vscale x 4 x float>, <vscale x 4 x float>} @llvm.vector.deinterleave3.nxv12f32(<vscale x 12 x float> %vec)
   ret {<vscale x 4 x float>, <vscale x 4 x float>, <vscale x 4 x float>} %retval
 }
 
 define {<vscale x 2 x double>, <vscale x 2 x double>, <vscale x 2 x double>} @vector_deinterleave_nxv2f64_nxv6f64(<vscale x 6 x double> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv2f64_nxv6f64:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    ptrue p0.d
-; CHECK-NEXT:    str z2, [sp, #2, mul vl]
-; CHECK-NEXT:    str z1, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv2f64_nxv6f64:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    ptrue p0.d
+; SVE-NEXT:    str z2, [sp, #2, mul vl]
+; SVE-NEXT:    str z1, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv2f64_nxv6f64:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ptrue p0.d
+; SME2-NEXT:    str z2, [sp, #2, mul vl]
+; SME2-NEXT:    st1d { z0.d, z1.d }, pn8, [sp]
+; SME2-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 2 x double>, <vscale x 2 x double>, <vscale x 2 x double>} @llvm.vector.deinterleave3.nxv6f64(<vscale x 6 x double> %vec)
   ret {<vscale x 2 x double>, <vscale x 2 x double>, <vscale x 2 x double>} %retval
 }
 
 define {<vscale x 2 x bfloat>, <vscale x 2 x bfloat>, <vscale x 2 x bfloat>} @vector_deinterleave_nxv2bf16_nxv6bf16(<vscale x 6 x bfloat> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv2bf16_nxv6bf16:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    uunpkhi z1.s, z0.h
-; CHECK-NEXT:    uunpklo z0.s, z0.h
-; CHECK-NEXT:    ptrue p0.d
-; CHECK-NEXT:    uunpklo z1.d, z1.s
-; CHECK-NEXT:    uunpkhi z2.d, z0.s
-; CHECK-NEXT:    uunpklo z0.d, z0.s
-; CHECK-NEXT:    str z1, [sp, #2, mul vl]
-; CHECK-NEXT:    str z2, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv2bf16_nxv6bf16:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    uunpkhi z1.s, z0.h
+; SVE-NEXT:    uunpklo z0.s, z0.h
+; SVE-NEXT:    ptrue p0.d
+; SVE-NEXT:    uunpklo z1.d, z1.s
+; SVE-NEXT:    uunpkhi z2.d, z0.s
+; SVE-NEXT:    uunpklo z0.d, z0.s
+; SVE-NEXT:    str z1, [sp, #2, mul vl]
+; SVE-NEXT:    str z2, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv2bf16_nxv6bf16:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    uunpklo z1.s, z0.h
+; SME2-NEXT:    uunpkhi z0.s, z0.h
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ptrue p0.d
+; SME2-NEXT:    uunpkhi z3.d, z1.s
+; SME2-NEXT:    uunpklo z0.d, z0.s
+; SME2-NEXT:    uunpklo z2.d, z1.s
+; SME2-NEXT:    str z0, [sp, #2, mul vl]
+; SME2-NEXT:    st1h { z2.h, z3.h }, pn8, [sp]
+; SME2-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 2 x bfloat>, <vscale x 2 x bfloat>, <vscale x 2 x bfloat>} @llvm.vector.deinterleave3.nxv6bf16(<vscale x 6 x bfloat> %vec)
   ret {<vscale x 2 x bfloat>, <vscale x 2 x bfloat>, <vscale x 2 x bfloat>} %retval
 }
 
 define {<vscale x 4 x bfloat>, <vscale x 4 x bfloat>, <vscale x 4 x bfloat>} @vector_deinterleave_nxv4bf16_nxv12bf16(<vscale x 12 x bfloat> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv4bf16_nxv12bf16:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    uunpklo z1.s, z1.h
-; CHECK-NEXT:    uunpkhi z2.s, z0.h
-; CHECK-NEXT:    uunpklo z0.s, z0.h
-; CHECK-NEXT:    ptrue p0.s
-; CHECK-NEXT:    str z1, [sp, #2, mul vl]
-; CHECK-NEXT:    str z2, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv4bf16_nxv12bf16:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    uunpklo z1.s, z1.h
+; SVE-NEXT:    uunpkhi z2.s, z0.h
+; SVE-NEXT:    uunpklo z0.s, z0.h
+; SVE-NEXT:    ptrue p0.s
+; SVE-NEXT:    str z1, [sp, #2, mul vl]
+; SVE-NEXT:    str z2, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv4bf16_nxv12bf16:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    uunpkhi z3.s, z0.h
+; SME2-NEXT:    uunpklo z1.s, z1.h
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    uunpklo z2.s, z0.h
+; SME2-NEXT:    ptrue p0.s
+; SME2-NEXT:    str z1, [sp, #2, mul vl]
+; SME2-NEXT:    st1h { z2.h, z3.h }, pn8, [sp]
+; SME2-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 4 x bfloat>, <vscale x 4 x bfloat>, <vscale x 4 x bfloat>} @llvm.vector.deinterleave3.nxv12bf16(<vscale x 12 x bfloat> %vec)
   ret {<vscale x 4 x bfloat>, <vscale x 4 x bfloat>, <vscale x 4 x bfloat>} %retval
 }
 
 define {<vscale x 8 x bfloat>, <vscale x 8 x bfloat>, <vscale x 8 x bfloat>} @vector_deinterleave_nxv8bf16_nxv24bf16(<vscale x 24 x bfloat> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv8bf16_nxv24bf16:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    ptrue p0.h
-; CHECK-NEXT:    str z2, [sp, #2, mul vl]
-; CHECK-NEXT:    str z1, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3h { z0.h - z2.h }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv8bf16_nxv24bf16:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    ptrue p0.h
+; SVE-NEXT:    str z2, [sp, #2, mul vl]
+; SVE-NEXT:    str z1, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3h { z0.h - z2.h }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv8bf16_nxv24bf16:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ptrue p0.h
+; SME2-NEXT:    str z2, [sp, #2, mul vl]
+; SME2-NEXT:    st1h { z0.h, z1.h }, pn8, [sp]
+; SME2-NEXT:    ld3h { z0.h - z2.h }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 8 x bfloat>, <vscale x 8 x bfloat>, <vscale x 8 x bfloat>} @llvm.vector.deinterleave3.nxv24bf16(<vscale x 24 x bfloat> %vec)
   ret {<vscale x 8 x bfloat>, <vscale x 8 x bfloat>, <vscale x 8 x bfloat>} %retval
 }
@@ -424,77 +614,153 @@ define {<vscale x 8 x bfloat>, <vscale x 8 x bfloat>, <vscale x 8 x bfloat>} @ve
 ; Integers
 
 define {<vscale x 16 x i8>, <vscale x 16 x i8>, <vscale x 16 x i8>} @vector_deinterleave_nxv16i8_nxv48i8(<vscale x 48 x i8> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv16i8_nxv48i8:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    ptrue p0.b
-; CHECK-NEXT:    str z2, [sp, #2, mul vl]
-; CHECK-NEXT:    str z1, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3b { z0.b - z2.b }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv16i8_nxv48i8:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    ptrue p0.b
+; SVE-NEXT:    str z2, [sp, #2, mul vl]
+; SVE-NEXT:    str z1, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3b { z0.b - z2.b }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv16i8_nxv48i8:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ptrue p0.b
+; SME2-NEXT:    str z2, [sp, #2, mul vl]
+; SME2-NEXT:    st1b { z0.b, z1.b }, pn8, [sp]
+; SME2-NEXT:    ld3b { z0.b - z2.b }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 16 x i8>, <vscale x 16 x i8>, <vscale x 16 x i8>} @llvm.vector.deinterleave3.nxv48i8(<vscale x 48 x i8> %vec)
   ret {<vscale x 16 x i8>, <vscale x 16 x i8>, <vscale x 16 x i8>} %retval
 }
 
 define {<vscale x 8 x i16>, <vscale x 8 x i16>, <vscale x 8 x i16>} @vector_deinterleave_nxv8i16_nxv24i16(<vscale x 24 x i16> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv8i16_nxv24i16:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    ptrue p0.h
-; CHECK-NEXT:    str z2, [sp, #2, mul vl]
-; CHECK-NEXT:    str z1, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3h { z0.h - z2.h }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv8i16_nxv24i16:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    ptrue p0.h
+; SVE-NEXT:    str z2, [sp, #2, mul vl]
+; SVE-NEXT:    str z1, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3h { z0.h - z2.h }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv8i16_nxv24i16:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ptrue p0.h
+; SME2-NEXT:    str z2, [sp, #2, mul vl]
+; SME2-NEXT:    st1h { z0.h, z1.h }, pn8, [sp]
+; SME2-NEXT:    ld3h { z0.h - z2.h }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 8 x i16>, <vscale x 8 x i16>, <vscale x 8 x i16>} @llvm.vector.deinterleave3.nxv24i16(<vscale x 24 x i16> %vec)
   ret {<vscale x 8 x i16>, <vscale x 8 x i16>, <vscale x 8 x i16>} %retval
 }
 
 define {<vscale x 4 x i32>, <vscale x 4 x i32>, <vscale x 4 x i32>} @vector_deinterleave_nxv4i32_nxvv12i32(<vscale x 12 x i32> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv4i32_nxvv12i32:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    ptrue p0.s
-; CHECK-NEXT:    str z2, [sp, #2, mul vl]
-; CHECK-NEXT:    str z1, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv4i32_nxvv12i32:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    ptrue p0.s
+; SVE-NEXT:    str z2, [sp, #2, mul vl]
+; SVE-NEXT:    str z1, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv4i32_nxvv12i32:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ptrue p0.s
+; SME2-NEXT:    str z2, [sp, #2, mul vl]
+; SME2-NEXT:    st1w { z0.s, z1.s }, pn8, [sp]
+; SME2-NEXT:    ld3w { z0.s - z2.s }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 4 x i32>, <vscale x 4 x i32>, <vscale x 4 x i32>} @llvm.vector.deinterleave3.nxv12i32(<vscale x 12 x i32> %vec)
   ret {<vscale x 4 x i32>, <vscale x 4 x i32>, <vscale x 4 x i32>} %retval
 }
 
 define {<vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 x i64>} @vector_deinterleave_nxv2i64_nxv6i64(<vscale x 6 x i64> %vec) {
-; CHECK-LABEL: vector_deinterleave_nxv2i64_nxv6i64:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    ptrue p0.d
-; CHECK-NEXT:    str z2, [sp, #2, mul vl]
-; CHECK-NEXT:    str z1, [sp, #1, mul vl]
-; CHECK-NEXT:    str z0, [sp]
-; CHECK-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: vector_deinterleave_nxv2i64_nxv6i64:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    ptrue p0.d
+; SVE-NEXT:    str z2, [sp, #2, mul vl]
+; SVE-NEXT:    str z1, [sp, #1, mul vl]
+; SVE-NEXT:    str z0, [sp]
+; SVE-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: vector_deinterleave_nxv2i64_nxv6i64:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ptrue p0.d
+; SME2-NEXT:    str z2, [sp, #2, mul vl]
+; SME2-NEXT:    st1d { z0.d, z1.d }, pn8, [sp]
+; SME2-NEXT:    ld3d { z0.d - z2.d }, p0/z, [sp]
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 x i64>} @llvm.vector.deinterleave3.nxv6i64(<vscale x 6 x i64> %vec)
   ret {<vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 x i64>} %retval
 }
@@ -713,54 +979,107 @@ define {<vscale x 2 x i1>, <vscale x 2 x i1>} @vector_deinterleave_nxv2i1_nxv4i1
 }
 
 define {<vscale x 8 x i1>, <vscale x 8 x i1>, <vscale x 8 x i1>} @deinterleave3_nxv8i1_nxv24i1(<vscale x 24 x i1> %vec) {
-; CHECK-LABEL: deinterleave3_nxv8i1_nxv24i1:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    punpklo p1.h, p1.b
-; CHECK-NEXT:    punpkhi p3.h, p0.b
-; CHECK-NEXT:    punpklo p0.h, p0.b
-; CHECK-NEXT:    mov z0.h, p1/z, #1 // =0x1
-; CHECK-NEXT:    mov z1.h, p3/z, #1 // =0x1
-; CHECK-NEXT:    ptrue p2.h
-; CHECK-NEXT:    mov z2.h, p0/z, #1 // =0x1
-; CHECK-NEXT:    str z0, [sp, #2, mul vl]
-; CHECK-NEXT:    str z1, [sp, #1, mul vl]
-; CHECK-NEXT:    str z2, [sp]
-; CHECK-NEXT:    ld3h { z0.h - z2.h }, p2/z, [sp]
-; CHECK-NEXT:    cmpne p0.h, p2/z, z0.h, #0
-; CHECK-NEXT:    cmpne p1.h, p2/z, z1.h, #0
-; CHECK-NEXT:    cmpne p2.h, p2/z, z2.h, #0
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: deinterleave3_nxv8i1_nxv24i1:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    punpklo p1.h, p1.b
+; SVE-NEXT:    punpkhi p3.h, p0.b
+; SVE-NEXT:    punpklo p0.h, p0.b
+; SVE-NEXT:    mov z0.h, p1/z, #1 // =0x1
+; SVE-NEXT:    mov z1.h, p3/z, #1 // =0x1
+; SVE-NEXT:    ptrue p2.h
+; SVE-NEXT:    mov z2.h, p0/z, #1 // =0x1
+; SVE-NEXT:    str z0, [sp, #2, mul vl]
+; SVE-NEXT:    str z1, [sp, #1, mul vl]
+; SVE-NEXT:    str z2, [sp]
+; SVE-NEXT:    ld3h { z0.h - z2.h }, p2/z, [sp]
+; SVE-NEXT:    cmpne p0.h, p2/z, z0.h, #0
+; SVE-NEXT:    cmpne p1.h, p2/z, z1.h, #0
+; SVE-NEXT:    cmpne p2.h, p2/z, z2.h, #0
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: deinterleave3_nxv8i1_nxv24i1:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    punpklo p1.h, p1.b
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    punpkhi p2.h, p0.b
+; SME2-NEXT:    punpklo p0.h, p0.b
+; SME2-NEXT:    mov z2.h, p1/z, #1 // =0x1
+; SME2-NEXT:    mov z1.h, p2/z, #1 // =0x1
+; SME2-NEXT:    ptrue p2.h
+; SME2-NEXT:    mov z0.h, p0/z, #1 // =0x1
+; SME2-NEXT:    str z2, [sp, #2, mul vl]
+; SME2-NEXT:    st1h { z0.h, z1.h }, pn8, [sp]
+; SME2-NEXT:    ld3h { z0.h - z2.h }, p2/z, [sp]
+; SME2-NEXT:    cmpne p0.h, p2/z, z0.h, #0
+; SME2-NEXT:    cmpne p1.h, p2/z, z1.h, #0
+; SME2-NEXT:    cmpne p2.h, p2/z, z2.h, #0
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 8 x i1>, <vscale x 8 x i1>, <vscale x 8 x i1>} @llvm.vector.deinterleave3.nxv24i1(<vscale x 24 x i1> %vec)
   ret {<vscale x 8 x i1>, <vscale x 8 x i1>, <vscale x 8 x i1>} %retval
 }
 
 define {<vscale x 16 x i1>, <vscale x 16 x i1>, <vscale x 16 x i1>} @deinterleave3_nxv16i1_nxv48i1(<vscale x 48 x i1> %vec) {
-; CHECK-LABEL: deinterleave3_nxv16i1_nxv48i1:
-; CHECK:       // %bb.0:
-; CHECK-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
-; CHECK-NEXT:    addvl sp, sp, #-3
-; CHECK-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
-; CHECK-NEXT:    .cfi_offset w29, -16
-; CHECK-NEXT:    mov z0.b, p2/z, #1 // =0x1
-; CHECK-NEXT:    mov z1.b, p1/z, #1 // =0x1
-; CHECK-NEXT:    mov z2.b, p0/z, #1 // =0x1
-; CHECK-NEXT:    ptrue p2.b
-; CHECK-NEXT:    str z0, [sp, #2, mul vl]
-; CHECK-NEXT:    str z1, [sp, #1, mul vl]
-; CHECK-NEXT:    str z2, [sp]
-; CHECK-NEXT:    ld3b { z0.b - z2.b }, p2/z, [sp]
-; CHECK-NEXT:    cmpne p0.b, p2/z, z0.b, #0
-; CHECK-NEXT:    cmpne p1.b, p2/z, z1.b, #0
-; CHECK-NEXT:    cmpne p2.b, p2/z, z2.b, #0
-; CHECK-NEXT:    addvl sp, sp, #3
-; CHECK-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
-; CHECK-NEXT:    ret
+; SVE-LABEL: deinterleave3_nxv16i1_nxv48i1:
+; SVE:       // %bb.0:
+; SVE-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SVE-NEXT:    addvl sp, sp, #-3
+; SVE-NEXT:    .cfi_escape 0x0f, 0x08, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x48, 0x1e, 0x22 // sp + 16 + 24 * VG
+; SVE-NEXT:    .cfi_offset w29, -16
+; SVE-NEXT:    mov z0.b, p2/z, #1 // =0x1
+; SVE-NEXT:    mov z1.b, p1/z, #1 // =0x1
+; SVE-NEXT:    mov z2.b, p0/z, #1 // =0x1
+; SVE-NEXT:    ptrue p2.b
+; SVE-NEXT:    str z0, [sp, #2, mul vl]
+; SVE-NEXT:    str z1, [sp, #1, mul vl]
+; SVE-NEXT:    str z2, [sp]
+; SVE-NEXT:    ld3b { z0.b - z2.b }, p2/z, [sp]
+; SVE-NEXT:    cmpne p0.b, p2/z, z0.b, #0
+; SVE-NEXT:    cmpne p1.b, p2/z, z1.b, #0
+; SVE-NEXT:    cmpne p2.b, p2/z, z2.b, #0
+; SVE-NEXT:    addvl sp, sp, #3
+; SVE-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SVE-NEXT:    ret
+;
+; SME2-LABEL: deinterleave3_nxv16i1_nxv48i1:
+; SME2:       // %bb.0:
+; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-1
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    addvl sp, sp, #-3
+; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x20, 0x1e, 0x22 // sp + 16 + 32 * VG
+; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    mov z1.b, p1/z, #1 // =0x1
+; SME2-NEXT:    mov z2.b, p2/z, #1 // =0x1
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    mov z0.b, p0/z, #1 // =0x1
+; SME2-NEXT:    ptrue p2.b
+; SME2-NEXT:    str z2, [sp, #2, mul vl]
+; SME2-NEXT:    st1b { z0.b, z1.b }, pn8, [sp]
+; SME2-NEXT:    ld3b { z0.b - z2.b }, p2/z, [sp]
+; SME2-NEXT:    cmpne p0.b, p2/z, z0.b, #0
+; SME2-NEXT:    cmpne p1.b, p2/z, z1.b, #0
+; SME2-NEXT:    cmpne p2.b, p2/z, z2.b, #0
+; SME2-NEXT:    addvl sp, sp, #3
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #1
+; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
+; SME2-NEXT:    ret
   %retval = call {<vscale x 16 x i1>, <vscale x 16 x i1>, <vscale x 16 x i1>} @llvm.vector.deinterleave3.nxv48i1(<vscale x 48 x i1> %vec)
   ret {<vscale x 16 x i1>, <vscale x 16 x i1>, <vscale x 16 x i1>} %retval
 }
@@ -919,16 +1238,21 @@ define {<vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 
 ; SME2-LABEL: vector_deinterleave6_nxv2i64_nxv12i64:
 ; SME2:       // %bb.0:
 ; SME2-NEXT:    str x29, [sp, #-16]! // 8-byte Folded Spill
+; SME2-NEXT:    addvl sp, sp, #-2
+; SME2-NEXT:    str p8, [sp, #7, mul vl] // 2-byte Spill
+; SME2-NEXT:    str z11, [sp, #1, mul vl] // 16-byte Folded Spill
 ; SME2-NEXT:    addvl sp, sp, #-6
-; SME2-NEXT:    .cfi_escape 0x0f, 0x09, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0x30, 0x1e, 0x22 // sp + 16 + 48 * VG
+; SME2-NEXT:    .cfi_escape 0x0f, 0x0a, 0x8f, 0x10, 0x92, 0x2e, 0x00, 0x11, 0xc0, 0x00, 0x1e, 0x22 // sp + 16 + 64 * VG
 ; SME2-NEXT:    .cfi_offset w29, -16
+; SME2-NEXT:    .cfi_escape 0x10, 0x4b, 0x09, 0x92, 0x2e, 0x00, 0x11, 0x78, 0x1e, 0x22, 0x40, 0x1c // $d11 @ cfa - 8 * VG - 16
+; SME2-NEXT:    mov z11.d, z4.d
+; SME2-NEXT:    ptrue pn8.b
 ; SME2-NEXT:    ptrue p0.d
+; SME2-NEXT:    addvl x8, sp, #1
 ; SME2-NEXT:    str z5, [sp, #5, mul vl]
-; SME2-NEXT:    str z4, [sp, #4, mul vl]
-; SME2-NEXT:    str z3, [sp, #3, mul vl]
+; SME2-NEXT:    st1d { z3.d, z11.d }, pn8, [x8, #2, mul vl]
+; SME2-NEXT:    st1d { z0.d, z1.d }, pn8, [sp]
 ; SME2-NEXT:    str z2, [sp, #2, mul vl]
-; SME2-NEXT:    str z1, [sp, #1, mul vl]
-; SME2-NEXT:    str z0, [sp]
 ; SME2-NEXT:    ld3d { z3.d - z5.d }, p0/z, [sp, #3, mul vl]
 ; SME2-NEXT:    ld3d { z24.d - z26.d }, p0/z, [sp]
 ; SME2-NEXT:    uzp { z2.d, z3.d }, z24.d, z3.d
@@ -939,6 +1263,9 @@ define {<vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 
 ; SME2-NEXT:    mov z2.d, z4.d
 ; SME2-NEXT:    mov z4.d, z7.d
 ; SME2-NEXT:    addvl sp, sp, #6
+; SME2-NEXT:    ldr z11, [sp, #1, mul vl] // 16-byte Folded Reload
+; SME2-NEXT:    ldr p8, [sp, #7, mul vl] // 2-byte Reload
+; SME2-NEXT:    addvl sp, sp, #2
 ; SME2-NEXT:    ldr x29, [sp], #16 // 8-byte Folded Reload
 ; SME2-NEXT:    ret
   %retval = call {<vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 x i64>, <vscale x 2 x i64>} @llvm.vector.deinterleave6.nxv12i64(<vscale x 12 x i64> %vec)

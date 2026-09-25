@@ -255,11 +255,6 @@ static bool getElementSize(SVELoadStoreCluster &Cluster,
         return false;
 
       unsigned Size = MMO->getMemoryType().getScalarSizeInBits();
-      // Type legalization represents full-register LDR/STR accesses using an
-      // opaque scalable i128 element. Fall back to D for these on little
-      // endian, as for accesses without a memory operand.
-      if (Size == 128)
-        continue;
       if (Size != 8 && Size != 16 && Size != 32 && Size != 64)
         return false;
       if (ElementSize && ElementSize != Size)
@@ -268,10 +263,7 @@ static bool getElementSize(SVELoadStoreCluster &Cluster,
     }
   }
 
-  if (ElementSize)
-    return true;
-  ElementSize = 64;
-  return true;
+  return ElementSize != 0;
 }
 
 bool AArch64SVELoadStoreClustering::rewriteClusters(

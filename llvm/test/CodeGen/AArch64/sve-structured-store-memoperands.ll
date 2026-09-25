@@ -71,7 +71,7 @@ define void @unpredicated_store_mmo(<vscale x 16 x i8> %v, ptr %addr) {
   ; CHECK-NEXT: {{  $}}
   ; CHECK-NEXT:   [[COPY:%[0-9]+]]:gpr64common = COPY $x0
   ; CHECK-NEXT:   [[COPY1:%[0-9]+]]:zpr = COPY $z0
-  ; CHECK-NEXT:   STR_ZXI [[COPY1]], [[COPY]], 0 :: (store (<vscale x 1 x s128>) into %ir.addr, align 1)
+  ; CHECK-NEXT:   STR_ZXI [[COPY1]], [[COPY]], 0 :: (store (<vscale x 16 x i8>) into %ir.addr, align 1)
   ; CHECK-NEXT:   RET_ReallyLR
   store <vscale x 16 x i8> %v, ptr %addr, align 1
   ret void
@@ -177,13 +177,13 @@ define <vscale x 6 x half> @interleave3_nxv6f16_mmo(<vscale x 2 x half> %v0,
   ; CHECK-NEXT:   [[REG_SEQUENCE:%[0-9]+]]:zpr3 = REG_SEQUENCE killed [[COPY5]], %subreg.zsub0, killed [[COPY4]], %subreg.zsub1, killed [[COPY3]], %subreg.zsub2
   ; CHECK-NEXT:   [[PTRUE_D:%[0-9]+]]:ppr_3b = PTRUE_D 31, implicit $vg
   ; CHECK-NEXT:   ST3D_IMM killed [[REG_SEQUENCE]], killed [[PTRUE_D]], %stack.0, 0 :: (store (<vscale x 1 x s384>) into %stack.0, align 16)
-  ; CHECK-NEXT:   [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI %stack.0, 2 :: (load (<vscale x 1 x s128>))
+  ; CHECK-NEXT:   [[LDR_ZXI:%[0-9]+]]:zpr = LDR_ZXI %stack.0, 2 :: (load (<vscale x 8 x f16>))
   ; CHECK-NEXT:   [[COPY6:%[0-9]+]]:zpr = COPY killed [[LDR_ZXI]]
   ; CHECK-NEXT:   [[DEF:%[0-9]+]]:zpr = IMPLICIT_DEF
   ; CHECK-NEXT:   [[UZP1_ZZZ_S:%[0-9]+]]:zpr = UZP1_ZZZ_S killed [[COPY6]], killed [[DEF]]
-  ; CHECK-NEXT:   [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI %stack.0, 1 :: (load (<vscale x 1 x s128>))
+  ; CHECK-NEXT:   [[LDR_ZXI1:%[0-9]+]]:zpr = LDR_ZXI %stack.0, 1 :: (load (<vscale x 8 x f16>))
   ; CHECK-NEXT:   [[COPY7:%[0-9]+]]:zpr = COPY killed [[LDR_ZXI1]]
-  ; CHECK-NEXT:   [[LDR_ZXI2:%[0-9]+]]:zpr = LDR_ZXI %stack.0, 0 :: (load (<vscale x 1 x s128>) from %stack.0)
+  ; CHECK-NEXT:   [[LDR_ZXI2:%[0-9]+]]:zpr = LDR_ZXI %stack.0, 0 :: (load (<vscale x 8 x f16>) from %stack.0)
   ; CHECK-NEXT:   [[COPY8:%[0-9]+]]:zpr = COPY killed [[LDR_ZXI2]]
   ; CHECK-NEXT:   [[UZP1_ZZZ_S1:%[0-9]+]]:zpr = UZP1_ZZZ_S killed [[COPY8]], killed [[COPY7]]
   ; CHECK-NEXT:   [[UZP1_ZZZ_H:%[0-9]+]]:zpr = UZP1_ZZZ_H killed [[UZP1_ZZZ_S1]], killed [[UZP1_ZZZ_S]]

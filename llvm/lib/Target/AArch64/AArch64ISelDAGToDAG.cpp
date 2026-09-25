@@ -17,6 +17,7 @@
 #include "MCTargetDesc/AArch64AddressingModes.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
+#include "llvm/CodeGen/LowLevelTypeUtils.h"
 #include "llvm/CodeGen/SDPatternMatch.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
 #include "llvm/IR/Function.h" // To access function attributes.
@@ -66,6 +67,7 @@ public:
 
   void Select(SDNode *Node) override;
   void PreprocessISelDAG() override;
+  void PostprocessISelDAG() override;
 
   /// SelectInlineAsmMemoryOperand - Implement addressing mode selection for
   /// inline asm expressions.
@@ -8342,4 +8344,47 @@ void AArch64DAGToDAGISel::PreprocessISelDAG() {
     CurDAG->RemoveDeadNodes();
 
   SelectionDAGISel::PreprocessISelDAG();
+}
+
+void AArch64DAGToDAGISel::PostprocessISelDAG() {
+  MachineFunction &MF = CurDAG->getMachineFunction();
+  for (SDNode &N : CurDAG->allnodes()) {
+    if (N.use_empty() || !N.isMachineOpcode())
+      continue;
+
+    MVT MemoryVT;
+    switch (N.getMachineOpcode()) {
+    case AArch64::LDR_ZXI:
+      MemoryVT = N.getSimpleValueType(0);
+      break;
+    case AArch64::STR_ZXI:
+      MemoryVT = N.getOperand(0).getSimpleValueType();
+      break;
+    default:
+      continue;
+    }
+
+    // SelectionDAG MMOs normally describe scalable accesses using only their
+    // total size. Preserve the element type carried by the selected node.
+    LLT MemoryType = getLLTForMVT(MemoryVT);
+    SmallVector<MachineMemOperand *, 1> MemOperands;
+    for (MachineMemOperand *MMO : cast<MachineSDNode>(&N)->memoperands()) {
+      if (!MMO->getMemoryType().isValid() ||
+          MMO->getMemoryType().getSizeInBits() != MemoryType.getSizeInBits() ||
+          MMO->getMemoryType() == MemoryType) {
+        MemOperands.push_back(MMO);
+        continue;
+      }
+
+      MachineMemOperand *NewMMO = MF.getMachineMemOperand(
+          MMO->getPointerInfo(), MMO->getFlags(), MemoryType,
+          MMO->getBaseAlign(),
+          MMOMetadata(MMO->getAAInfo(), MMO->getRanges(),
+                      MMO->getMemCacheHint()),
+          MMO->getSyncScopeID(), MMO->getSuccessOrdering(),
+          MMO->getFailureOrdering());
+      MemOperands.push_back(NewMMO);
+    }
+    CurDAG->setNodeMemRefs(cast<MachineSDNode>(&N), MemOperands);
+  }
 }
