@@ -139,6 +139,7 @@
 ; CHECK-NEXT:       Machine Optimization Remark Emitter
 ; CHECK-NEXT:       Machine SME ABI pass
 ; CHECK-NEXT:       SME Peephole Optimization pass
+; CHECK-NEXT:       AArch64 SVE Load/Store Clustering
 ; CHECK-NEXT:       Early Tail Duplication
 ; CHECK-NEXT:       Optimize machine instruction PHIs
 ; CHECK-NEXT:       Slot index numbering
