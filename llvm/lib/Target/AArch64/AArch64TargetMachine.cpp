@@ -76,6 +76,11 @@ static cl::opt<bool> EnableMCR("aarch64-enable-mcr",
                                cl::desc("Enable the machine combiner pass"),
                                cl::init(true), cl::Hidden);
 
+static cl::opt<bool> EnableMultiVectorClustering(
+    "aarch64-enable-multi-vector-clustering",
+    cl::desc("Enable multi-vector load/store clustering"), cl::init(true),
+    cl::Hidden);
+
 static cl::opt<bool> EnableStPairSuppress("aarch64-enable-stp-suppress",
                                           cl::desc("Suppress STP for AArch64"),
                                           cl::init(true), cl::Hidden);
@@ -822,7 +827,8 @@ void AArch64PassConfig::addMachineSSAOptimization() {
   if (TM->getOptLevel() != CodeGenOptLevel::None && EnableSMEPeepholeOpt)
     addPass(createSMEPeepholeOptPass());
 
-  if (TM->getOptLevel() != CodeGenOptLevel::None)
+  if (TM->getOptLevel() != CodeGenOptLevel::None &&
+      EnableMultiVectorClustering)
     addPass(createAArch64SVELoadStoreClusteringPass());
 
   // Run default MachineSSAOptimization first.
