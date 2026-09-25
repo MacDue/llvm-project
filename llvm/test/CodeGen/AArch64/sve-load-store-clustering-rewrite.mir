@@ -127,7 +127,7 @@ body:             |
     ; SVE2P1-NEXT: [[COPY4:%[0-9]+]]:zpr = COPY [[LD1H_2Z]].zsub0
     ; SVE2P1-NEXT: [[COPY5:%[0-9]+]]:zpr = COPY [[LD1H_2Z]].zsub1
     ; SVE2P1-NEXT: [[REG_SEQUENCE:%[0-9]+]]:zpr4mul4 = REG_SEQUENCE [[COPY]], %subreg.zsub0, [[COPY1]], %subreg.zsub1, [[COPY2]], %subreg.zsub2, [[COPY3]], %subreg.zsub3
-    ; SVE2P1-NEXT: ST1H_4Z [[REG_SEQUENCE]], [[PTRUE_C_B]], [[DEF]], [[DEF1]] :: (store (<vscale x 1 x s128>)), (store (<vscale x 8 x s16>)), (store (<vscale x 8 x s16>)), (store (<vscale x 8 x s16>))
+    ; SVE2P1-NEXT: ST1H_4Z_PSEUDO [[REG_SEQUENCE]], [[PTRUE_C_B]], [[DEF]], [[DEF1]] :: (store (<vscale x 1 x s128>)), (store (<vscale x 8 x s16>)), (store (<vscale x 8 x s16>)), (store (<vscale x 8 x s16>))
     ; SVE2P1-NEXT: [[REG_SEQUENCE1:%[0-9]+]]:zpr2mul2 = REG_SEQUENCE [[COPY4]], %subreg.zsub0, [[COPY5]], %subreg.zsub1
     ; SVE2P1-NEXT: ST1H_2Z_IMM_PSEUDO [[REG_SEQUENCE1]], [[PTRUE_C_B]], [[ADDXrs1]], 2 :: (store (<vscale x 8 x s16>)), (store (<vscale x 8 x s16>))
     ; SVE2P1-NEXT: RET_ReallyLR

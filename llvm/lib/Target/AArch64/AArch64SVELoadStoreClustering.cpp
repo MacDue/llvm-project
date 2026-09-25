@@ -327,26 +327,26 @@ static bool getMultiVectorOpcodes(AArch64::ElementSizeType AccessSize,
                                   MultiVectorOpcodes &Opcodes) {
   switch (AccessSize) {
   case AArch64::ElementSizeB:
-    Opcodes = {AArch64::LD1B_2Z_PSEUDO,     AArch64::ST1B_2Z,
-               AArch64::LD1B_4Z_PSEUDO,     AArch64::ST1B_4Z,
+    Opcodes = {AArch64::LD1B_2Z_PSEUDO,     AArch64::ST1B_2Z_PSEUDO,
+               AArch64::LD1B_4Z_PSEUDO,     AArch64::ST1B_4Z_PSEUDO,
                AArch64::LD1B_2Z_IMM_PSEUDO, AArch64::ST1B_2Z_IMM_PSEUDO,
                AArch64::LD1B_4Z_IMM_PSEUDO, AArch64::ST1B_4Z_IMM_PSEUDO};
     return true;
   case AArch64::ElementSizeH:
-    Opcodes = {AArch64::LD1H_2Z_PSEUDO,     AArch64::ST1H_2Z,
-               AArch64::LD1H_4Z_PSEUDO,     AArch64::ST1H_4Z,
+    Opcodes = {AArch64::LD1H_2Z_PSEUDO,     AArch64::ST1H_2Z_PSEUDO,
+               AArch64::LD1H_4Z_PSEUDO,     AArch64::ST1H_4Z_PSEUDO,
                AArch64::LD1H_2Z_IMM_PSEUDO, AArch64::ST1H_2Z_IMM_PSEUDO,
                AArch64::LD1H_4Z_IMM_PSEUDO, AArch64::ST1H_4Z_IMM_PSEUDO};
     return true;
   case AArch64::ElementSizeS:
-    Opcodes = {AArch64::LD1W_2Z_PSEUDO,     AArch64::ST1W_2Z,
-               AArch64::LD1W_4Z_PSEUDO,     AArch64::ST1W_4Z,
+    Opcodes = {AArch64::LD1W_2Z_PSEUDO,     AArch64::ST1W_2Z_PSEUDO,
+               AArch64::LD1W_4Z_PSEUDO,     AArch64::ST1W_4Z_PSEUDO,
                AArch64::LD1W_2Z_IMM_PSEUDO, AArch64::ST1W_2Z_IMM_PSEUDO,
                AArch64::LD1W_4Z_IMM_PSEUDO, AArch64::ST1W_4Z_IMM_PSEUDO};
     return true;
   case AArch64::ElementSizeD:
-    Opcodes = {AArch64::LD1D_2Z_PSEUDO,     AArch64::ST1D_2Z,
-               AArch64::LD1D_4Z_PSEUDO,     AArch64::ST1D_4Z,
+    Opcodes = {AArch64::LD1D_2Z_PSEUDO,     AArch64::ST1D_2Z_PSEUDO,
+               AArch64::LD1D_4Z_PSEUDO,     AArch64::ST1D_4Z_PSEUDO,
                AArch64::LD1D_2Z_IMM_PSEUDO, AArch64::ST1D_2Z_IMM_PSEUDO,
                AArch64::LD1D_4Z_IMM_PSEUDO, AArch64::ST1D_4Z_IMM_PSEUDO};
     return true;
@@ -474,8 +474,7 @@ bool AArch64SVELoadStoreClustering::rewriteClusters(
                      ? (Is4Vector ? Opcodes.Store4Reg : Opcodes.Store2Reg)
                      : (Is4Vector ? Opcodes.Store4Imm : Opcodes.Store2Imm);
       Register Tuple = MRI.createVirtualRegister(&getTupleRegClass(
-          Is4Vector, MF.getSubtarget<AArch64Subtarget>().hasSME2() &&
-                         !(UseRegisterOffset && !Cluster.IsLoad)));
+          Is4Vector, MF.getSubtarget<AArch64Subtarget>().hasSME2()));
       SmallVector<MachineMemOperand *, 4> MemRefs;
       for (unsigned I = 0; I != Group.NumVectors; ++I) {
         MachineInstr *MI = Cluster.OffsetToMI[Group.StartIndex + I];

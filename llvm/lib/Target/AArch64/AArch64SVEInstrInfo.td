@@ -4638,10 +4638,10 @@ defm LDNT1W_4Z_IMM : sve2p1_mem_cld_si_4z<"ldnt1w", 0b10, 0b1, ZZZZ_s_mul_r, ZZZ
 defm LDNT1D_4Z_IMM : sve2p1_mem_cld_si_4z<"ldnt1d", 0b11, 0b1, ZZZZ_d_mul_r, ZZZZ_d_strided_and_contiguous>;
 
 // Stores of two registers
-def ST1B_2Z        : sve2p1_mem_cst_ss_2z<"st1b", 0b00, 0b0, ZZ_b_mul_r, GPR64shifted8>;
-def ST1H_2Z        : sve2p1_mem_cst_ss_2z<"st1h", 0b01, 0b0, ZZ_h_mul_r, GPR64shifted16>;
-def ST1W_2Z        : sve2p1_mem_cst_ss_2z<"st1w", 0b10, 0b0, ZZ_s_mul_r, GPR64shifted32>;
-def ST1D_2Z        : sve2p1_mem_cst_ss_2z<"st1d", 0b11, 0b0, ZZ_d_mul_r, GPR64shifted64>;
+defm ST1B_2Z       : sve2p1_mem_cst_ss_2z<"st1b", 0b00, 0b0, ZZ_b_mul_r, GPR64shifted8, ZZ_b_strided_and_contiguous>;
+defm ST1H_2Z       : sve2p1_mem_cst_ss_2z<"st1h", 0b01, 0b0, ZZ_h_mul_r, GPR64shifted16, ZZ_h_strided_and_contiguous>;
+defm ST1W_2Z       : sve2p1_mem_cst_ss_2z<"st1w", 0b10, 0b0, ZZ_s_mul_r, GPR64shifted32, ZZ_s_strided_and_contiguous>;
+defm ST1D_2Z       : sve2p1_mem_cst_ss_2z<"st1d", 0b11, 0b0, ZZ_d_mul_r, GPR64shifted64, ZZ_d_strided_and_contiguous>;
 defm ST1B_2Z_IMM   : sve2p1_mem_cst_si_2z<"st1b", 0b00, 0b0, ZZ_b_mul_r, ZZ_b_strided_and_contiguous>;
 defm ST1H_2Z_IMM   : sve2p1_mem_cst_si_2z<"st1h", 0b01, 0b0, ZZ_h_mul_r, ZZ_h_strided_and_contiguous>;
 defm ST1W_2Z_IMM   : sve2p1_mem_cst_si_2z<"st1w", 0b10, 0b0, ZZ_s_mul_r, ZZ_s_strided_and_contiguous>;
@@ -4656,10 +4656,10 @@ defm STNT1W_2Z_IMM : sve2p1_mem_cst_si_2z<"stnt1w", 0b10, 0b1, ZZ_s_mul_r, ZZ_s_
 defm STNT1D_2Z_IMM : sve2p1_mem_cst_si_2z<"stnt1d", 0b11, 0b1, ZZ_d_mul_r, ZZ_d_strided_and_contiguous>;
 
 // Stores of four registers
-def ST1B_4Z        : sve2p1_mem_cst_ss_4z<"st1b", 0b00, 0b0, ZZZZ_b_mul_r, GPR64shifted8>;
-def ST1H_4Z        : sve2p1_mem_cst_ss_4z<"st1h", 0b01, 0b0, ZZZZ_h_mul_r, GPR64shifted16>;
-def ST1W_4Z        : sve2p1_mem_cst_ss_4z<"st1w", 0b10, 0b0, ZZZZ_s_mul_r, GPR64shifted32>;
-def ST1D_4Z        : sve2p1_mem_cst_ss_4z<"st1d", 0b11, 0b0, ZZZZ_d_mul_r, GPR64shifted64>;
+defm ST1B_4Z       : sve2p1_mem_cst_ss_4z<"st1b", 0b00, 0b0, ZZZZ_b_mul_r, GPR64shifted8, ZZZZ_b_strided_and_contiguous>;
+defm ST1H_4Z       : sve2p1_mem_cst_ss_4z<"st1h", 0b01, 0b0, ZZZZ_h_mul_r, GPR64shifted16, ZZZZ_h_strided_and_contiguous>;
+defm ST1W_4Z       : sve2p1_mem_cst_ss_4z<"st1w", 0b10, 0b0, ZZZZ_s_mul_r, GPR64shifted32, ZZZZ_s_strided_and_contiguous>;
+defm ST1D_4Z       : sve2p1_mem_cst_ss_4z<"st1d", 0b11, 0b0, ZZZZ_d_mul_r, GPR64shifted64, ZZZZ_d_strided_and_contiguous>;
 defm ST1B_4Z_IMM   : sve2p1_mem_cst_si_4z<"st1b", 0b00, 0b0, ZZZZ_b_mul_r, ZZZZ_b_strided_and_contiguous>;
 defm ST1H_4Z_IMM   : sve2p1_mem_cst_si_4z<"st1h", 0b01, 0b0, ZZZZ_h_mul_r, ZZZZ_h_strided_and_contiguous>;
 defm ST1W_4Z_IMM   : sve2p1_mem_cst_si_4z<"st1w", 0b10, 0b0, ZZZZ_s_mul_r, ZZZZ_s_strided_and_contiguous>;

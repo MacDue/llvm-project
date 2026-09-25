@@ -1904,6 +1904,22 @@ bool AArch64ExpandPseudoImpl::expandMI(MachineBasicBlock &MBB,
     return expandMultiVecPseudo(MBB, MBBI, AArch64::ZPR2RegClass,
                                 AArch64::ZPR2StridedRegClass,
                                 AArch64::LDNT1D_2Z, AArch64::LDNT1D_2Z_STRIDED);
+  case AArch64::ST1B_2Z_PSEUDO:
+    return expandMultiVecPseudo(MBB, MBBI, AArch64::ZPR2RegClass,
+                                AArch64::ZPR2StridedRegClass, AArch64::ST1B_2Z,
+                                AArch64::ST1B_2Z_STRIDED);
+  case AArch64::ST1H_2Z_PSEUDO:
+    return expandMultiVecPseudo(MBB, MBBI, AArch64::ZPR2RegClass,
+                                AArch64::ZPR2StridedRegClass, AArch64::ST1H_2Z,
+                                AArch64::ST1H_2Z_STRIDED);
+  case AArch64::ST1W_2Z_PSEUDO:
+    return expandMultiVecPseudo(MBB, MBBI, AArch64::ZPR2RegClass,
+                                AArch64::ZPR2StridedRegClass, AArch64::ST1W_2Z,
+                                AArch64::ST1W_2Z_STRIDED);
+  case AArch64::ST1D_2Z_PSEUDO:
+    return expandMultiVecPseudo(MBB, MBBI, AArch64::ZPR2RegClass,
+                                AArch64::ZPR2StridedRegClass, AArch64::ST1D_2Z,
+                                AArch64::ST1D_2Z_STRIDED);
   case AArch64::LD1B_4Z_IMM_PSEUDO:
     return expandMultiVecPseudo(
         MBB, MBBI, AArch64::ZPR4RegClass, AArch64::ZPR4StridedRegClass,
@@ -2000,6 +2016,22 @@ bool AArch64ExpandPseudoImpl::expandMI(MachineBasicBlock &MBB,
     return expandMultiVecPseudo(MBB, MBBI, AArch64::ZPR4RegClass,
                                 AArch64::ZPR4StridedRegClass,
                                 AArch64::LDNT1D_4Z, AArch64::LDNT1D_4Z_STRIDED);
+  case AArch64::ST1B_4Z_PSEUDO:
+    return expandMultiVecPseudo(MBB, MBBI, AArch64::ZPR4RegClass,
+                                AArch64::ZPR4StridedRegClass, AArch64::ST1B_4Z,
+                                AArch64::ST1B_4Z_STRIDED);
+  case AArch64::ST1H_4Z_PSEUDO:
+    return expandMultiVecPseudo(MBB, MBBI, AArch64::ZPR4RegClass,
+                                AArch64::ZPR4StridedRegClass, AArch64::ST1H_4Z,
+                                AArch64::ST1H_4Z_STRIDED);
+  case AArch64::ST1W_4Z_PSEUDO:
+    return expandMultiVecPseudo(MBB, MBBI, AArch64::ZPR4RegClass,
+                                AArch64::ZPR4StridedRegClass, AArch64::ST1W_4Z,
+                                AArch64::ST1W_4Z_STRIDED);
+  case AArch64::ST1D_4Z_PSEUDO:
+    return expandMultiVecPseudo(MBB, MBBI, AArch64::ZPR4RegClass,
+                                AArch64::ZPR4StridedRegClass, AArch64::ST1D_4Z,
+                                AArch64::ST1D_4Z_STRIDED);
   case AArch64::COPY_INTO_TRANSPOSED_TUPLE:
     return expandCopyIntoTuplePseudo(MI, MBB, MBBI);
   case AArch64::EON_ZZZ:
