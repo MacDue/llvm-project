@@ -209,4 +209,33 @@ entry:
   ret void
 }
 
+define void @register_offset_i8(ptr %base, i64 %idx) {
+; CHECK-LABEL: register_offset_i8:
+; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue pn8.b
+; CHECK-NEXT:    ld1b { z0.b, z1.b }, pn8/z, [x0, x1]
+; CHECK-NEXT:    add z0.b, z0.b, #5 // =0x5
+; CHECK-NEXT:    add z1.b, z1.b, #5 // =0x5
+; CHECK-NEXT:    st1b { z0.b, z1.b }, pn8, [x0, x1]
+; CHECK-NEXT:    ret
+;
+; NO-CLUSTER-LABEL: register_offset_i8:
+; NO-CLUSTER:       // %bb.0: // %entry
+; NO-CLUSTER-NEXT:    ptrue p0.b
+; NO-CLUSTER-NEXT:    add x8, x0, x1
+; NO-CLUSTER-NEXT:    ldr z1, [x8, #1, mul vl]
+; NO-CLUSTER-NEXT:    ld1b { z0.b }, p0/z, [x0, x1]
+; NO-CLUSTER-NEXT:    add z1.b, z1.b, #5 // =0x5
+; NO-CLUSTER-NEXT:    add z0.b, z0.b, #5 // =0x5
+; NO-CLUSTER-NEXT:    st1b { z0.b }, p0, [x0, x1]
+; NO-CLUSTER-NEXT:    str z1, [x8, #1, mul vl]
+; NO-CLUSTER-NEXT:    ret
+entry:
+  %addr = getelementptr inbounds i8, ptr %base, i64 %idx
+  %a = load <vscale x 32 x i8>, ptr %addr, align 32
+  %b = add <vscale x 32 x i8> %a, splat (i8 5)
+  store <vscale x 32 x i8> %b, ptr %addr, align 32
+  ret void
+}
+
 declare i64 @llvm.vscale.i64()

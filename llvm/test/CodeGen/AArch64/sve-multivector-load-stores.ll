@@ -54,26 +54,22 @@ define void @load_store_2x_vectors_i8_rr(ptr %base, i64 %idx) {
 ;
 ; SVE2p1-SL-LABEL: load_store_2x_vectors_i8_rr:
 ; SVE2p1-SL:       // %bb.0:
-; SVE2p1-SL-NEXT:    ptrue p0.b
-; SVE2p1-SL-NEXT:    add x8, x0, x1
-; SVE2p1-SL-NEXT:    ldr z1, [x8, #1, mul vl]
-; SVE2p1-SL-NEXT:    ld1b { z0.b }, p0/z, [x0, x1]
-; SVE2p1-SL-NEXT:    add z1.b, z1.b, #5 // =0x5
+; SVE2p1-SL-NEXT:    ptrue pn8.b
+; SVE2p1-SL-NEXT:    ld1b { z0.b, z1.b }, pn8/z, [x0, x1]
 ; SVE2p1-SL-NEXT:    add z0.b, z0.b, #5 // =0x5
-; SVE2p1-SL-NEXT:    st1b { z0.b }, p0, [x0, x1]
-; SVE2p1-SL-NEXT:    str z1, [x8, #1, mul vl]
+; SVE2p1-SL-NEXT:    add z1.b, z1.b, #5 // =0x5
+; SVE2p1-SL-NEXT:    st1b { z0.b, z1.b }, pn8, [x0, x1]
 ; SVE2p1-SL-NEXT:    ret
 ;
 ; SME2-LABEL: load_store_2x_vectors_i8_rr:
 ; SME2:       // %bb.0:
-; SME2-NEXT:    ptrue p0.b
-; SME2-NEXT:    add x8, x0, x1
-; SME2-NEXT:    ldr z1, [x8, #1, mul vl]
-; SME2-NEXT:    ld1b { z0.b }, p0/z, [x0, x1]
-; SME2-NEXT:    add z1.b, z1.b, #5 // =0x5
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ld1b { z16.b, z24.b }, pn8/z, [x0, x1]
+; SME2-NEXT:    movprfx z0, z16
 ; SME2-NEXT:    add z0.b, z0.b, #5 // =0x5
-; SME2-NEXT:    st1b { z0.b }, p0, [x0, x1]
-; SME2-NEXT:    str z1, [x8, #1, mul vl]
+; SME2-NEXT:    movprfx z1, z24
+; SME2-NEXT:    add z1.b, z1.b, #5 // =0x5
+; SME2-NEXT:    st1b { z0.b, z1.b }, pn8, [x0, x1]
 ; SME2-NEXT:    ret
   %addr = getelementptr i8, ptr %base, i64 %idx
   %a = load <vscale x 32 x i8>, ptr %addr
@@ -679,38 +675,28 @@ define void @load_store_4x_vectors_i8_rr(ptr %base, i64 %idx) {
 ;
 ; SVE2p1-SL-LABEL: load_store_4x_vectors_i8_rr:
 ; SVE2p1-SL:       // %bb.0:
-; SVE2p1-SL-NEXT:    ptrue p0.b
-; SVE2p1-SL-NEXT:    add x8, x0, x1
-; SVE2p1-SL-NEXT:    ldr z1, [x8, #2, mul vl]
-; SVE2p1-SL-NEXT:    ldr z2, [x8, #3, mul vl]
-; SVE2p1-SL-NEXT:    ldr z3, [x8, #1, mul vl]
-; SVE2p1-SL-NEXT:    ld1b { z0.b }, p0/z, [x0, x1]
-; SVE2p1-SL-NEXT:    add z1.b, z1.b, #5 // =0x5
-; SVE2p1-SL-NEXT:    add z2.b, z2.b, #5 // =0x5
-; SVE2p1-SL-NEXT:    add z3.b, z3.b, #5 // =0x5
+; SVE2p1-SL-NEXT:    ptrue pn8.b
+; SVE2p1-SL-NEXT:    ld1b { z0.b - z3.b }, pn8/z, [x0, x1]
 ; SVE2p1-SL-NEXT:    add z0.b, z0.b, #5 // =0x5
-; SVE2p1-SL-NEXT:    st1b { z0.b }, p0, [x0, x1]
-; SVE2p1-SL-NEXT:    str z1, [x8, #2, mul vl]
-; SVE2p1-SL-NEXT:    str z2, [x8, #3, mul vl]
-; SVE2p1-SL-NEXT:    str z3, [x8, #1, mul vl]
+; SVE2p1-SL-NEXT:    add z1.b, z1.b, #5 // =0x5
+; SVE2p1-SL-NEXT:    add z3.b, z3.b, #5 // =0x5
+; SVE2p1-SL-NEXT:    add z2.b, z2.b, #5 // =0x5
+; SVE2p1-SL-NEXT:    st1b { z0.b - z3.b }, pn8, [x0, x1]
 ; SVE2p1-SL-NEXT:    ret
 ;
 ; SME2-LABEL: load_store_4x_vectors_i8_rr:
 ; SME2:       // %bb.0:
-; SME2-NEXT:    ptrue p0.b
-; SME2-NEXT:    add x8, x0, x1
-; SME2-NEXT:    ldr z1, [x8, #2, mul vl]
-; SME2-NEXT:    ldr z2, [x8, #3, mul vl]
-; SME2-NEXT:    ldr z3, [x8, #1, mul vl]
-; SME2-NEXT:    ld1b { z0.b }, p0/z, [x0, x1]
-; SME2-NEXT:    add z1.b, z1.b, #5 // =0x5
-; SME2-NEXT:    add z2.b, z2.b, #5 // =0x5
-; SME2-NEXT:    add z3.b, z3.b, #5 // =0x5
+; SME2-NEXT:    ptrue pn8.b
+; SME2-NEXT:    ld1b { z16.b, z20.b, z24.b, z28.b }, pn8/z, [x0, x1]
+; SME2-NEXT:    movprfx z0, z16
 ; SME2-NEXT:    add z0.b, z0.b, #5 // =0x5
-; SME2-NEXT:    st1b { z0.b }, p0, [x0, x1]
-; SME2-NEXT:    str z1, [x8, #2, mul vl]
-; SME2-NEXT:    str z2, [x8, #3, mul vl]
-; SME2-NEXT:    str z3, [x8, #1, mul vl]
+; SME2-NEXT:    movprfx z1, z20
+; SME2-NEXT:    add z1.b, z1.b, #5 // =0x5
+; SME2-NEXT:    movprfx z3, z28
+; SME2-NEXT:    add z3.b, z3.b, #5 // =0x5
+; SME2-NEXT:    movprfx z2, z24
+; SME2-NEXT:    add z2.b, z2.b, #5 // =0x5
+; SME2-NEXT:    st1b { z0.b - z3.b }, pn8, [x0, x1]
 ; SME2-NEXT:    ret
   %addr = getelementptr i8, ptr %base, i64 %idx
   %a = load <vscale x 64 x i8>, ptr %addr

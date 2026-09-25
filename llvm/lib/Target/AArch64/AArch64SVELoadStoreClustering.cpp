@@ -190,6 +190,13 @@ bool AArch64SVELoadStoreClustering::isAllTruePredicate(const MachineInstr &MI) {
          TII.getElementSizeForOpcode(MI.getOpcode());
 }
 
+static bool isAddWithShift(const MachineInstr &MI, unsigned Shift) {
+  if (MI.getOpcode() == AArch64::ADDXrr)
+    return Shift == 0;
+  return MI.getOpcode() == AArch64::ADDXrs &&
+         MI.getOperand(3).getImm() == Shift;
+}
+
 void AArch64SVELoadStoreClustering::extractAddressing(
     MachineInstr &MI, AArch64::ElementSizeType AccessSize,
     MachineOperand *&Base, MachineOperand *&Index, int64_t &Offset) {
@@ -208,12 +215,11 @@ void AArch64SVELoadStoreClustering::extractAddressing(
     return;
 
   MachineInstr *Def = MI.getMF()->getRegInfo().getVRegDef(Base->getReg());
-  if (Def->getOpcode() != AArch64::ADDXrs ||
-      AccessSize == AArch64::ElementSizeNone)
+  if (AccessSize == AArch64::ElementSizeNone)
     return;
 
   unsigned Shift = AccessSize - AArch64::ElementSizeB;
-  if (Def->getOperand(3).getImm() != Shift)
+  if (!isAddWithShift(*Def, Shift))
     return;
 
   MachineOperand *AddBase = &Def->getOperand(1);
@@ -390,12 +396,11 @@ static Register getOrCreateAddress(const SVELoadStoreCluster &Cluster,
   unsigned Shift = Cluster.AccessSize - AArch64::ElementSizeB;
   for (MachineBasicBlock::iterator It = MBB.begin(); It != Cluster.FirstIt;
        ++It) {
-    if (It->getOpcode() != AArch64::ADDXrs ||
+    if (!isAddWithShift(*It, Shift) ||
         !It->getOperand(0).getReg().isVirtual() ||
         It->getOperand(1).isUndef() || It->getOperand(2).isUndef() ||
         It->getOperand(1).getReg() != Cluster.Base->getReg() ||
-        It->getOperand(2).getReg() != Cluster.Index->getReg() ||
-        It->getOperand(3).getImm() != Shift)
+        It->getOperand(2).getReg() != Cluster.Index->getReg())
       continue;
     Register Address = It->getOperand(0).getReg();
     It->getOperand(0).setIsDead(false);
@@ -404,11 +409,13 @@ static Register getOrCreateAddress(const SVELoadStoreCluster &Cluster,
   }
 
   Register Address = MRI.createVirtualRegister(&AArch64::GPR64commonRegClass);
-  BuildMI(MBB, Cluster.FirstIt, Cluster.FirstIt->getDebugLoc(),
-          TII.get(AArch64::ADDXrs), Address)
-      .addReg(Cluster.Base->getReg())
-      .addReg(Cluster.Index->getReg())
-      .addImm(Shift);
+  MachineInstrBuilder Add =
+      BuildMI(MBB, Cluster.FirstIt, Cluster.FirstIt->getDebugLoc(),
+              TII.get(Shift ? AArch64::ADDXrs : AArch64::ADDXrr), Address)
+          .addReg(Cluster.Base->getReg())
+          .addReg(Cluster.Index->getReg());
+  if (Shift)
+    Add.addImm(Shift);
   return Address;
 }
 
