@@ -117,4 +117,23 @@ exit:
   ret void
 }
 
+define void @register_offset(ptr %base, i64 %idx) {
+; CHECK-LABEL: register_offset:
+; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue pn8.b
+; CHECK-NEXT:    ptrue p0.h
+; CHECK-NEXT:    add xzr, x0, x1, lsl #1
+; CHECK-NEXT:    ld1h { z0.h, z1.h }, pn8/z, [x0, x1, lsl #1]
+; CHECK-NEXT:    add z0.h, z0.h, #5 // =0x5
+; CHECK-NEXT:    add z1.h, z1.h, #5 // =0x5
+; CHECK-NEXT:    st1h { z0.h, z1.h }, pn8, [x0, x1, lsl #1]
+; CHECK-NEXT:    ret
+entry:
+  %addr = getelementptr inbounds i16, ptr %base, i64 %idx
+  %a = load <vscale x 16 x i16>, ptr %addr, align 32
+  %b = add <vscale x 16 x i16> %a, splat (i16 5)
+  store <vscale x 16 x i16> %b, ptr %addr, align 32
+  ret void
+}
+
 declare i64 @llvm.vscale.i64()

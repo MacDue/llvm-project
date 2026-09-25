@@ -10285,6 +10285,7 @@ class sve2p1_mem_cld_ss_2z<string mnemonic, bits<2> msz, bit n,
 
 multiclass sve2p1_mem_cld_ss_2z<string mnemonic, bits<2> msz, bit n,
                          RegisterOperand vector_ty, RegisterOperand gpr_ty, RegisterOperand vector_pseudo_ty> {
+  let hasSideEffects = 0, mayLoad = 1 in
   def NAME # _PSEUDO : Pseudo<(outs vector_pseudo_ty:$Zt), (ins PNRAny_p8to15:$PNg, GPR64sp:$Rn, gpr_ty:$Rm), []>;
   def NAME : sve2p1_mem_cld_ss_2z<mnemonic, msz, n, vector_ty, gpr_ty>;
 }
@@ -10349,6 +10350,7 @@ class sve2p1_mem_cld_ss_4z<string mnemonic, bits<2> msz, bit n,
 
 multiclass sve2p1_mem_cld_ss_4z<string mnemonic, bits<2> msz, bit n,
                          RegisterOperand vector_ty, RegisterOperand gpr_ty, RegisterOperand vector_pseudo_ty> {
+  let hasSideEffects = 0, mayLoad = 1 in
   def NAME # _PSEUDO : Pseudo<(outs vector_pseudo_ty:$Zt), (ins PNRAny_p8to15:$PNg, GPR64sp:$Rn, gpr_ty:$Rm), []>;
   def NAME : sve2p1_mem_cld_ss_4z<mnemonic, msz, n, vector_ty, gpr_ty>;
 }
