@@ -7,24 +7,22 @@ target triple = "aarch64-unknown-linux-gnu"
 define void @contiguous_tuples_only(ptr %base, i64 %n) {
 ; CHECK-LABEL: contiguous_tuples_only:
 ; CHECK:       // %bb.0: // %entry
-; CHECK-NEXT:    cntw x8, all, mul #3
+; CHECK-NEXT:    mov x8, xzr
 ; CHECK-NEXT:    ptrue pn8.b
 ; CHECK-NEXT:  .LBB0_1: // %loop
 ; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
-; CHECK-NEXT:    incb x8
 ; CHECK-NEXT:    ld1d { z0.d - z3.d }, pn8/z, [x0]
 ; CHECK-NEXT:    ld1d { z4.d - z7.d }, pn8/z, [x0, #4, mul vl]
-; CHECK-NEXT:    mov x9, x8
+; CHECK-NEXT:    incb x8
 ; CHECK-NEXT:    add z0.d, z0.d, #1 // =0x1
 ; CHECK-NEXT:    add z4.d, z4.d, #1 // =0x1
 ; CHECK-NEXT:    add z1.d, z1.d, #1 // =0x1
 ; CHECK-NEXT:    add z5.d, z5.d, #1 // =0x1
 ; CHECK-NEXT:    add z2.d, z2.d, #1 // =0x1
 ; CHECK-NEXT:    add z6.d, z6.d, #1 // =0x1
-; CHECK-NEXT:    decw x9, all, mul #3
 ; CHECK-NEXT:    add z3.d, z3.d, #1 // =0x1
 ; CHECK-NEXT:    add z7.d, z7.d, #1 // =0x1
-; CHECK-NEXT:    cmp x9, x1
+; CHECK-NEXT:    cmp x8, x1
 ; CHECK-NEXT:    st1d { z0.d - z3.d }, pn8, [x0]
 ; CHECK-NEXT:    st1d { z4.d - z7.d }, pn8, [x0, #4, mul vl]
 ; CHECK-NEXT:    addvl x0, x0, #8
@@ -34,31 +32,29 @@ define void @contiguous_tuples_only(ptr %base, i64 %n) {
 ;
 ; NO-CLUSTER-LABEL: contiguous_tuples_only:
 ; NO-CLUSTER:       // %bb.0: // %entry
-; NO-CLUSTER-NEXT:    cntw x8, all, mul #3
+; NO-CLUSTER-NEXT:    mov x8, xzr
 ; NO-CLUSTER-NEXT:  .LBB0_1: // %loop
 ; NO-CLUSTER-NEXT:    // =>This Inner Loop Header: Depth=1
 ; NO-CLUSTER-NEXT:    ldr z0, [x0, #1, mul vl]
-; NO-CLUSTER-NEXT:    incb x8
 ; NO-CLUSTER-NEXT:    ldr z1, [x0]
+; NO-CLUSTER-NEXT:    incb x8
 ; NO-CLUSTER-NEXT:    ldr z2, [x0, #3, mul vl]
 ; NO-CLUSTER-NEXT:    ldr z3, [x0, #2, mul vl]
 ; NO-CLUSTER-NEXT:    ldr z4, [x0, #5, mul vl]
 ; NO-CLUSTER-NEXT:    ldr z5, [x0, #4, mul vl]
 ; NO-CLUSTER-NEXT:    ldr z6, [x0, #7, mul vl]
 ; NO-CLUSTER-NEXT:    add z0.d, z0.d, #1 // =0x1
-; NO-CLUSTER-NEXT:    mov x9, x8
 ; NO-CLUSTER-NEXT:    add z1.d, z1.d, #1 // =0x1
+; NO-CLUSTER-NEXT:    cmp x8, x1
 ; NO-CLUSTER-NEXT:    add z2.d, z2.d, #1 // =0x1
 ; NO-CLUSTER-NEXT:    add z3.d, z3.d, #1 // =0x1
 ; NO-CLUSTER-NEXT:    add z4.d, z4.d, #1 // =0x1
 ; NO-CLUSTER-NEXT:    add z5.d, z5.d, #1 // =0x1
 ; NO-CLUSTER-NEXT:    add z6.d, z6.d, #1 // =0x1
-; NO-CLUSTER-NEXT:    decw x9, all, mul #3
 ; NO-CLUSTER-NEXT:    str z0, [x0, #1, mul vl]
 ; NO-CLUSTER-NEXT:    ldr z0, [x0, #6, mul vl]
 ; NO-CLUSTER-NEXT:    str z1, [x0]
 ; NO-CLUSTER-NEXT:    str z2, [x0, #3, mul vl]
-; NO-CLUSTER-NEXT:    cmp x9, x1
 ; NO-CLUSTER-NEXT:    add z0.d, z0.d, #1 // =0x1
 ; NO-CLUSTER-NEXT:    str z3, [x0, #2, mul vl]
 ; NO-CLUSTER-NEXT:    str z4, [x0, #5, mul vl]
@@ -238,4 +234,169 @@ entry:
   ret void
 }
 
+define void @mixed_i32_more_frequent_than_i64(ptr noalias nofree captures(none) %x, ptr noalias nofree captures(none) %y, ptr noalias nofree captures(none) %z, i64 %n) local_unnamed_addr #0 {
+; CHECK-LABEL: mixed_i32_more_frequent_than_i64:
+; CHECK:       // %bb.0: // %entry
+; CHECK-NEXT:    ptrue pn8.b
+; CHECK-NEXT:  .LBB4_1: // %loop
+; CHECK-NEXT:    // =>This Inner Loop Header: Depth=1
+; CHECK-NEXT:    ld1d { z0.d - z3.d }, pn8/z, [x0]
+; CHECK-NEXT:    ld1d { z4.d - z7.d }, pn8/z, [x0, #4, mul vl]
+; CHECK-NEXT:    decb x3
+; CHECK-NEXT:    add z0.d, z0.d, #1 // =0x1
+; CHECK-NEXT:    add z4.d, z4.d, #1 // =0x1
+; CHECK-NEXT:    add z1.d, z1.d, #1 // =0x1
+; CHECK-NEXT:    add z5.d, z5.d, #1 // =0x1
+; CHECK-NEXT:    add z2.d, z2.d, #1 // =0x1
+; CHECK-NEXT:    add z6.d, z6.d, #1 // =0x1
+; CHECK-NEXT:    add z3.d, z3.d, #1 // =0x1
+; CHECK-NEXT:    add z7.d, z7.d, #1 // =0x1
+; CHECK-NEXT:    st1d { z0.d - z3.d }, pn8, [x0]
+; CHECK-NEXT:    st1d { z4.d - z7.d }, pn8, [x0, #4, mul vl]
+; CHECK-NEXT:    addvl x0, x0, #8
+; CHECK-NEXT:    ld1w { z0.s - z3.s }, pn8/z, [x1]
+; CHECK-NEXT:    ld1w { z4.s - z7.s }, pn8/z, [x2]
+; CHECK-NEXT:    add z0.s, z0.s, #1 // =0x1
+; CHECK-NEXT:    add z4.s, z4.s, #2 // =0x2
+; CHECK-NEXT:    add z1.s, z1.s, #1 // =0x1
+; CHECK-NEXT:    add z5.s, z5.s, #2 // =0x2
+; CHECK-NEXT:    add z2.s, z2.s, #1 // =0x1
+; CHECK-NEXT:    add z3.s, z3.s, #1 // =0x1
+; CHECK-NEXT:    add z6.s, z6.s, #2 // =0x2
+; CHECK-NEXT:    add z7.s, z7.s, #2 // =0x2
+; CHECK-NEXT:    st1w { z0.s - z3.s }, pn8, [x1]
+; CHECK-NEXT:    incb x1, all, mul #4
+; CHECK-NEXT:    st1w { z4.s - z7.s }, pn8, [x2]
+; CHECK-NEXT:    incb x2, all, mul #4
+; CHECK-NEXT:    cbnz x3, .LBB4_1
+; CHECK-NEXT:  // %bb.2: // %exit
+; CHECK-NEXT:    ret
+;
+; NO-CLUSTER-LABEL: mixed_i32_more_frequent_than_i64:
+; NO-CLUSTER:       // %bb.0: // %entry
+; NO-CLUSTER-NEXT:  .LBB4_1: // %loop
+; NO-CLUSTER-NEXT:    // =>This Inner Loop Header: Depth=1
+; NO-CLUSTER-NEXT:    ldr z0, [x0, #1, mul vl]
+; NO-CLUSTER-NEXT:    ldr z1, [x0, #3, mul vl]
+; NO-CLUSTER-NEXT:    decb x3
+; NO-CLUSTER-NEXT:    ldr z2, [x0, #5, mul vl]
+; NO-CLUSTER-NEXT:    ldr z3, [x0, #7, mul vl]
+; NO-CLUSTER-NEXT:    add z0.d, z0.d, #1 // =0x1
+; NO-CLUSTER-NEXT:    add z1.d, z1.d, #1 // =0x1
+; NO-CLUSTER-NEXT:    add z2.d, z2.d, #1 // =0x1
+; NO-CLUSTER-NEXT:    add z3.d, z3.d, #1 // =0x1
+; NO-CLUSTER-NEXT:    str z0, [x0, #1, mul vl]
+; NO-CLUSTER-NEXT:    ldr z0, [x0]
+; NO-CLUSTER-NEXT:    str z1, [x0, #3, mul vl]
+; NO-CLUSTER-NEXT:    ldr z1, [x0, #2, mul vl]
+; NO-CLUSTER-NEXT:    str z2, [x0, #5, mul vl]
+; NO-CLUSTER-NEXT:    str z3, [x0, #7, mul vl]
+; NO-CLUSTER-NEXT:    add z0.d, z0.d, #1 // =0x1
+; NO-CLUSTER-NEXT:    ldr z2, [x1]
+; NO-CLUSTER-NEXT:    ldr z3, [x1, #1, mul vl]
+; NO-CLUSTER-NEXT:    ldr z4, [x1, #2, mul vl]
+; NO-CLUSTER-NEXT:    add z1.d, z1.d, #1 // =0x1
+; NO-CLUSTER-NEXT:    ldr z5, [x1, #3, mul vl]
+; NO-CLUSTER-NEXT:    ldr z6, [x2, #2, mul vl]
+; NO-CLUSTER-NEXT:    str z0, [x0]
+; NO-CLUSTER-NEXT:    ldr z0, [x2]
+; NO-CLUSTER-NEXT:    add z2.s, z2.s, #1 // =0x1
+; NO-CLUSTER-NEXT:    add z3.s, z3.s, #1 // =0x1
+; NO-CLUSTER-NEXT:    add z4.s, z4.s, #1 // =0x1
+; NO-CLUSTER-NEXT:    str z1, [x0, #2, mul vl]
+; NO-CLUSTER-NEXT:    ldr z1, [x2, #1, mul vl]
+; NO-CLUSTER-NEXT:    add z5.s, z5.s, #1 // =0x1
+; NO-CLUSTER-NEXT:    add z0.s, z0.s, #2 // =0x2
+; NO-CLUSTER-NEXT:    add z6.s, z6.s, #2 // =0x2
+; NO-CLUSTER-NEXT:    str z2, [x1]
+; NO-CLUSTER-NEXT:    ldr z2, [x2, #3, mul vl]
+; NO-CLUSTER-NEXT:    str z3, [x1, #1, mul vl]
+; NO-CLUSTER-NEXT:    ldr z3, [x0, #4, mul vl]
+; NO-CLUSTER-NEXT:    add z1.s, z1.s, #2 // =0x2
+; NO-CLUSTER-NEXT:    str z4, [x1, #2, mul vl]
+; NO-CLUSTER-NEXT:    ldr z4, [x0, #6, mul vl]
+; NO-CLUSTER-NEXT:    add z2.s, z2.s, #2 // =0x2
+; NO-CLUSTER-NEXT:    str z5, [x1, #3, mul vl]
+; NO-CLUSTER-NEXT:    incb x1, all, mul #4
+; NO-CLUSTER-NEXT:    add z3.d, z3.d, #1 // =0x1
+; NO-CLUSTER-NEXT:    str z0, [x2]
+; NO-CLUSTER-NEXT:    add z4.d, z4.d, #1 // =0x1
+; NO-CLUSTER-NEXT:    str z1, [x2, #1, mul vl]
+; NO-CLUSTER-NEXT:    str z6, [x2, #2, mul vl]
+; NO-CLUSTER-NEXT:    str z2, [x2, #3, mul vl]
+; NO-CLUSTER-NEXT:    incb x2, all, mul #4
+; NO-CLUSTER-NEXT:    str z3, [x0, #4, mul vl]
+; NO-CLUSTER-NEXT:    str z4, [x0, #6, mul vl]
+; NO-CLUSTER-NEXT:    addvl x0, x0, #8
+; NO-CLUSTER-NEXT:    cbnz x3, .LBB4_1
+; NO-CLUSTER-NEXT:  // %bb.2: // %exit
+; NO-CLUSTER-NEXT:    ret
+entry:
+  %vscale = call i64 @llvm.vscale.i64()
+  %vector.width = shl nuw i64 %vscale, 4
+  %vector.offset = shl nuw i64 %vscale, 2
+  %offset.2 = shl nuw i64 %vector.offset, 1
+  %offset.3 = mul nuw i64 %vector.offset, 3
+  br label %loop
+
+loop:
+  %index = phi i64 [ 0, %entry ], [ %index.next, %loop ]
+  %x.ptr.0 = getelementptr inbounds [8 x i8], ptr %x, i64 %index
+  %x.ptr.1 = getelementptr inbounds [8 x i8], ptr %x.ptr.0, i64 %vector.offset
+  %x.ptr.2 = getelementptr inbounds [8 x i8], ptr %x.ptr.0, i64 %offset.2
+  %x.ptr.3 = getelementptr inbounds [8 x i8], ptr %x.ptr.0, i64 %offset.3
+  %x.value.0 = load <vscale x 4 x i64>, ptr %x.ptr.0, align 8
+  %x.value.1 = load <vscale x 4 x i64>, ptr %x.ptr.1, align 8
+  %x.value.2 = load <vscale x 4 x i64>, ptr %x.ptr.2, align 8
+  %x.value.3 = load <vscale x 4 x i64>, ptr %x.ptr.3, align 8
+  %x.add.0 = add <vscale x 4 x i64> %x.value.0, splat (i64 1)
+  %x.add.1 = add <vscale x 4 x i64> %x.value.1, splat (i64 1)
+  %x.add.2 = add <vscale x 4 x i64> %x.value.2, splat (i64 1)
+  %x.add.3 = add <vscale x 4 x i64> %x.value.3, splat (i64 1)
+  store <vscale x 4 x i64> %x.add.0, ptr %x.ptr.0, align 8
+  store <vscale x 4 x i64> %x.add.1, ptr %x.ptr.1, align 8
+  store <vscale x 4 x i64> %x.add.2, ptr %x.ptr.2, align 8
+  store <vscale x 4 x i64> %x.add.3, ptr %x.ptr.3, align 8
+  %y.ptr.0 = getelementptr inbounds [4 x i8], ptr %y, i64 %index
+  %y.ptr.1 = getelementptr inbounds [4 x i8], ptr %y.ptr.0, i64 %vector.offset
+  %y.ptr.2 = getelementptr inbounds [4 x i8], ptr %y.ptr.0, i64 %offset.2
+  %y.ptr.3 = getelementptr inbounds [4 x i8], ptr %y.ptr.0, i64 %offset.3
+  %y.value.0 = load <vscale x 4 x i32>, ptr %y.ptr.0, align 4
+  %y.value.1 = load <vscale x 4 x i32>, ptr %y.ptr.1, align 4
+  %y.value.2 = load <vscale x 4 x i32>, ptr %y.ptr.2, align 4
+  %y.value.3 = load <vscale x 4 x i32>, ptr %y.ptr.3, align 4
+  %y.add.0 = add <vscale x 4 x i32> %y.value.0, splat (i32 1)
+  %y.add.1 = add <vscale x 4 x i32> %y.value.1, splat (i32 1)
+  %y.add.2 = add <vscale x 4 x i32> %y.value.2, splat (i32 1)
+  %y.add.3 = add <vscale x 4 x i32> %y.value.3, splat (i32 1)
+  store <vscale x 4 x i32> %y.add.0, ptr %y.ptr.0, align 4
+  store <vscale x 4 x i32> %y.add.1, ptr %y.ptr.1, align 4
+  store <vscale x 4 x i32> %y.add.2, ptr %y.ptr.2, align 4
+  store <vscale x 4 x i32> %y.add.3, ptr %y.ptr.3, align 4
+  %z.ptr.0 = getelementptr inbounds [4 x i8], ptr %z, i64 %index
+  %z.ptr.1 = getelementptr inbounds [4 x i8], ptr %z.ptr.0, i64 %vector.offset
+  %z.ptr.2 = getelementptr inbounds [4 x i8], ptr %z.ptr.0, i64 %offset.2
+  %z.ptr.3 = getelementptr inbounds [4 x i8], ptr %z.ptr.0, i64 %offset.3
+  %z.value.0 = load <vscale x 4 x i32>, ptr %z.ptr.0, align 4
+  %z.value.1 = load <vscale x 4 x i32>, ptr %z.ptr.1, align 4
+  %z.value.2 = load <vscale x 4 x i32>, ptr %z.ptr.2, align 4
+  %z.value.3 = load <vscale x 4 x i32>, ptr %z.ptr.3, align 4
+  %z.add.0 = add <vscale x 4 x i32> %z.value.0, splat (i32 2)
+  %z.add.1 = add <vscale x 4 x i32> %z.value.1, splat (i32 2)
+  %z.add.2 = add <vscale x 4 x i32> %z.value.2, splat (i32 2)
+  %z.add.3 = add <vscale x 4 x i32> %z.value.3, splat (i32 2)
+  store <vscale x 4 x i32> %z.add.0, ptr %z.ptr.0, align 4
+  store <vscale x 4 x i32> %z.add.1, ptr %z.ptr.1, align 4
+  store <vscale x 4 x i32> %z.add.2, ptr %z.ptr.2, align 4
+  store <vscale x 4 x i32> %z.add.3, ptr %z.ptr.3, align 4
+  %index.next = add nuw i64 %index, %vector.width
+  %done = icmp eq i64 %index.next, %n
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret void
+}
+
 declare i64 @llvm.vscale.i64()
+
+attributes #0 = { nofree norecurse nosync nounwind memory(argmem: readwrite) }

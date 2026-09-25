@@ -592,4 +592,73 @@ exit:
   ret void
 }
 
+define void @split_vector_scalable_offsets(ptr %p, i64 %n) #0 {
+; COMMON-LABEL: split_vector_scalable_offsets:
+; COMMON:       // %bb.0: // %entry
+; COMMON-NEXT:  .LBB11_1: // %vector.body
+; COMMON-NEXT:    // =>This Inner Loop Header: Depth=1
+; COMMON-NEXT:    ldr z0, [x0, #1, mul vl]
+; COMMON-NEXT:    ldr z1, [x0]
+; COMMON-NEXT:    decb x1
+; COMMON-NEXT:    ldr z2, [x0, #3, mul vl]
+; COMMON-NEXT:    ldr z3, [x0, #2, mul vl]
+; COMMON-NEXT:    ldr z4, [x0, #5, mul vl]
+; COMMON-NEXT:    ldr z5, [x0, #4, mul vl]
+; COMMON-NEXT:    ldr z6, [x0, #7, mul vl]
+; COMMON-NEXT:    add z0.d, z0.d, #1 // =0x1
+; COMMON-NEXT:    add z1.d, z1.d, #1 // =0x1
+; COMMON-NEXT:    add z2.d, z2.d, #1 // =0x1
+; COMMON-NEXT:    add z3.d, z3.d, #1 // =0x1
+; COMMON-NEXT:    add z4.d, z4.d, #1 // =0x1
+; COMMON-NEXT:    add z5.d, z5.d, #1 // =0x1
+; COMMON-NEXT:    add z6.d, z6.d, #1 // =0x1
+; COMMON-NEXT:    str z0, [x0, #1, mul vl]
+; COMMON-NEXT:    ldr z0, [x0, #6, mul vl]
+; COMMON-NEXT:    str z1, [x0]
+; COMMON-NEXT:    str z2, [x0, #3, mul vl]
+; COMMON-NEXT:    add z0.d, z0.d, #1 // =0x1
+; COMMON-NEXT:    str z3, [x0, #2, mul vl]
+; COMMON-NEXT:    str z4, [x0, #5, mul vl]
+; COMMON-NEXT:    str z5, [x0, #4, mul vl]
+; COMMON-NEXT:    str z6, [x0, #7, mul vl]
+; COMMON-NEXT:    str z0, [x0, #6, mul vl]
+; COMMON-NEXT:    addvl x0, x0, #8
+; COMMON-NEXT:    cbnz x1, .LBB11_1
+; COMMON-NEXT:  // %bb.2: // %exit
+; COMMON-NEXT:    ret
+entry:
+  %vscale = tail call i64 @llvm.vscale.i64()
+  %index.step = shl nuw nsw i64 %vscale, 4
+  %offset1 = shl nuw nsw i64 %vscale, 5
+  %offset2 = shl nuw nsw i64 %vscale, 6
+  %offset3 = mul nuw nsw i64 %vscale, 96
+  br label %vector.body
+
+vector.body:
+  %index = phi i64 [ 0, %entry ], [ %index.next, %vector.body ]
+  %byte.index = shl i64 %index, 3
+  %base = getelementptr i8, ptr %p, i64 %byte.index
+  %address1 = getelementptr i8, ptr %base, i64 %offset1
+  %address2 = getelementptr i8, ptr %base, i64 %offset2
+  %address3 = getelementptr i8, ptr %base, i64 %offset3
+  %load0 = load <vscale x 4 x i64>, ptr %base, align 8
+  %load1 = load <vscale x 4 x i64>, ptr %address1, align 8
+  %load2 = load <vscale x 4 x i64>, ptr %address2, align 8
+  %load3 = load <vscale x 4 x i64>, ptr %address3, align 8
+  %add0 = add <vscale x 4 x i64> %load0, splat (i64 1)
+  %add1 = add <vscale x 4 x i64> %load1, splat (i64 1)
+  %add2 = add <vscale x 4 x i64> %load2, splat (i64 1)
+  %add3 = add <vscale x 4 x i64> %load3, splat (i64 1)
+  store <vscale x 4 x i64> %add0, ptr %base, align 8
+  store <vscale x 4 x i64> %add1, ptr %address1, align 8
+  store <vscale x 4 x i64> %add2, ptr %address2, align 8
+  store <vscale x 4 x i64> %add3, ptr %address3, align 8
+  %index.next = add nuw i64 %index, %index.step
+  %cmp = icmp eq i64 %index.next, %n
+  br i1 %cmp, label %exit, label %vector.body
+
+exit:
+  ret void
+}
+
 attributes #0 = { "target-features"="+sve2" vscale_range(1,16) }
