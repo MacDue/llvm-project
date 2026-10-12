@@ -7676,15 +7676,25 @@ bool AArch64TTIImpl::isLegalAddressingMode(Type *Ty, GlobalValue *BaseGV,
   // rather than a legal machine addressing mode.
   if (!BaseGV && !BaseOffset && HasBaseReg && isa<ScalableVectorType>(Ty)) {
     EVT MemVT = TLI->getValueType(DL, Ty);
-    TargetLowering::LegalizeTypeAction Action = TLI->getTypeAction(Ctx, MemVT);
+    EVT ExtVT = MemVT;
+
+    // Check for extending loads, which may need splitting.
+    if (I) {
+      if (User *U = I->getUniqueUndroppableUser()) {
+        if (isa<ZExtInst, SExtInst>(U))
+          ExtVT = TLI->getValueType(DL, U->getType());
+      }
+    }
+
+    TargetLowering::LegalizeTypeAction Action = TLI->getTypeAction(Ctx, ExtVT);
 
     // Note: If MemVT cannot be legalized (e.g. no scalable vectors) then
     // LegalVT could be MVT::Other (which would assert on getStoreSize()).
-    EVT LegalVT = TLI->getLegalTypeToTransformTo(Ctx, MemVT);
+    EVT LegalVT = TLI->getLegalTypeToTransformTo(Ctx, ExtVT);
     if (Action == TargetLowering::TypeSplitVector && LegalVT.isScalableVT() &&
-        LegalVT.getVectorElementType() == MemVT.getVectorElementType()) {
+        LegalVT.getVectorElementType() == ExtVT.getVectorElementType()) {
       uint64_t LegalNumBytes = LegalVT.getStoreSize().getKnownMinValue();
-      assert(MemVT.getStoreSize().getKnownMinValue() % LegalNumBytes == 0 &&
+      assert(ExtVT.getStoreSize().getKnownMinValue() % LegalNumBytes == 0 &&
              "expected vector split");
 
       // Don't prefer scaled access if the type may need splitting. Only the

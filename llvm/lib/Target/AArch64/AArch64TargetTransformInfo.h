@@ -542,6 +542,8 @@ public:
                                        int64_t Scale,
                                        unsigned AddrSpace) const override;
 
+  bool LSRWithInstrQueries() const override { return true; }
+
   bool isLegalAddressingMode(Type *Ty, GlobalValue *BaseGV, int64_t BaseOffset,
                              bool HasBaseReg, int64_t Scale, unsigned AddrSpace,
                              Instruction *I = nullptr,
