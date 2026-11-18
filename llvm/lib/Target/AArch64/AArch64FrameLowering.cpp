@@ -475,9 +475,12 @@ AArch64FrameLowering::getStackIDForScalableVectors() const {
 unsigned
 AArch64FrameLowering::getFixedObjectSize(const MachineFunction &MF,
                                          const AArch64FunctionInfo *AFI,
-                                         bool IsWin64, bool IsFunclet) const {
+                                         bool IsFunclet) const {
   assert(AFI->getTailCallReservedStack() % 16 == 0 &&
          "Tail call reserved stack must be aligned to 16 bytes");
+  const AArch64Subtarget &Subtarget = MF.getSubtarget<AArch64Subtarget>();
+  const Function &F = MF.getFunction();
+  bool IsWin64 = Subtarget.isCallingConvWin64(F.getCallingConv(), F.isVarArg());
   if (!IsWin64) {
     return AFI->getTailCallReservedStack();
   } else if (IsFunclet) {
@@ -1338,11 +1341,7 @@ AArch64FrameLowering::getNonLocalFrameIndexReference(const MachineFunction &MF,
 StackOffset AArch64FrameLowering::getFPOffset(const MachineFunction &MF,
                                               int64_t ObjectOffset) const {
   const auto *AFI = MF.getInfo<AArch64FunctionInfo>();
-  const auto &Subtarget = MF.getSubtarget<AArch64Subtarget>();
-  const Function &F = MF.getFunction();
-  bool IsWin64 = Subtarget.isCallingConvWin64(F.getCallingConv(), F.isVarArg());
-  unsigned FixedObject =
-      getFixedObjectSize(MF, AFI, IsWin64, /*IsFunclet=*/false);
+  unsigned FixedObject = getFixedObjectSize(MF, AFI, /*IsFunclet=*/false);
   int64_t CalleeSaveSize = AFI->getCalleeSavedStackSize(MF.getFrameInfo());
   int64_t FPAdjust =
       CalleeSaveSize - AFI->getCalleeSaveBaseToFrameRecordOffset();
@@ -1393,10 +1392,8 @@ StackOffset AArch64FrameLowering::resolveFrameOffsetReference(
   // large enough to displace it; account for that displacement here so CSR
   // objects aren't misclassified as locals and addressed via the base
   // pointer.
-  bool IsWin64 = Subtarget.isCallingConvWin64(MF.getFunction().getCallingConv(),
-                                              MF.getFunction().isVarArg());
   const int64_t FixedObjectSize =
-      getFixedObjectSize(MF, AFI, IsWin64, /*IsFunclet*/ false);
+      getFixedObjectSize(MF, AFI, /*IsFunclet*/ false);
   bool isCSR =
       !isFixed && ObjectOffset >= -((int64_t)AFI->getCalleeSavedStackSize(MFI) +
                                     FixedObjectSize);
@@ -1755,7 +1752,8 @@ void computeCalleeSaveRegisterGroups(const AArch64FrameLowering &AFL,
                                      ArrayRef<CalleeSavedInfo> CSI,
                                      const TargetRegisterInfo *TRI,
                                      SmallVectorImpl<RegGroupInfo> &RegGroups,
-                                     bool NeedsFrameRecord) {
+                                     bool NeedsFrameRecord,
+                                     int64_t FixedObjectSize) {
 
   if (CSI.empty())
     return;
@@ -1822,6 +1820,10 @@ void computeCalleeSaveRegisterGroups(const AArch64FrameLowering &AFL,
   bool NeedGapToAlignStack = AFI->hasCalleeSaveStackFreeSpace();
   Register LastReg = 0;
   bool HasCSHazardPadding = AFI->hasStackHazardSlotIndex() && !SplitPPRs;
+  int64_t EndOfCSArea = -FixedObjectSize - AFI->getCalleeSavedStackSize();
+
+  if (HasCSHazardPadding)
+    MFI.setObjectOffset(AFI->getStackHazardCSRSlotIndex(), EndOfCSArea);
 
   auto AlignOffset = [StackFillDir](int Offset, int Align) {
     if (StackFillDir < 0)
@@ -1861,9 +1863,11 @@ void computeCalleeSaveRegisterGroups(const AArch64FrameLowering &AFL,
                                   : ZPRByteOffset;
 
     // Add the stack hazard size as we transition from GPR->FPR CSRs.
-    if (HasCSHazardPadding &&
+    bool HazardPaddingBeforeSpill =
+        HasCSHazardPadding &&
         (!LastReg || !AArch64InstrInfo::isFpOrNEON(LastReg)) &&
-        AArch64InstrInfo::isFpOrNEON(RGI.Reg1))
+        AArch64InstrInfo::isFpOrNEON(RGI.Reg1);
+    if (HazardPaddingBeforeSpill)
       ByteOffset += StackFillDir * StackHazardSize;
     LastReg = RGI.Reg1;
 
@@ -2033,9 +2037,11 @@ void computeCalleeSaveRegisterGroups(const AArch64FrameLowering &AFL,
 
     // The FP, LR pair goes 8 bytes into our expanded 24-byte slot so that the
     // Swift context can directly precede FP.
-    if (NeedsFrameRecord && AFI->hasSwiftAsyncContext() &&
-        ((!IsWindows && RGI.Reg2 == AArch64::FP) ||
-         (IsWindows && RGI.Reg2 == AArch64::LR)))
+    bool AdjustSwiftAsyncContext = NeedsFrameRecord &&
+                                   AFI->hasSwiftAsyncContext() &&
+                                   ((!IsWindows && RGI.Reg2 == AArch64::FP) ||
+                                    (IsWindows && RGI.Reg2 == AArch64::LR));
+    if (AdjustSwiftAsyncContext)
       Offset += 8;
 
     assert(
@@ -2071,9 +2077,34 @@ void computeCalleeSaveRegisterGroups(const AArch64FrameLowering &AFL,
     if (NeedsFrameRecord && isFrameRecord())
       AFI->setCalleeSaveBaseToFrameRecordOffset(Offset);
 
+    if (!RGI.isScalable()) {
+      int OffsetFromSP = EndOfCSArea + RGI.Offset * Scale;
+      if (HazardPaddingBeforeSpill) {
+        int64_t HazardOffset =
+            StackFillDir < 0 ? OffsetFromSP + int64_t(RGI.getNumRegs()) * Scale
+                             : OffsetFromSP - int64_t(StackHazardSize);
+
+        MFI.setObjectOffset(AFI->getStackHazardCSRSlotIndex(), HazardOffset);
+      }
+
+      if (AdjustSwiftAsyncContext) {
+        int CtxFI = AFI->getSwiftAsyncContextFrameIdx();
+        if (CtxFI != std::numeric_limits<int>::max())
+          MFI.setObjectOffset(CtxFI, OffsetFromSP - 8);
+      }
+
+      for (int FI : reverse(RGI.getFrameIndexes())) {
+        LLVM_DEBUG(dbgs() << "alloc FI(" << FI << ") at SP[" << OffsetFromSP
+                          << "]\n");
+        MFI.setObjectOffset(FI, OffsetFromSP);
+        OffsetFromSP += Scale;
+      }
+    }
+
     RegGroups.push_back(RGI);
     i += RegInc * (RGI.getNumRegs() - 1);
   }
+
   if (IsWindows) {
     // If we need an alignment gap in the stack, align the topmost stack
     // object. A stack frame with a gap looks like this, bottom up:
@@ -2099,7 +2130,10 @@ bool AArch64FrameLowering::spillCalleeSavedRegisters(
   DebugLoc DL;
   SmallVector<RegGroupInfo, 8> RegGroups;
 
-  computeCalleeSaveRegisterGroups(*this, MF, CSI, TRI, RegGroups, hasFP(MF));
+  const auto *AFI = MF.getInfo<AArch64FunctionInfo>();
+  computeCalleeSaveRegisterGroups(
+      *this, MF, CSI, TRI, RegGroups, hasFP(MF),
+      getFixedObjectSize(MF, AFI, /*IsFunclet=*/false));
 
   MachineRegisterInfo &MRI = MF.getRegInfo();
   // Refresh the reserved regs in case there are any potential changes since the
@@ -2303,7 +2337,10 @@ bool AArch64FrameLowering::restoreCalleeSavedRegisters(
   if (MBBI != MBB.end())
     DL = MBBI->getDebugLoc();
 
-  computeCalleeSaveRegisterGroups(*this, MF, CSI, TRI, RegGroups, hasFP(MF));
+  const auto *AFI = MF.getInfo<AArch64FunctionInfo>();
+  computeCalleeSaveRegisterGroups(
+      *this, MF, CSI, TRI, RegGroups, hasFP(MF),
+      getFixedObjectSize(MF, AFI, /*IsFunclet=*/false));
   if (homogeneousPrologEpilog(MF, &MBB)) {
     auto MIB = BuildMI(MBB, MBBI, DL, TII.get(AArch64::HOM_Epilog))
                    .setMIFlag(MachineInstr::FrameDestroy);
@@ -3288,8 +3325,7 @@ void AArch64FrameLowering::processFunctionBeforeFrameFinalized(
   // Create an UnwindHelp object.
   // The UnwindHelp object is allocated at the start of the fixed object area
   int64_t UnwindHelpOffset = alignTo(CurrentOffset + 8, Align(16));
-  assert(UnwindHelpOffset == getFixedObjectSize(MF, AFI, /*IsWin64*/ true,
-                                                /*IsFunclet*/ false) &&
+  assert(UnwindHelpOffset == getFixedObjectSize(MF, AFI, /*IsFunclet*/ false) &&
          "UnwindHelpOffset must be at the start of the fixed object area");
   int UnwindHelpFI = MFI.CreateFixedObject(/*Size*/ 8, -UnwindHelpOffset,
                                            /*IsImmutable=*/false);

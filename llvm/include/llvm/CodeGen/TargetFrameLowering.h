@@ -202,6 +202,10 @@ public:
     return false;
   }
 
+  /// Returns true if the target sets the offsets of callee-saved registers
+  /// relative to SP.
+  virtual bool targetSetsCalleeSavedOffsetsFromSP() const { return false; }
+
   /// Returns true if the target can safely skip saving callee-saved registers
   /// for noreturn nounwind functions.
   virtual bool enableCalleeSaveSkip(const MachineFunction &MF) const;

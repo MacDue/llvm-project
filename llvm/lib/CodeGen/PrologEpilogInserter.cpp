@@ -915,26 +915,41 @@ void PEIImpl::calculateFrameObjectOffsets(MachineFunction &MF) {
   // First assign frame offsets to stack objects that are used to spill
   // callee saved registers.
   auto AllFIs = seq(MFI.getObjectIndexBegin(), MFI.getObjectIndexEnd());
-  for (int FI : reverse_conditionally(AllFIs, /*Reverse=*/!StackGrowsDown)) {
-    // Only allocate objects on the default stack.
-    if (!MFI.isCalleeSavedObjectIndex(FI) ||
-        MFI.getStackID(FI) != TargetStackID::Default)
-      continue;
+  if (!TFI.targetSetsCalleeSavedOffsetsFromSP()) {
+    for (int FI : reverse_conditionally(AllFIs, /*Reverse=*/!StackGrowsDown)) {
+      // Only allocate objects on the default stack.
+      if (!MFI.isCalleeSavedObjectIndex(FI) ||
+          MFI.getStackID(FI) != TargetStackID::Default)
+        continue;
 
-    // TODO: should this just be if (MFI.isDeadObjectIndex(FI))
-    if (!StackGrowsDown && MFI.isDeadObjectIndex(FI))
-      continue;
+      // TODO: should this just be if (MFI.isDeadObjectIndex(FI))
+      if (!StackGrowsDown && MFI.isDeadObjectIndex(FI))
+        continue;
 
-    AdjustStackOffset(MFI, FI, StackGrowsDown, Offset, MaxAlign);
+      AdjustStackOffset(MFI, FI, StackGrowsDown, Offset, MaxAlign);
+    }
+  } else {
+    int64_t LastCSOffset = Offset;
+    for (int FI : AllFIs) {
+      // Only allocate objects on the default stack.
+      if (!MFI.isCalleeSavedObjectIndex(FI) ||
+          MFI.getStackID(FI) != TargetStackID::Default)
+        continue;
+
+      assert(StackGrowsDown && "Only implemented for StackGrowsDown");
+      LastCSOffset = std::max(LastCSOffset, -MFI.getObjectOffset(FI));
+    }
+
+    Offset = LastCSOffset;
   }
-
-  assert(MaxAlign == MFI.getMaxAlign() &&
-         "MFI.getMaxAlign should already account for all callee-saved "
-         "registers without a fixed stack slot");
 
   // FixedCSEnd is the stack offset to the end of the fixed and callee-save
   // stack area.
   int64_t FixedCSEnd = Offset;
+
+  assert(MaxAlign == MFI.getMaxAlign() &&
+         "MFI.getMaxAlign should already account for all callee-saved "
+         "registers without a fixed stack slot");
 
   // Make sure the special register scavenging spill slot is closest to the
   // incoming stack pointer if a frame pointer is required and is closer
