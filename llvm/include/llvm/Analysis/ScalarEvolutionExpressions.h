@@ -803,7 +803,7 @@ protected:
   // a SCEV is referenced by multiple SCEVs. Without memoization, this
   // visit algorithm would have exponential time complexity in the worst
   // case, causing the compiler to hang on certain tests.
-  SmallDenseMap<SCEVUse, SCEVUse, 16> RewriteResults;
+  SmallDenseMap<const SCEV *, SCEVUse, 16> RewriteResults;
 
 public:
   SCEVRewriteVisitor(ScalarEvolution &SE) : SE(SE) {}
