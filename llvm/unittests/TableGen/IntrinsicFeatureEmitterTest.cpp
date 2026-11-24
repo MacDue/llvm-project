@@ -41,16 +41,16 @@ namespace llvm {
 
 class TestTargetSubtarget : public TargetSubtargetInfo {
 public:
-  FeatureBitset Bits;
   bool Enabled;
 
   TestTargetSubtarget(FeatureBitset Bits, bool Enabled)
       : TargetSubtargetInfo(Triple(""), "", "", "", "", {}, {}, {}, nullptr,
                             nullptr, nullptr, nullptr, nullptr, nullptr,
                             nullptr),
-        Bits(Bits), Enabled(Enabled) {}
+        Enabled(Enabled) {
+    setFeatureBits(Bits);
+  }
 
-  const FeatureBitset &getFeatureBits() const { return Bits; }
   const TargetRegisterInfo *getRegisterInfo() const override { return nullptr; }
   const FeatureBitset &getInlineIgnoreFeatures() const override {
     static const FeatureBitset Empty;
@@ -128,15 +128,18 @@ TEST(IntrinsicFeatureEmitterTest, MultipleGuards) {
   EXPECT_EQ(getInfo().checkGuard(Second, ST),
             IntrinsicGuardCheckResult::Inactive);
   EXPECT_FALSE(getInfo().isVariantAvailable(Variants[0], ST));
-  ST.Bits = {TestTarget::FeatureExample};
+  ST.setFeatureBits({TestTarget::FeatureExample});
   EXPECT_TRUE(getInfo().isVariantAvailable(Variants[0], ST));
-  ST.Bits = {TestTarget::FeatureOther};
+  ST.setFeatureBits({TestTarget::FeatureOther});
   ST.Enabled = true;
   EXPECT_EQ(getInfo().checkGuard(Second, ST),
             IntrinsicGuardCheckResult::Available);
   EXPECT_FALSE(getInfo().isVariantAvailable(Variants[0], ST));
-  ST.Bits = {TestTarget::FeatureExample, TestTarget::FeatureOther};
+  ST.setFeatureBits({TestTarget::FeatureExample, TestTarget::FeatureOther});
   EXPECT_TRUE(getInfo().isVariantAvailable(Variants[0], ST));
+  ST.setFeatureBits({});
+  EXPECT_EQ(getInfo().checkGuard(Second, ST),
+            IntrinsicGuardCheckResult::Available);
 }
 
 TEST(IntrinsicFeatureEmitterTest, TypeSpecificGuards) {

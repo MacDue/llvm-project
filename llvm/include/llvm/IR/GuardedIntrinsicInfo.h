@@ -13,16 +13,14 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/TargetParser/SubtargetFeature.h"
 #include <cassert>
-#include <optional>
 
 namespace llvm {
-
-class TargetSubtargetInfo;
 
 struct IntrinsicFeatureGuard {
   // Offset of this guard's first alternative in the feature clause table.
@@ -33,8 +31,10 @@ struct IntrinsicFeatureGuard {
   const char *Expression;
   // Name of the execution mode selected by this guard.
   const char *Name;
-  // Index of shared predicate and feature-bit check generated for this guard.
+  // Index of the shared predicate for this guard.
   unsigned Index;
+  // Features implied when the guard predicate is active.
+  FeatureBitset ImpliedFeatures;
 };
 
 enum class IntrinsicGuardCheckResult { Inactive, MissingFeatures, Available };
@@ -63,9 +63,8 @@ class GuardedIntrinsicInfo {
   DenseMap<Intrinsic::ID, ArrayRef<IntrinsicFeatureVariant>> VariantsByID;
 
 protected:
-  virtual std::optional<FeatureBitset>
-  getFeaturesForGuard(const IntrinsicFeatureGuard &Guard,
-                      const TargetSubtargetInfo &STI) const = 0;
+  virtual bool checkGuardPredicate(const IntrinsicFeatureGuard &Guard,
+                                   const TargetSubtargetInfo &STI) const = 0;
 
 public:
   GuardedIntrinsicInfo(StringRef TargetName, ArrayRef<FeatureBitset> Clauses,
@@ -104,15 +103,14 @@ public:
     return Clauses.slice(Guard.FirstClause, Guard.NumClauses);
   }
 
-  /// Check a guard using the target's predicate and feature-bit source.
-  /// The feature getter returns nullopt when the predicate is inactive.
+  /// Check a guard using its target predicate and implied feature set.
   IntrinsicGuardCheckResult checkGuard(const IntrinsicFeatureGuard &Guard,
                                        const TargetSubtargetInfo &STI) const {
-    std::optional<FeatureBitset> Available = getFeaturesForGuard(Guard, STI);
-    if (!Available)
+    if (!checkGuardPredicate(Guard, STI))
       return IntrinsicGuardCheckResult::Inactive;
+    FeatureBitset Available = STI.getFeatureBits() | Guard.ImpliedFeatures;
     for (const FeatureBitset &Required : getAlternatives(Guard))
-      if ((*Available & Required) == Required)
+      if ((Available & Required) == Required)
         return IntrinsicGuardCheckResult::Available;
     return IntrinsicGuardCheckResult::MissingFeatures;
   }

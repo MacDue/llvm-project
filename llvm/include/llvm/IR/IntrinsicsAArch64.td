@@ -31,14 +31,7 @@ class NonStreamingGuard<string features> : FeatureGuard<features> {
 class StreamingGuard<string features> : FeatureGuard<features> {
   let Name = "streaming";
   let Predicate = [{ST.isStreaming() || ST.isStreamingCompatible()}];
-  let FeatureBits = [{
-    ST.isStreamingCompatible() && !ST.isStreaming()
-        ? ST.getFeatureBits() |
-              FeatureBitset{AArch64::FeatureBF16, AArch64::FeatureFPARMv8,
-                            AArch64::FeatureFullFP16, AArch64::FeatureNEON,
-                            AArch64::FeatureSME}
-        : ST.getFeatureBits()
-  }];
+  let ImpliedFeatures = "bf16,fp-armv8,fullfp16,neon,sme";
 }
 
 class Variant<string nonStreamingGuard, string streamingGuard,

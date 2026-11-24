@@ -59,6 +59,18 @@ parseGuard(StringRef FeatureString,
   return Result;
 }
 
+static RequiredFeatureSet
+parseImpliedFeatures(StringRef FeatureString,
+                     const std::map<std::string, std::string> &Features,
+                     const Record *Owner, StringRef TargetPrefix) {
+  if (FeatureString.contains('|'))
+    PrintFatalError(Owner, "implied features may not use '|'");
+  FeatureGuardAlternatives Parsed =
+      parseGuard(FeatureString, Features, Owner, TargetPrefix);
+  assert(Parsed.size() <= 1 && "implied features must be a conjunction");
+  return Parsed.empty() ? RequiredFeatureSet{} : *Parsed.begin();
+}
+
 // One unique feature guard. Its parsed clauses are alternatives:
 // any clause can satisfy the guard, and each clause requires all its features.
 // For example, IntrinsicsAArch64.td has:
@@ -74,8 +86,9 @@ struct GuardEntry {
   std::string RawGuardString;
   std::string Name;
   std::string Predicate;
-  std::string FeatureBits;
+  std::string RawImpliedFeatures;
   FeatureGuardAlternatives ParsedGuardClauses;
+  RequiredFeatureSet ParsedImpliedFeatures;
 };
 
 // One TargetGuard variant of an intrinsic.
@@ -101,21 +114,25 @@ static void addVariant(
   if (GuardRecords.empty())
     PrintFatalError(Guard, "intrinsic variant must have at least one guard");
 
-  // Keep guards with different predicates or feature bit sources distinct.
+  // Keep guards with different predicates or implied features distinct.
   VariantEntry Entry;
   for (const Record *GuardRecord : GuardRecords) {
     StringRef RawGuardString = GuardRecord->getValueAsString("Features");
     std::string Name = GuardRecord->getValueAsString("Name").str();
     std::string Predicate = GuardRecord->getValueAsString("Predicate").str();
-    std::string FeatureBits =
-        GuardRecord->getValueAsString("FeatureBits").str();
+    std::string ImpliedFeatures =
+        GuardRecord->getValueAsString("ImpliedFeatures").str();
     auto Key =
-        std::make_tuple(RawGuardString.str(), Name, Predicate, FeatureBits);
+        std::make_tuple(RawGuardString.str(), Name, Predicate, ImpliedFeatures);
     auto [It, Inserted] = GuardsByKey.try_emplace(std::move(Key));
     if (Inserted) {
-      It->second = {RawGuardString.str(), std::move(Name), std::move(Predicate),
-                    std::move(FeatureBits),
-                    parseGuard(RawGuardString, Features, GuardRecord, Prefix)};
+      It->second = {
+          RawGuardString.str(),
+          std::move(Name),
+          std::move(Predicate),
+          ImpliedFeatures,
+          parseGuard(RawGuardString, Features, GuardRecord, Prefix),
+          parseImpliedFeatures(ImpliedFeatures, Features, GuardRecord, Prefix)};
       GuardsInOrder.push_back(&It->second);
     }
     Entry.Guards.push_back(&It->second);
@@ -232,25 +249,30 @@ static void emitIntrinsicFeatureChecks(const RecordKeeper &Records,
   OS << "};\n\nstatic constexpr IntrinsicFeatureGuard " << Namespace
      << "IntrinsicFeatureGuards[] = {\n";
   unsigned FirstClauseIndex = 0;
-  // Feature expressions with the same predicate and feature bit source share
-  // one generated check, regardless of their required feature clauses.
-  std::map<std::pair<std::string, std::string>, unsigned> CheckIndices;
+  // Feature expressions with the same predicate share one generated check,
+  // regardless of their required or implied features.
+  std::map<std::string, unsigned> CheckIndices;
   std::vector<const GuardEntry *> ChecksInOrder;
   for (const GuardEntry *G : GuardsInOrder) {
-    auto [It, Inserted] = CheckIndices.try_emplace(
-        std::make_pair(G->Predicate, G->FeatureBits), ChecksInOrder.size());
+    auto [It, Inserted] =
+        CheckIndices.try_emplace(G->Predicate, ChecksInOrder.size());
     if (Inserted)
       ChecksInOrder.push_back(G);
     OS << "  {" << FirstClauseIndex << ", " << G->ParsedGuardClauses.size()
        << ", \"" << G->RawGuardString << "\", \"" << G->Name << "\", "
-       << It->second << "},\n";
+       << It->second << ", {";
+    interleaveComma(G->ParsedImpliedFeatures, OS,
+                    [&](const std::string &Feature) {
+                      OS << Namespace << "::" << Feature;
+                    });
+    OS << "}},\n";
     FirstClauseIndex += G->ParsedGuardClauses.size();
   }
   OS << "};\n\n";
 
   OS << "class " << Namespace
      << "GuardedIntrinsicInfo final : public GuardedIntrinsicInfo {\n"
-     << "  std::optional<FeatureBitset> getFeaturesForGuard(\n"
+     << "  bool checkGuardPredicate(\n"
      << "      const IntrinsicFeatureGuard &Guard,\n"
      << "      const TargetSubtargetInfo &STI) const override {\n"
      << "    const " << Namespace << "Subtarget &ST =\n"
@@ -259,11 +281,9 @@ static void emitIntrinsicFeatureChecks(const RecordKeeper &Records,
   for (unsigned I = 0; I < ChecksInOrder.size(); ++I) {
     const GuardEntry *G = ChecksInOrder[I];
     OS << "    case " << I << ":\n"
-       << "      if (!(" << G->Predicate << "))\n"
-       << "        return std::nullopt;\n"
-       << "      return " << G->FeatureBits << ";\n";
+       << "      return (" << G->Predicate << ");\n";
   }
-  OS << "    default: return std::nullopt;\n"
+  OS << "    default: return false;\n"
      << "    }\n"
      << "  }\n\n"
      << "public:\n"

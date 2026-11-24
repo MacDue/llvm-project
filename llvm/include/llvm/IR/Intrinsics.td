@@ -847,13 +847,14 @@ class DefaultAttrsIntrinsic<list<LLVMType> ret_types,
 // overloaded types.
 // Guard expressions use ',' for AND and '|' for OR. Parentheses are required
 // when an expression uses both operators.
-// Predicate is evaluated with the target subtarget named ST. FeatureBits may
-// supply features implied by the active execution mode.
+// Predicate is evaluated with the target subtarget named ST. ImpliedFeatures
+// is a comma-separated list of features supplied by the active execution
+// mode; alternatives are not allowed.
 class FeatureGuard<string features> {
   string Features = features;
   string Name = "";
   code Predicate = [{true}];
-  code FeatureBits = [{ST.getFeatureBits()}];
+  string ImpliedFeatures = "";
 }
 
 class GuardedVariant<list<FeatureGuard> guards,
