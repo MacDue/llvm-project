@@ -1613,6 +1613,11 @@ unsigned TargetTransformInfo::getMaxNumArgs() const {
   return TTIImpl->getMaxNumArgs();
 }
 
+const GuardedIntrinsicInfo *
+TargetTransformInfo::getGuardedIntrinsicInfo() const {
+  return TTIImpl->getGuardedIntrinsicInfo();
+}
+
 bool TargetTransformInfo::shouldExpandReduction(const IntrinsicInst *II) const {
   return TTIImpl->shouldExpandReduction(II);
 }

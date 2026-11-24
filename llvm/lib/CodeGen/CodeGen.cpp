@@ -54,6 +54,7 @@ void llvm::initializeCodeGen(PassRegistry &Registry) {
   initializeGCMachineCodeAnalysisPass(Registry);
   initializeGCModuleInfoPass(Registry);
   initializeGlobalMergePass(Registry);
+  initializeGuardedIntrinsicVerifierLegacyPassPass(Registry);
   initializeGlobalMergeFuncPassWrapperPass(Registry);
   initializeHardwareLoopsLegacyPass(Registry);
   initializeIfConverterLegacyPass(Registry);

@@ -12,6 +12,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Intrinsics.h"
@@ -21,6 +22,8 @@
 
 namespace llvm {
 
+class TargetSubtargetInfo;
+
 struct IntrinsicFeatureGuard {
   // Offset of this guard's first alternative in the feature clause table.
   unsigned FirstClause;
@@ -28,6 +31,8 @@ struct IntrinsicFeatureGuard {
   unsigned NumClauses;
   // Original feature expression, retained for diagnostics.
   const char *Expression;
+  // Name of the execution mode selected by this guard.
+  const char *Name;
   // Index of shared predicate and feature-bit check generated for this guard.
   unsigned Index;
 };
@@ -49,33 +54,37 @@ struct GuardedIntrinsicEntry {
 };
 
 /// Provides access to the tables emitted by -gen-intrinsic-feature-checks.
-template <typename Subtarget> class GuardedIntrinsicInfo {
-  using GetFeatures = std::optional<FeatureBitset> (*)(
-      const IntrinsicFeatureGuard &, const Subtarget &);
-
+class GuardedIntrinsicInfo {
+  StringRef TargetName;
   ArrayRef<FeatureBitset> Clauses;
   ArrayRef<MVT::SimpleValueType> OverloadTypes;
   ArrayRef<unsigned> GuardIndices;
   ArrayRef<IntrinsicFeatureGuard> Guards;
   DenseMap<Intrinsic::ID, ArrayRef<IntrinsicFeatureVariant>> VariantsByID;
-  GetFeatures GetFeaturesForGuard;
+
+protected:
+  virtual std::optional<FeatureBitset>
+  getFeaturesForGuard(const IntrinsicFeatureGuard &Guard,
+                      const TargetSubtargetInfo &STI) const = 0;
 
 public:
-  GuardedIntrinsicInfo(ArrayRef<FeatureBitset> Clauses,
+  GuardedIntrinsicInfo(StringRef TargetName, ArrayRef<FeatureBitset> Clauses,
                        ArrayRef<MVT::SimpleValueType> OverloadTypes,
                        ArrayRef<unsigned> GuardIndices,
                        ArrayRef<IntrinsicFeatureGuard> Guards,
                        ArrayRef<IntrinsicFeatureVariant> Variants,
-                       ArrayRef<GuardedIntrinsicEntry> Entries,
-                       GetFeatures GetFeaturesForGuard)
-      : Clauses(Clauses), OverloadTypes(OverloadTypes),
-        GuardIndices(GuardIndices), Guards(Guards),
-        GetFeaturesForGuard(GetFeaturesForGuard) {
+                       ArrayRef<GuardedIntrinsicEntry> Entries)
+      : TargetName(TargetName), Clauses(Clauses), OverloadTypes(OverloadTypes),
+        GuardIndices(GuardIndices), Guards(Guards) {
     VariantsByID.reserve(Entries.size());
     for (const GuardedIntrinsicEntry &Entry : Entries)
       VariantsByID.try_emplace(
           Entry.ID, Variants.slice(Entry.FirstVariant, Entry.NumVariants));
   }
+
+  virtual ~GuardedIntrinsicInfo() = default;
+
+  StringRef getTargetName() const { return TargetName; }
 
   ArrayRef<IntrinsicFeatureVariant> getVariants(Intrinsic::ID ID) const {
     auto It = VariantsByID.find(ID);
@@ -98,8 +107,8 @@ public:
   /// Check a guard using the target's predicate and feature-bit source.
   /// The feature getter returns nullopt when the predicate is inactive.
   IntrinsicGuardCheckResult checkGuard(const IntrinsicFeatureGuard &Guard,
-                                       const Subtarget &ST) const {
-    std::optional<FeatureBitset> Available = GetFeaturesForGuard(Guard, ST);
+                                       const TargetSubtargetInfo &STI) const {
+    std::optional<FeatureBitset> Available = getFeaturesForGuard(Guard, STI);
     if (!Available)
       return IntrinsicGuardCheckResult::Inactive;
     for (const FeatureBitset &Required : getAlternatives(Guard))
@@ -112,10 +121,10 @@ public:
   /// inactive guards, but require every active guard to have its features.
   /// At least one guard must be active for the variant to be available.
   bool isVariantAvailable(const IntrinsicFeatureVariant &Variant,
-                          const Subtarget &ST) const {
+                          const TargetSubtargetInfo &STI) const {
     bool HasActiveGuard = false;
     for (unsigned I = 0; I < Variant.NumGuards; ++I)
-      switch (checkGuard(getGuard(Variant, I), ST)) {
+      switch (checkGuard(getGuard(Variant, I), STI)) {
       case IntrinsicGuardCheckResult::Inactive:
         break;
       case IntrinsicGuardCheckResult::MissingFeatures:

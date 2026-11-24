@@ -1,5 +1,8 @@
 set(LLVM_LINK_COMPONENTS
+  CodeGen
+  MC
   TableGen
+  TargetParser
   Support
   )
 

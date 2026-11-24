@@ -128,6 +128,7 @@ protected:
   // Target Pass Options
   // Targets provide a default setting, user flags override.
   bool DisableVerify = false;
+  bool EnableGuardedIntrinsicVerification = false;
 
   MachineVerifierMode VerifyMode = MachineVerifierMode::End;
 

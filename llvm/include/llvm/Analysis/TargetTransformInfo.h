@@ -52,6 +52,7 @@ class BlockFrequencyInfo;
 class DominatorTree;
 class CondBrInst;
 class Function;
+class GuardedIntrinsicInfo;
 class GlobalValue;
 class InstCombiner;
 class OptimizationRemarkEmitter;
@@ -2186,6 +2187,10 @@ public:
 
   /// \return The maximum number of function arguments the target supports.
   LLVM_ABI unsigned getMaxNumArgs() const;
+
+  /// Return the target's generated guarded intrinsic information, or null if
+  /// the target has no guarded intrinsics.
+  LLVM_ABI const GuardedIntrinsicInfo *getGuardedIntrinsicInfo() const;
 
   /// @}
 

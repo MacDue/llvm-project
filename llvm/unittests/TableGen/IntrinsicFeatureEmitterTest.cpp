@@ -8,6 +8,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/CodeGenTypes/MachineValueType.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -16,6 +17,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Type.h"
 #include "llvm/TargetParser/SubtargetFeature.h"
+#include "llvm/TargetParser/Triple.h"
 #include "gtest/gtest.h"
 #include <cassert>
 #include <iterator>
@@ -35,18 +37,43 @@ constexpr ID test_two_guards = 100002;
 constexpr ID test_type_specific_guards = 100003;
 } // namespace llvm::Intrinsic
 
+namespace llvm {
+
+class TestTargetSubtarget : public TargetSubtargetInfo {
+public:
+  FeatureBitset Bits;
+  bool Enabled;
+
+  TestTargetSubtarget(FeatureBitset Bits, bool Enabled)
+      : TargetSubtargetInfo(Triple(""), "", "", "", "", {}, {}, {}, nullptr,
+                            nullptr, nullptr, nullptr, nullptr, nullptr,
+                            nullptr),
+        Bits(Bits), Enabled(Enabled) {}
+
+  const FeatureBitset &getFeatureBits() const { return Bits; }
+  const TargetRegisterInfo *getRegisterInfo() const override { return nullptr; }
+  const FeatureBitset &getInlineIgnoreFeatures() const override {
+    static const FeatureBitset Empty;
+    return Empty;
+  }
+  const FeatureBitset &getInlineInverseFeatures() const override {
+    static const FeatureBitset Empty;
+    return Empty;
+  }
+  const FeatureBitset &getInlineMustMatchFeatures() const override {
+    static const FeatureBitset Empty;
+    return Empty;
+  }
+};
+
+} // namespace llvm
+
 #include "IntrinsicFeatureChecksGuards.inc"
 
 namespace {
 
-struct TestSubtarget {
-  FeatureBitset Bits;
-  bool Enabled;
-  const FeatureBitset &getFeatureBits() const { return Bits; }
-};
-
-static const GuardedIntrinsicInfo<TestSubtarget> &getInfo() {
-  return getTestTargetGeneratedGuardedIntrinsicInfo<TestSubtarget>();
+static const GuardedIntrinsicInfo &getInfo() {
+  return getTestTargetGeneratedGuardedIntrinsicInfo();
 }
 
 TEST(IntrinsicFeatureEmitterTest, SingleGuard) {
@@ -95,7 +122,7 @@ TEST(IntrinsicFeatureEmitterTest, MultipleGuards) {
   ASSERT_EQ(SecondAlternatives.size(), 1u);
   EXPECT_EQ(SecondAlternatives[0], FeatureBitset{TestTarget::FeatureOther});
 
-  TestSubtarget ST{{TestTarget::FeatureOther}, false};
+  TestTargetSubtarget ST({TestTarget::FeatureOther}, false);
   EXPECT_EQ(getInfo().checkGuard(First, ST),
             IntrinsicGuardCheckResult::MissingFeatures);
   EXPECT_EQ(getInfo().checkGuard(Second, ST),

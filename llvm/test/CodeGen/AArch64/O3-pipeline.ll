@@ -40,6 +40,7 @@
 ; CHECK-NEXT:       Loop Data Prefetch
 ; CHECK-NEXT:       Falkor HW Prefetch Fix
 ; CHECK-NEXT:       Module Verifier
+; CHECK-NEXT:       Guarded Intrinsic Verifier
 ; CHECK-NEXT:       Basic Alias Analysis (stateless AA impl)
 ; CHECK-NEXT:       Canonicalize natural loops
 ; CHECK-NEXT:       Loop Pass Manager
@@ -98,7 +99,6 @@
 ; CHECK-NEXT:       SJLJ Exception Handling preparation
 ; CHECK-NEXT:       Dominator Tree Construction
 ; CHECK-NEXT:       Exception handling preparation
-; CHECK-NEXT:       AArch64 Intrinsics Verifier
 ; CHECK-NEXT:     AArch64 Promote Constant
 ; CHECK-NEXT:       FunctionPass Manager
 ; CHECK-NEXT:         Dominator Tree Construction
@@ -108,6 +108,7 @@
 ; CHECK-NEXT:       Safe Stack instrumentation pass
 ; CHECK-NEXT:       Insert stack protectors
 ; CHECK-NEXT:       Module Verifier
+; CHECK-NEXT:       Guarded Intrinsic Verifier
 ; CHECK-NEXT:       Analysis containing CSE Info
 ; CHECK-NEXT:       Dominator Tree Construction
 ; CHECK-NEXT:       Cycle Info Analysis

@@ -36,6 +36,7 @@
 #include "llvm/CodeGen/GCMetadata.h"
 #include "llvm/CodeGen/GlobalMerge.h"
 #include "llvm/CodeGen/GlobalMergeFunctions.h"
+#include "llvm/CodeGen/GuardedIntrinsicVerifier.h"
 #include "llvm/CodeGen/ImplicitNullChecks.h"
 #include "llvm/CodeGen/IndirectBrExpand.h"
 #include "llvm/CodeGen/InitUndef.h"
@@ -382,8 +383,11 @@ void CodeGenPassBuilder::addISelPasses(PassManagerWrapper &PMW) {
 void CodeGenPassBuilder::addIRPasses(PassManagerWrapper &PMW) {
   // Before running any passes, run the verifier to determine if the input
   // coming from the front-end and/or optimizer is valid.
-  if (!Opt.DisableVerify)
+  if (!Opt.DisableVerify) {
     addFunctionPass(VerifierPass(), PMW, /*Force=*/true);
+    if (Opt.EnableGuardedIntrinsicVerification)
+      addFunctionPass(GuardedIntrinsicVerifierPass(TM), PMW, /*Force=*/true);
+  }
 
   // Run loop strength reduction before anything else.
   if (getOptLevel() != CodeGenOptLevel::None && !Opt.DisableLSR) {
@@ -528,8 +532,11 @@ void CodeGenPassBuilder::addISelPrepare(PassManagerWrapper &PMW) {
 
   // All passes which modify the LLVM IR are now complete; run the verifier
   // to ensure that the IR is valid.
-  if (!Opt.DisableVerify)
+  if (!Opt.DisableVerify) {
     addFunctionPass(VerifierPass(), PMW, /*Force=*/true);
+    if (Opt.EnableGuardedIntrinsicVerification)
+      addFunctionPass(GuardedIntrinsicVerifierPass(TM), PMW, /*Force=*/true);
+  }
 }
 
 Error CodeGenPassBuilder::addCoreISelPasses(PassManagerWrapper &PMW) {

@@ -72,6 +72,7 @@ parseGuard(StringRef FeatureString,
 // The generated guard table refers to these clauses by offset and count.
 struct GuardEntry {
   std::string RawGuardString;
+  std::string Name;
   std::string Predicate;
   std::string FeatureBits;
   FeatureGuardAlternatives ParsedGuardClauses;
@@ -93,8 +94,8 @@ static void addVariant(
     std::vector<VariantEntry> &Entries, const Record *Intrinsic,
     const Record *Guard, const ListInit *Overload,
     const std::map<std::string, std::string> &Features, StringRef Prefix,
-    std::map<std::tuple<std::string, std::string, std::string>, GuardEntry>
-        &GuardsByKey,
+    std::map<std::tuple<std::string, std::string, std::string, std::string>,
+             GuardEntry> &GuardsByKey,
     std::vector<const GuardEntry *> &GuardsInOrder) {
   auto GuardRecords = Guard->getValueAsListOfDefs("Guards");
   if (GuardRecords.empty())
@@ -104,13 +105,15 @@ static void addVariant(
   VariantEntry Entry;
   for (const Record *GuardRecord : GuardRecords) {
     StringRef RawGuardString = GuardRecord->getValueAsString("Features");
+    std::string Name = GuardRecord->getValueAsString("Name").str();
     std::string Predicate = GuardRecord->getValueAsString("Predicate").str();
     std::string FeatureBits =
         GuardRecord->getValueAsString("FeatureBits").str();
-    auto Key = std::make_tuple(RawGuardString.str(), Predicate, FeatureBits);
+    auto Key =
+        std::make_tuple(RawGuardString.str(), Name, Predicate, FeatureBits);
     auto [It, Inserted] = GuardsByKey.try_emplace(std::move(Key));
     if (Inserted) {
-      It->second = {RawGuardString.str(), std::move(Predicate),
+      It->second = {RawGuardString.str(), std::move(Name), std::move(Predicate),
                     std::move(FeatureBits),
                     parseGuard(RawGuardString, Features, GuardRecord, Prefix)};
       GuardsInOrder.push_back(&It->second);
@@ -155,7 +158,8 @@ static void emitIntrinsicFeatureChecks(const RecordKeeper &Records,
   }
 
   // Map nodes keep GuardEntry pointers stable as new guards are inserted.
-  std::map<std::tuple<std::string, std::string, std::string>, GuardEntry>
+  std::map<std::tuple<std::string, std::string, std::string, std::string>,
+           GuardEntry>
       GuardsByKey;
   std::vector<const GuardEntry *> GuardsInOrder;
   std::map<std::string, std::vector<VariantEntry>> Intrinsics;
@@ -238,26 +242,33 @@ static void emitIntrinsicFeatureChecks(const RecordKeeper &Records,
     if (Inserted)
       ChecksInOrder.push_back(G);
     OS << "  {" << FirstClauseIndex << ", " << G->ParsedGuardClauses.size()
-       << ", \"" << G->RawGuardString << "\", " << It->second << "},\n";
+       << ", \"" << G->RawGuardString << "\", \"" << G->Name << "\", "
+       << It->second << "},\n";
     FirstClauseIndex += G->ParsedGuardClauses.size();
   }
   OS << "};\n\n";
 
-  OS << "template <typename Subtarget>\n"
-     << "[[maybe_unused]] static std::optional<FeatureBitset> get" << Namespace
-     << "IntrinsicGuardFeatures(\n"
-     << "    const IntrinsicFeatureGuard &Guard, const Subtarget &ST) {\n"
-     << "  switch (Guard.Index) {\n";
+  OS << "class " << Namespace
+     << "GuardedIntrinsicInfo final : public GuardedIntrinsicInfo {\n"
+     << "  std::optional<FeatureBitset> getFeaturesForGuard(\n"
+     << "      const IntrinsicFeatureGuard &Guard,\n"
+     << "      const TargetSubtargetInfo &STI) const override {\n"
+     << "    const " << Namespace << "Subtarget &ST =\n"
+     << "        static_cast<const " << Namespace << "Subtarget &>(STI);\n"
+     << "    switch (Guard.Index) {\n";
   for (unsigned I = 0; I < ChecksInOrder.size(); ++I) {
     const GuardEntry *G = ChecksInOrder[I];
-    OS << "  case " << I << ":\n"
-       << "    if (!(" << G->Predicate << "))\n"
-       << "      return std::nullopt;\n"
-       << "    return " << G->FeatureBits << ";\n";
+    OS << "    case " << I << ":\n"
+       << "      if (!(" << G->Predicate << "))\n"
+       << "        return std::nullopt;\n"
+       << "      return " << G->FeatureBits << ";\n";
   }
-  OS << "  default: return std::nullopt;\n"
-     << "  }\n"
-     << "}\n\n";
+  OS << "    default: return std::nullopt;\n"
+     << "    }\n"
+     << "  }\n\n"
+     << "public:\n"
+     << "  " << Namespace << "GuardedIntrinsicInfo();\n"
+     << "};\n\n";
 
   OS << "static constexpr IntrinsicFeatureVariant " << Namespace
      << "IntrinsicVariants[] = {\n";
@@ -281,20 +292,18 @@ static void emitIntrinsicFeatureChecks(const RecordKeeper &Records,
     FirstVariant += Entries.size();
   }
   OS << "};\n\n";
-  // Give each translation unit that includes the generated data its own
-  // optional accessor. Targets can expose a single shared instance through
-  // their own non-generated wrapper when needed.
-  OS << "template <typename Subtarget>\n"
-     << "[[maybe_unused]] static const GuardedIntrinsicInfo<Subtarget> &get"
-     << Namespace << "GeneratedGuardedIntrinsicInfo() {\n"
-     << "  static const GuardedIntrinsicInfo<Subtarget> Info(\n"
-     << "      " << Namespace << "IntrinsicFeatureClauses, " << Namespace
-     << "IntrinsicOverloadTypes,\n"
-     << "      " << Namespace << "IntrinsicGuardIndices, " << Namespace
-     << "IntrinsicFeatureGuards,\n"
-     << "      " << Namespace << "IntrinsicVariants, " << Namespace
-     << "IntrinsicEntries, get" << Namespace
-     << "IntrinsicGuardFeatures<Subtarget>);\n"
+  OS << Namespace << "GuardedIntrinsicInfo::" << Namespace
+     << "GuardedIntrinsicInfo()\n"
+     << "    : GuardedIntrinsicInfo(\"" << Namespace << "\", " << Namespace
+     << "IntrinsicFeatureClauses,\n"
+     << "          " << Namespace << "IntrinsicOverloadTypes, " << Namespace
+     << "IntrinsicGuardIndices,\n"
+     << "          " << Namespace << "IntrinsicFeatureGuards, " << Namespace
+     << "IntrinsicVariants,\n"
+     << "          " << Namespace << "IntrinsicEntries) {}\n\n"
+     << "[[maybe_unused]] static const GuardedIntrinsicInfo &get" << Namespace
+     << "GeneratedGuardedIntrinsicInfo() {\n"
+     << "  static const " << Namespace << "GuardedIntrinsicInfo Info;\n"
      << "  return Info;\n"
      << "}\n\n"
      << "} // namespace llvm\n";

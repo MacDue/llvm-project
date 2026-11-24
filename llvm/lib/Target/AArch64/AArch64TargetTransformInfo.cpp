@@ -20,6 +20,7 @@
 #include "llvm/CodeGen/CostTable.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/GuardedIntrinsicInfo.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
@@ -35,6 +36,12 @@ using namespace llvm;
 using namespace llvm::PatternMatch;
 
 #define DEBUG_TYPE "aarch64tti"
+
+#include "AArch64GenIntrinsicFeatureChecks.inc"
+
+const GuardedIntrinsicInfo *AArch64TTIImpl::getGuardedIntrinsicInfo() const {
+  return &getAArch64GeneratedGuardedIntrinsicInfo();
+}
 
 namespace {
 class TailFoldingOption {

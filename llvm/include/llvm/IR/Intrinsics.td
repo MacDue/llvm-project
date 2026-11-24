@@ -851,6 +851,7 @@ class DefaultAttrsIntrinsic<list<LLVMType> ret_types,
 // supply features implied by the active execution mode.
 class FeatureGuard<string features> {
   string Features = features;
+  string Name = "";
   code Predicate = [{true}];
   code FeatureBits = [{ST.getFeatureBits()}];
 }

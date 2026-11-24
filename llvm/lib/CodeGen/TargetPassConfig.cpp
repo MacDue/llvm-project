@@ -24,6 +24,7 @@
 #include "llvm/CodeGen/BasicBlockSectionsProfileReader.h"
 #include "llvm/CodeGen/CSEConfigBase.h"
 #include "llvm/CodeGen/CodeGenTargetMachineImpl.h"
+#include "llvm/CodeGen/GuardedIntrinsicVerifier.h"
 #include "llvm/CodeGen/MachineBlockHashInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachinePassRegistry.h"
@@ -692,8 +693,11 @@ void TargetPassConfig::addMachinePostPasses(const std::string &Banner) {
 void TargetPassConfig::addIRPasses() {
   // Before running any passes, run the verifier to determine if the input
   // coming from the front-end and/or optimizer is valid.
-  if (!DisableVerify)
+  if (!DisableVerify) {
     addPass(createVerifierPass());
+    if (EnableGuardedIntrinsicVerification)
+      addPass(createGuardedIntrinsicVerifierPass(*TM));
+  }
 
   if (getOptLevel() != CodeGenOptLevel::None) {
     // Basic AliasAnalysis support.
@@ -843,8 +847,11 @@ void TargetPassConfig::addISelPrepare() {
 
   // All passes which modify the LLVM IR are now complete; run the verifier
   // to ensure that the IR is valid.
-  if (!DisableVerify)
+  if (!DisableVerify) {
     addPass(createVerifierPass());
+    if (EnableGuardedIntrinsicVerification)
+      addPass(createGuardedIntrinsicVerifierPass(*TM));
+  }
 }
 
 bool TargetPassConfig::addCoreISelPasses() {

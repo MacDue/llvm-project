@@ -1258,6 +1258,10 @@ public:
 
   virtual unsigned getMaxNumArgs() const { return UINT_MAX; }
 
+  virtual const GuardedIntrinsicInfo *getGuardedIntrinsicInfo() const {
+    return nullptr;
+  }
+
   virtual void collectKernelLaunchBounds(
       const Function &F,
       SmallVectorImpl<std::pair<StringRef, int64_t>> &LB) const {}

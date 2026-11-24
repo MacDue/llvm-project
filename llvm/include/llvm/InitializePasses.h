@@ -129,6 +129,7 @@ LLVM_ABI void initializeGVNLegacyPassPass(PassRegistry &);
 LLVM_ABI void initializeGlobalDCELegacyPassPass(PassRegistry &);
 LLVM_ABI void initializeGlobalMergeFuncPassWrapperPass(PassRegistry &);
 LLVM_ABI void initializeGlobalMergePass(PassRegistry &);
+LLVM_ABI void initializeGuardedIntrinsicVerifierLegacyPassPass(PassRegistry &);
 LLVM_ABI void initializeGlobalsAAWrapperPassPass(PassRegistry &);
 LLVM_ABI void initializeHardwareLoopsLegacyPass(PassRegistry &);
 LLVM_ABI void initializeLibcallLoweringInfoWrapperPass(PassRegistry &);

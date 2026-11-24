@@ -89,6 +89,7 @@ add_llvm_component_library(LLVMCodeGen
   GCRootLowering.cpp
   GlobalMerge.cpp
   GlobalMergeFunctions.cpp
+  GuardedIntrinsicVerifier.cpp
   HardwareLoops.cpp
   IfConversion.cpp
   ImplicitNullChecks.cpp

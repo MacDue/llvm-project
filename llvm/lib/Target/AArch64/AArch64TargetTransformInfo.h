@@ -97,6 +97,8 @@ public:
 
   bool isMultiversionedFunction(const Function &F) const override;
 
+  const GuardedIntrinsicInfo *getGuardedIntrinsicInfo() const override;
+
   /// \name Scalar TTI Implementations
   /// @{
 

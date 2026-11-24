@@ -31,13 +31,17 @@
 // CHECK-NEXT: };
 // CHECK-EMPTY:
 // CHECK-NEXT: static constexpr IntrinsicFeatureGuard TestTargetIntrinsicFeatureGuards[] = {
-// CHECK-NEXT:   {0, 1, "example", 0},
-// CHECK-NEXT:   {1, 1, "other", 1},
-// CHECK-NEXT:   {2, 1, "other", 0},
+// CHECK-NEXT:   {0, 1, "example", "", 0},
+// CHECK-NEXT:   {1, 1, "other", "conditional", 1},
+// CHECK-NEXT:   {2, 1, "other", "", 0},
 // CHECK-NEXT: };
 // CHECK-EMPTY:
-// CHECK-NEXT: template <typename Subtarget>
-// CHECK-NEXT: {{\[\[maybe_unused\]\]}} static std::optional<FeatureBitset> getTestTargetIntrinsicGuardFeatures(
+// CHECK-NEXT: class TestTargetGuardedIntrinsicInfo final : public GuardedIntrinsicInfo {
+// CHECK-NEXT:   std::optional<FeatureBitset> getFeaturesForGuard(
+// CHECK-NEXT:       const IntrinsicFeatureGuard &Guard,
+// CHECK-NEXT:       const TargetSubtargetInfo &STI) const override {
+// CHECK-NEXT:     const TestTargetSubtarget &ST =
+// CHECK-NEXT:         static_cast<const TestTargetSubtarget &>(STI);
 // CHECK:      static constexpr IntrinsicFeatureVariant TestTargetIntrinsicVariants[] = {
 // CHECK-NEXT:   {0, 0, 0, 1}, // int_test_one_guard
 // CHECK-NEXT:   {0, 0, 1, 2}, // int_test_two_guards
@@ -53,12 +57,14 @@
 // CHECK-NEXT:   {Intrinsic::test_typed, 4, 1},
 // CHECK-NEXT: };
 // CHECK-EMPTY:
-// CHECK-NEXT: template <typename Subtarget>
-// CHECK-NEXT: {{\[\[maybe_unused\]\]}} static const GuardedIntrinsicInfo<Subtarget> &getTestTargetGeneratedGuardedIntrinsicInfo() {
-// CHECK-NEXT:   static const GuardedIntrinsicInfo<Subtarget> Info(
-// CHECK-NEXT:       TestTargetIntrinsicFeatureClauses, TestTargetIntrinsicOverloadTypes,
-// CHECK-NEXT:       TestTargetIntrinsicGuardIndices, TestTargetIntrinsicFeatureGuards,
-// CHECK-NEXT:       TestTargetIntrinsicVariants, TestTargetIntrinsicEntries, getTestTargetIntrinsicGuardFeatures<Subtarget>);
+// CHECK-NEXT: TestTargetGuardedIntrinsicInfo::TestTargetGuardedIntrinsicInfo()
+// CHECK-NEXT:     : GuardedIntrinsicInfo("TestTarget", TestTargetIntrinsicFeatureClauses,
+// CHECK-NEXT:           TestTargetIntrinsicOverloadTypes, TestTargetIntrinsicGuardIndices,
+// CHECK-NEXT:           TestTargetIntrinsicFeatureGuards, TestTargetIntrinsicVariants,
+// CHECK-NEXT:           TestTargetIntrinsicEntries) {}
+// CHECK-EMPTY:
+// CHECK-NEXT: {{\[\[maybe_unused\]\]}} static const GuardedIntrinsicInfo &getTestTargetGeneratedGuardedIntrinsicInfo() {
+// CHECK-NEXT:   static const TestTargetGuardedIntrinsicInfo Info;
 // CHECK-NEXT:   return Info;
 // CHECK-NEXT: }
 // CHECK-EMPTY:
@@ -71,6 +77,7 @@ def FeatureExample : SubtargetFeature<"example", "Example", "true", "">;
 def FeatureOther : SubtargetFeature<"other", "Other", "true", "">;
 
 class ConditionalGuard<string features> : FeatureGuard<features> {
+  let Name = "conditional";
   let Predicate = [{ST.Enabled}];
 }
 

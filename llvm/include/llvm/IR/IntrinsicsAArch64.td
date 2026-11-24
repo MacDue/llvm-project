@@ -24,12 +24,21 @@
 defvar Invalid = "";
 
 class NonStreamingGuard<string features> : FeatureGuard<features> {
+  let Name = "non-streaming";
   let Predicate = [{!ST.isStreaming() || ST.isStreamingCompatible()}];
 }
 
 class StreamingGuard<string features> : FeatureGuard<features> {
+  let Name = "streaming";
   let Predicate = [{ST.isStreaming() || ST.isStreamingCompatible()}];
-  let FeatureBits = [{getAArch64StreamingFeatureBits(ST)}];
+  let FeatureBits = [{
+    ST.isStreamingCompatible() && !ST.isStreaming()
+        ? ST.getFeatureBits() |
+              FeatureBitset{AArch64::FeatureBF16, AArch64::FeatureFPARMv8,
+                            AArch64::FeatureFullFP16, AArch64::FeatureNEON,
+                            AArch64::FeatureSME}
+        : ST.getFeatureBits()
+  }];
 }
 
 class Variant<string nonStreamingGuard, string streamingGuard,

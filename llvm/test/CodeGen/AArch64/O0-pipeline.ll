@@ -20,6 +20,7 @@
 ; CHECK-NEXT:       Expand IR instructions
 ; CHECK-NEXT:       Expand Atomic instructions
 ; CHECK-NEXT:       Module Verifier
+; CHECK-NEXT:       Guarded Intrinsic Verifier
 ; CHECK-NEXT:       Lower Garbage Collection Instructions
 ; CHECK-NEXT:       Shadow Stack GC Lowering
 ; CHECK-NEXT:       Remove unreachable blocks from the CFG
@@ -29,11 +30,11 @@
 ; CHECK-NEXT:       AArch64 Stack Tagging
 ; CHECK-NEXT:       SJLJ Exception Handling preparation
 ; CHECK-NEXT:       Exception handling preparation
-; CHECK-NEXT:       AArch64 Intrinsics Verifier
 ; CHECK-NEXT:       Prepare inline asm insts
 ; CHECK-NEXT:       Safe Stack instrumentation pass
 ; CHECK-NEXT:       Insert stack protectors
 ; CHECK-NEXT:       Module Verifier
+; CHECK-NEXT:       Guarded Intrinsic Verifier
 ; CHECK-NEXT:       Analysis containing CSE Info
 ; CHECK-NEXT:       IRTranslator
 ; CHECK-NEXT:       AArch64O0PreLegalizerCombiner
